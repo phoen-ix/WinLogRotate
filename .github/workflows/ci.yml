@@ -158,6 +158,253 @@ jobs:
           makensis -WX -V2 -DVERSION=0.0.0 -DFULL_ONLY packaging/winlogrotate.nsi
           makensis -WX -V2 -DVERSION=0.0.0 -DMINIMAL_ONLY packaging/winlogrotate.nsi
 
+
+  # A script that compiles can still install nothing, register the wrong thing, or leave a
+  # folder behind. This builds a real installer and runs the whole round trip on a throwaway
+  # machine: install, verify, upgrade while a rotation is running, uninstall, reinstall, purge,
+  # then the per-user path. It covers everything no unit test can reach - the Add/Remove
+  # contract, the hardened ACL as actually applied, the Event Log source, the scheduled task's
+  # real settings, PATH, and the upgrade waiting for a rotation in progress.
+  #
+  # It is also the only place anything in this product is EXECUTED on Windows.
+  installer-smoke:
+    runs-on: windows-2025
+    env:
+      DATA_DIR: C:\ProgramData\WinLogRotate
+      TASK_PATH: \WinLogRotate\
+      TASK_NAME: Rotate
+      ROTATION_MUTEX: Global\WinLogRotate.Rotation
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+
+      - uses: actions/setup-dotnet@26b0ec14cb23fa6904739307f278c14f94c95bf1 # v5
+        with:
+          dotnet-version: '10.0.x'
+
+      # The exact publishes release.yml runs, so a packaging break is caught here rather than
+      # shipping as a broken release after merge.
+      - name: Publish the CLI (NativeAOT)
+        run: >
+          dotnet publish src/WinLogRotate.Cli/WinLogRotate.Cli.csproj -c Release -r win-x64
+          -p:PublishAot=true -p:TrimmerSingleWarn=false /warnaserror -o publish-cli
+
+      - name: Publish the GUI (framework-dependent)
+        run: >
+          dotnet publish src/WinLogRotate.Gui/WinLogRotate.Gui.csproj -c Release -r win-x64
+          --self-contained false -p:PublishSingleFile=true -p:DebugType=none -o publish-gui
+
+      - name: Install NSIS
+        run: choco install nsis --no-progress -y
+
+      - name: Build the installer
+        shell: pwsh
+        run: |
+          Copy-Item publish-cli/winlogrotate.exe packaging/winlogrotate.exe -Force
+          Copy-Item publish-gui/winlogrotate-gui.exe packaging/winlogrotate-gui.exe -Force
+          & "${env:ProgramFiles(x86)}\NSIS\makensis.exe" /WX /V2 /DVERSION=9.9.9 /DMINIMAL_ONLY packaging/winlogrotate.nsi
+          if ($LASTEXITCODE -ne 0) { throw "makensis failed with $LASTEXITCODE" }
+          Move-Item packaging/WinLogRotate-Setup-9.9.9-min.exe setup.exe -Force
+          "built {0:N2} MB" -f ((Get-Item setup.exe).Length / 1MB)
+
+      # ---- Leg A: per-machine install, the default and the one that matters --------------
+      - name: 'Leg A: silent per-machine install'
+        shell: pwsh
+        run: |
+          . .github/scripts/installer-smoke-helpers.ps1
+          $pathBefore = [Environment]::GetEnvironmentVariable('PATH', 'Machine')
+          "$pathBefore" | Set-Content machine-path-before.txt
+
+          Start-Process -FilePath (Resolve-Path setup.exe) -ArgumentList '/S','/AllUsers','/HOST=task','/NORUNTIME' -Wait
+
+          $entry = Get-UninstallEntry -Scope machine
+          if (-not $entry) { throw 'No per-machine Add/Remove entry was registered.' }
+          if ($entry.DisplayVersion -ne '9.9.9') { throw "DisplayVersion is '$($entry.DisplayVersion)'." }
+          if ($entry.HostKind -ne 'task') { throw "HostKind is '$($entry.HostKind)', expected task." }
+          "  installed to $($entry.InstallLocation)"
+          "  data dir     $($entry.DataDir)"
+
+          foreach ($f in 'winlogrotate.exe','winlogrotate-gui.exe','uninstall.exe') {
+            if (-not (Test-Path (Join-Path $entry.InstallLocation $f))) { throw "$f was not installed." }
+          }
+          if (-not (Test-Path "$env:DATA_DIR\config.toml")) { throw 'No seeded config.toml.' }
+          if (-not (Test-Path "$env:DATA_DIR\conf.d")) { throw 'No conf.d directory.' }
+
+      - name: 'Leg A: the configuration directory is actually locked down'
+        shell: pwsh
+        run: |
+          . .github/scripts/installer-smoke-helpers.ps1
+          Assert-Sddl -Path $env:DATA_DIR
+
+      - name: 'Leg A: Event Log source and PATH'
+        shell: pwsh
+        run: |
+          . .github/scripts/installer-smoke-helpers.ps1
+          $key = 'HKLM:\SYSTEM\CurrentControlSet\Services\EventLog\Application\WinLogRotate'
+          if (-not (Test-Path $key)) {
+            throw 'The Event Log source was not registered. Creating it needs admin, so it must happen at install time or the unelevated CLI throws on its first write.'
+          }
+          $entry = Get-UninstallEntry -Scope machine
+          Assert-PathEntry -Scope Machine -Contains $entry.InstallLocation `
+                           -PreservedPrefix (Get-Content machine-path-before.txt -Raw)
+
+      - name: 'Leg A: the scheduled task is registered and hardened'
+        shell: pwsh
+        run: |
+          . .github/scripts/installer-smoke-helpers.ps1
+          Assert-TaskHardening -TaskPath $env:TASK_PATH -TaskName $env:TASK_NAME -ExpectSystem
+
+      # The whole chain, end to end: task principal, ACL, event source and the binary itself,
+      # proven by SYSTEM actually running it and leaving state behind.
+      - name: 'Leg A: run it as SYSTEM and prove it did something'
+        shell: pwsh
+        run: |
+          . .github/scripts/installer-smoke-helpers.ps1
+          $entry = Get-UninstallEntry -Scope machine
+          $exe = Join-Path $entry.InstallLocation 'winlogrotate.exe'
+
+          # A real job, so the run has something to do.
+          New-Item -ItemType Directory -Force "C:\smoke\logs" | Out-Null
+          1..5 | ForEach-Object {
+            Set-Content "C:\smoke\logs\app-2026-08-0$_.log" ('x' * 20000)
+            (Get-Item "C:\smoke\logs\app-2026-08-0$_.log").LastWriteTimeUtc = (Get-Date).AddDays(-$_ - 30)
+          }
+          Set-Content "C:\smoke\logs\app-2026-09-07.log" 'current'
+
+          # Built from an array rather than a here-string: PowerShell requires the closing
+          # '@ at column zero, which cannot coexist with YAML block indentation.
+          $job = @(
+            'schema = 1',
+            '[job]',
+            'name  = "smoke"',
+            'kind  = "manage"',
+            'paths = ["C:/smoke/logs/app-*.log"]',
+            'compress = true',
+            'rotate   = 2'
+          )
+          Set-Content -Path "$env:DATA_DIR\conf.d\smoke.toml" -Value $job
+
+          & $exe config check --json | Out-Host
+          & $exe run --dry-run --verbose | Out-Host
+
+          $result = Wait-TaskResult -TaskPath $env:TASK_PATH -TaskName $env:TASK_NAME
+          if ($result -ne 0) { throw "The scheduled task exited 0x$('{0:X}' -f $result)." }
+
+          if (-not (Test-Path "$env:DATA_DIR\state.json")) {
+            throw 'The SYSTEM run wrote no state file, so it did not actually get that far.'
+          }
+          if (-not (Test-Path "$env:DATA_DIR\journal")) {
+            throw 'The SYSTEM run wrote no journal.'
+          }
+          "  journal:"; Get-ChildItem "$env:DATA_DIR\journal" | ForEach-Object { "    $($_.Name)" }
+          & $exe journal | Select-Object -First 10 | Out-Host
+
+      # ---- Leg B: the upgrade waits for a rotation in progress -----------------------------
+      #
+      # A floor AND a ceiling. Finishing immediately means the installer never took the mutex;
+      # taking far longer means it sat out its own timeout and pushed through anyway. Only the
+      # window between the two proves it waited for exactly as long as the rotation held.
+      - name: 'Leg B: an upgrade waits for a running rotation'
+        shell: pwsh
+        run: |
+          . .github/scripts/installer-smoke-helpers.ps1
+          $before = (Get-UninstallEntry -Scope machine).InstallLocation
+
+          $seconds = Measure-MutexHeldUpgrade -MutexName $env:ROTATION_MUTEX `
+            -Setup (Resolve-Path setup.exe) -Arguments @('/S','/NORUNTIME') -HoldSeconds 20
+
+          "  upgrade took {0:N1}s" -f $seconds
+          if ($seconds -lt 12) { throw "The upgrade finished in ${seconds}s - it did not wait for the rotation mutex." }
+          if ($seconds -gt 90) { throw "The upgrade took ${seconds}s - that is the timeout path, not the mutex." }
+
+          $entry = Get-UninstallEntry -Scope machine
+          if ($entry.InstallLocation -ne $before) { throw 'The upgrade relocated the install.' }
+          if (Get-UninstallEntry -Scope user) { throw 'Upgrading a per-machine install registered a per-user entry too.' }
+          if (-not (Test-Path "$env:DATA_DIR\conf.d\smoke.toml")) { throw 'The upgrade destroyed the configuration.' }
+          Assert-Sddl -Path $env:DATA_DIR
+          Assert-TaskHardening -TaskPath $env:TASK_PATH -TaskName $env:TASK_NAME -ExpectSystem
+          Assert-PathEntry -Scope Machine -Contains $entry.InstallLocation
+
+      # ---- Leg C: uninstall keeps the customer's data -------------------------------------
+      - name: 'Leg C: silent uninstall keeps configuration and history'
+        shell: pwsh
+        run: |
+          . .github/scripts/installer-smoke-helpers.ps1
+          $entry = Get-UninstallEntry -Scope machine
+          $install = $entry.InstallLocation
+
+          Start-Process -FilePath (Join-Path $install 'uninstall.exe') -ArgumentList '/S'
+          Wait-Removed -Scope machine -Directory $install
+
+          if (Get-ScheduledTask -TaskPath $env:TASK_PATH -TaskName $env:TASK_NAME -ErrorAction SilentlyContinue) {
+            throw 'The scheduled task survived the uninstall; it would fire daily against a missing exe.'
+          }
+          if (Test-Path 'HKLM:\SYSTEM\CurrentControlSet\Services\EventLog\Application\WinLogRotate') {
+            throw 'The Event Log source survived the uninstall.'
+          }
+          Assert-PathEntry -Scope Machine -NotContains $install `
+                           -PreservedPrefix (Get-Content machine-path-before.txt -Raw)
+
+          # The point of this leg. A silent uninstall is what an in-place upgrade runs, so
+          # deleting the customer's jobs here would be catastrophic and silent.
+          if (-not (Test-Path "$env:DATA_DIR\conf.d\smoke.toml")) {
+            throw 'A silent uninstall deleted the configuration. The /SD default on that prompt is wrong.'
+          }
+          '  configuration and history preserved'
+
+      # ---- Leg D: and /PURGEDATA really does remove it -------------------------------------
+      - name: 'Leg D: reinstall, then uninstall with /PURGEDATA'
+        shell: pwsh
+        run: |
+          . .github/scripts/installer-smoke-helpers.ps1
+          Start-Process -FilePath (Resolve-Path setup.exe) -ArgumentList '/S','/AllUsers','/HOST=none','/NORUNTIME' -Wait
+
+          $entry = Get-UninstallEntry -Scope machine
+          if (-not (Test-Path "$env:DATA_DIR\conf.d\smoke.toml")) {
+            throw 'The reinstall did not pick up the retained configuration.'
+          }
+          if ($entry.HostKind -ne 'none') { throw "HostKind is '$($entry.HostKind)', expected none." }
+          if (Get-ScheduledTask -TaskPath $env:TASK_PATH -TaskName $env:TASK_NAME -ErrorAction SilentlyContinue) {
+            throw '/HOST=none still registered a scheduled task.'
+          }
+
+          Start-Process -FilePath (Join-Path $entry.InstallLocation 'uninstall.exe') -ArgumentList '/S','/PURGEDATA'
+          Wait-Removed -Scope machine -Directory $entry.InstallLocation
+          Wait-Until -Because '/PURGEDATA to remove the data directory' -Condition {
+            -not (Test-Path $env:DATA_DIR)
+          }
+          '  data purged on request'
+
+      # ---- Leg E: per-user must touch nothing machine-wide --------------------------------
+      - name: 'Leg E: per-user install stays out of the machine'
+        shell: pwsh
+        run: |
+          . .github/scripts/installer-smoke-helpers.ps1
+          $machineBefore = [Environment]::GetEnvironmentVariable('PATH', 'Machine')
+
+          Start-Process -FilePath (Resolve-Path setup.exe) -ArgumentList '/S','/CurrentUser','/HOST=none','/NORUNTIME' -Wait
+
+          $entry = Get-UninstallEntry -Scope user
+          if (-not $entry) { throw 'No per-user Add/Remove entry was registered.' }
+          if (Get-UninstallEntry -Scope machine) { throw 'A per-user install registered a per-machine entry too.' }
+
+          $expected = Join-Path $env:LOCALAPPDATA 'Programs\WinLogRotate'
+          if ($entry.InstallLocation -ne $expected) { throw "Installed to '$($entry.InstallLocation)', expected '$expected'." }
+          if ($entry.DataDir -ne (Join-Path $env:APPDATA 'WinLogRotate')) { throw "DataDir is '$($entry.DataDir)'." }
+
+          if (Test-Path 'HKLM:\SYSTEM\CurrentControlSet\Services\EventLog\Application\WinLogRotate') {
+            throw 'A per-user install registered a machine-wide Event Log source.'
+          }
+          if ([Environment]::GetEnvironmentVariable('PATH', 'Machine') -ne $machineBefore) {
+            throw 'A per-user install modified the machine PATH.'
+          }
+
+          Start-Process -FilePath (Join-Path $entry.InstallLocation 'uninstall.exe') -ArgumentList '/S','/PURGEDATA'
+          Wait-Removed -Scope user -Directory $entry.InstallLocation
+          if ([Environment]::GetEnvironmentVariable('PATH', 'Machine') -ne $machineBefore) {
+            throw 'A per-user uninstall modified the machine PATH.'
+          }
+          '  per-user install left the machine untouched'
+
   # Weekly, allowed to fail: tells us the runner image is about to change under us without
   # turning a Tuesday push red. When this goes red, bump the pinned label deliberately.
   runner-canary:
