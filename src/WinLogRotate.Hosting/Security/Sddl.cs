@@ -48,6 +48,39 @@ public static class Sddl
     public static string WritableFor(string runAccountSid) =>
         $"O:BAG:SYD:PAI(A;OICI;FA;;;SY)(A;OICI;FA;;;BA)(A;OICI;FA;;;{runAccountSid})(A;OICI;0x1200a9;;;BU)";
 
+    /// <summary>
+    /// The secrets file: SYSTEM and Administrators, and deliberately no Users ACE at all.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// This is the one file under the configuration directory that breaks the "everyone may
+    /// read" rule, and it is the only reason that rule survives everywhere else. The
+    /// justification for Users read on <see cref="ConfigDirectory"/> is that reading a job file
+    /// grants nothing. Reading a stored credential grants something, so it is not readable.
+    /// </para>
+    /// <para>
+    /// No inheritance flags: this is a file, and a file has no children. No <c>AI</c>: nothing
+    /// is inherited into it. <c>D:P</c> is what severs the OICI Users ACE the parent would
+    /// otherwise supply - a file created in the configuration directory arrives readable by
+    /// every local user unless this is applied explicitly, which is the whole hazard, and why
+    /// it is applied to the temporary file before it is moved into place.
+    /// </para>
+    /// </remarks>
+    public const string SecretsFile = "O:BAG:SYD:P(A;;FA;;;SY)(A;;FA;;;BA)";
+
+    /// <summary>
+    /// The secrets file for a per-user install, where the owner is not necessarily an
+    /// administrator and would otherwise be locked out of their own store.
+    /// </summary>
+    public static string SecretsFileFor(string ownerSid) =>
+        $"O:BAG:SYD:P(A;;FA;;;SY)(A;;FA;;;BA)(A;;FA;;;{ownerSid})";
+
+    /// <summary>
+    /// The registry key holding the per-install secret entropy. Same principals as
+    /// <see cref="SecretsFile"/>: entropy readable by everyone would not be entropy.
+    /// </summary>
+    public const string EntropyKey = "O:BAG:SYD:P(A;CI;KA;;;SY)(A;CI;KA;;;BA)";
+
     /// <summary>Well-known SIDs, used by name nowhere: on this machine the Administrators group
     /// is called <i>Administratoren</i>, and an icacls that fails on a localised name leaves the
     /// permissive inherited ACE in place - which is silent and is the whole hole.</summary>

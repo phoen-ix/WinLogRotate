@@ -8,5 +8,6 @@
   </Folder>
   <Folder Name="/tests/">
     <Project Path="tests/WinLogRotate.Core.Tests/WinLogRotate.Core.Tests.csproj" />
+    <Project Path="tests/WinLogRotate.Windows.Tests/WinLogRotate.Windows.Tests.csproj" />
   </Folder>
 </Solution>

@@ -1,0 +1,26 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <!-- net10.0-windows, unlike every other project here. This is the one suite whose whole
+         purpose is the Win32 surface: real DPAPI, real ACLs, real registry. Everything that
+         can be tested without them belongs in WinLogRotate.Core.Tests, which runs on Linux. -->
+    <TargetFramework>net10.0-windows</TargetFramework>
+    <RootNamespace>WinLogRotate.Windows.Tests</RootNamespace>
+    <OutputType>Exe</OutputType>
+    <IsPackable>false</IsPackable>
+    <IsTestProject>true</IsTestProject>
+    <TrimmerSingleWarn>false</TrimmerSingleWarn>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="xunit.v3" Version="4.0.0" />
+    <PackageReference Include="Shouldly" Version="4.3.0" />
+    <PackageReference Include="Microsoft.Extensions.TimeProvider.Testing" Version="9.10.0" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="../../src/WinLogRotate.Core/WinLogRotate.Core.csproj" />
+    <ProjectReference Include="../../src/WinLogRotate.Hosting/WinLogRotate.Hosting.csproj" />
+  </ItemGroup>
+
+</Project>

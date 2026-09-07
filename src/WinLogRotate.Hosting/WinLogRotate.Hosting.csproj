@@ -12,6 +12,20 @@
   </PropertyGroup>
 
   <ItemGroup>
+    <!-- DPAPI. Not in the shared framework for a plain net10.0 target - it ships only in the
+         Windows Desktop one - so the CLI has to reference it explicitly. Reflection-free and
+         AOT-clean, and it compiles into the native image rather than appearing as an import,
+         so the "zero dependencies" gate in CI is unaffected: the published exe still imports
+         nothing but OS DLLs.
+
+         Note it carries NO [SupportedOSPlatform("windows")] attribute of its own, so CA1416
+         will not warn about calling it from platform-neutral code - it simply throws
+         PlatformNotSupportedException at runtime, on a suite that is mostly Linux. That is
+         why DpapiMachineProtector wraps it in a type that IS annotated. -->
+    <PackageReference Include="System.Security.Cryptography.ProtectedData" Version="10.0.11" />
+  </ItemGroup>
+
+  <ItemGroup>
     <ProjectReference Include="../WinLogRotate.Core/WinLogRotate.Core.csproj" />
   </ItemGroup>
 

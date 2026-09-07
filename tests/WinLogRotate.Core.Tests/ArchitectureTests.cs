@@ -121,6 +121,7 @@ public partial class ArchitectureTests
             // The tests that prove the redaction works, and that a stored secret round-trips.
             "SecretStringTests.cs",
             "SecretStoreTests.cs",
+            "SecretsTests.cs",
         ];
 
         // Assembled rather than written out, so that this file - which scans every file under
