@@ -29,6 +29,7 @@
   <ItemGroup>
     <ProjectReference Include="../../src/WinLogRotate.Core/WinLogRotate.Core.csproj" />
     <ProjectReference Include="../../src/WinLogRotate.Hosting/WinLogRotate.Hosting.csproj" />
+    <ProjectReference Include="../../src/WinLogRotate.Cli/WinLogRotate.Cli.csproj" />
   </ItemGroup>
 
 </Project>
