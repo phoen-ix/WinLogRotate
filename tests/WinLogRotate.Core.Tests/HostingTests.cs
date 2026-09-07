@@ -63,9 +63,66 @@ public class TaskXmlBuilderTests
     {
         var principal = Build().Root!.Element(Ns + "Principals")!.Element(Ns + "Principal")!;
 
-        principal.Element(Ns + "UserId")!.Value.ShouldBe("NT AUTHORITY\\SYSTEM");
-        principal.Element(Ns + "LogonType")!.Value.ShouldBe("ServiceAccount");
+        principal.Element(Ns + "UserId")!.Value.ShouldBe("S-1-5-18");
         principal.Element(Ns + "RunLevel")!.Value.ShouldBe("HighestAvailable");
+    }
+
+    /// <summary>
+    /// A service-account principal must omit LogonType entirely.
+    /// <para>
+    /// "ServiceAccount" is a member of the COM enumeration TASK_LOGON_SERVICE_ACCOUNT, not of
+    /// the XML schema's logonType - which offers only S4U, Password, InteractiveToken,
+    /// InteractiveTokenOrPassword, Group and None. Emitting it made schtasks reject the file
+    /// with "(19,35):LogonType:ServiceAccount", and since the installer treats a failed
+    /// registration as non-fatal, v0.0.1 installed cleanly with nothing scheduled to run.
+    /// Only executing the installer on Windows found it.
+    /// </para>
+    /// </summary>
+    [Fact]
+    public void AServiceAccountPrincipalOmitsLogonType() =>
+        Build().Root!.Element(Ns + "Principals")!.Element(Ns + "Principal")!
+            .Element(Ns + "LogonType").ShouldBeNull();
+
+    /// <summary>
+    /// The account is named by SID, because "NT AUTHORITY\SYSTEM" is localised - a German
+    /// machine calls it "NT-AUTORITAET\SYSTEM". Hardcoding the English form would fail on
+    /// exactly the machines that choosing schtasks' /xml form over its locale-dependent flag
+    /// form was meant to protect.
+    /// </summary>
+    [Fact]
+    public void TheSystemAccountIsNamedBySidNotByALocalisedName()
+    {
+        var xml = TaskXmlBuilder.Build(new TaskDefinition
+        {
+            ExecutablePath = @"C:\x\winlogrotate.exe",
+            Arguments = "run",
+            Account = RunAccount.System,
+        });
+
+        xml.ShouldContain("S-1-5-18");
+        xml.ShouldNotContain("NT AUTHORITY");
+    }
+
+    /// <summary>Any LogonType we do emit must be a member of the XML schema's enumeration.</summary>
+    [Fact]
+    public void AnyLogonTypeEmittedIsSchemaValid()
+    {
+        string[] valid =
+            ["S4U", "Password", "InteractiveToken", "InteractiveTokenOrPassword", "Group", "None"];
+
+        var xml = TaskXmlBuilder.Build(new TaskDefinition
+        {
+            ExecutablePath = @"C:\x\winlogrotate.exe",
+            Arguments = "run",
+            Account = new RunAccount { UserId = @"DOMAIN\svc-logs", ServiceAccount = false },
+        });
+
+        var logon = XDocument.Parse(xml).Root!
+            .Element(Ns + "Principals")!.Element(Ns + "Principal")!
+            .Element(Ns + "LogonType");
+
+        logon.ShouldNotBeNull();
+        valid.ShouldContain(logon.Value);
     }
 
     [Fact]

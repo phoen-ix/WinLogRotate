@@ -13,10 +13,22 @@ public enum HostFrequency
 /// <summary>Who the run host runs as.</summary>
 public sealed record RunAccount
 {
-    /// <summary>LocalSystem. Needs no password and holds the privileges file operations want,
-    /// but authenticates on the network as DOMAIN\MACHINE$ - so a UNC log share must grant the
-    /// computer account, or a domain account / gMSA must be used instead.</summary>
-    public static RunAccount System { get; } = new() { UserId = "NT AUTHORITY\\SYSTEM", ServiceAccount = true };
+    /// <summary>
+    /// LocalSystem, identified by SID.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// S-1-5-18 rather than "NT AUTHORITY\SYSTEM" because that name is localised - a German
+    /// machine calls it "NT-AUTORIT&#xC4;T\SYSTEM". Hardcoding the English form would fail on
+    /// exactly the machines the /xml form of schtasks was chosen to protect against.
+    /// </para>
+    /// <para>
+    /// Needs no password and holds the privileges file operations want, but authenticates on
+    /// the network as DOMAIN\MACHINE$ - so a UNC log share must grant the computer account, or
+    /// a domain account / gMSA must be used instead.
+    /// </para>
+    /// </remarks>
+    public static RunAccount System { get; } = new() { UserId = "S-1-5-18", ServiceAccount = true };
 
     public required string UserId { get; init; }
     public bool ServiceAccount { get; init; }
@@ -88,8 +100,23 @@ public static class TaskXmlBuilder
                     new XElement(Ns + "Principal",
                         new XAttribute("id", "Author"),
                         new XElement(Ns + "UserId", definition.Account.UserId),
-                        new XElement(Ns + "LogonType",
-                            definition.Account.ServiceAccount ? "ServiceAccount" : "Password"),
+
+                        // LogonType is OMITTED for a service account, and that is not an
+                        // oversight. "ServiceAccount" is a value from the COM enumeration
+                        // (TASK_LOGON_SERVICE_ACCOUNT); the XML schema's logonType has no such
+                        // member - only S4U, Password, InteractiveToken,
+                        // InteractiveTokenOrPassword, Group and None. Emitting it makes
+                        // schtasks reject the whole file with
+                        //   "The task XML contains a value which is incorrectly formatted or
+                        //    out of range. (19,35):LogonType:ServiceAccount"
+                        // and, because the installer treats a failed registration as
+                        // non-fatal, the result is an install that reports success with nothing
+                        // scheduled to run. That is what shipped in v0.0.1. A real
+                        // schtasks /query /xml export of a SYSTEM task omits it too.
+                        definition.Account.ServiceAccount
+                            ? null
+                            : new XElement(Ns + "LogonType", "Password"),
+
                         new XElement(Ns + "RunLevel", "HighestAvailable"))),
                 // Ordered to match taskSchedulerSchema's documented settingsType sequence and
                 // what schtasks itself emits, on the principle that resembling a known-good
