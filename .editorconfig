@@ -35,6 +35,13 @@ dotnet_style_readonly_field = true:warning
 # Order matters: rules are matched top-down and the first hit wins. The static-readonly
 # rule therefore has to come first, or the instance-field rule below claims those too and
 # demands an underscore on what is effectively a constant.
+dotnet_naming_rule.private_const_pascal.severity = warning
+dotnet_naming_rule.private_const_pascal.symbols = private_const_fields
+dotnet_naming_rule.private_const_pascal.style = pascal
+dotnet_naming_symbols.private_const_fields.applicable_kinds = field
+dotnet_naming_symbols.private_const_fields.applicable_accessibilities = private
+dotnet_naming_symbols.private_const_fields.required_modifiers = const
+
 dotnet_naming_rule.private_static_readonly_pascal.severity = warning
 dotnet_naming_rule.private_static_readonly_pascal.symbols = private_static_readonly_fields
 dotnet_naming_rule.private_static_readonly_pascal.style = pascal

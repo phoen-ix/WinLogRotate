@@ -17,6 +17,7 @@ internal static class CommandTree
         {
             BuildRun(),
             BuildProbe(),
+            BuildGlob(),
             BuildConfig(),
             BuildHost(),
             BuildImport(),
@@ -109,6 +110,17 @@ internal static class CommandTree
         return probe;
     }
 
+    private static Command BuildGlob()
+    {
+        var pattern = new Argument<string>("pattern") { Description = "The glob pattern to resolve." };
+        var glob = new Command("glob",
+            "Resolve a pattern and show what it matches, or why it was refused. Use this before trusting a pattern in a job.")
+        { pattern };
+        GlobalOptions.AddTo(glob);
+        glob.SetAction(parse => GlobCommand.Run(CommandContext.From(parse), parse.GetRequiredValue(pattern)));
+        return glob;
+    }
+
     private static Command BuildConfig()
     {
         var check = new Command("check", "Validate the configuration and report problems with file, line and column.");
@@ -128,7 +140,11 @@ internal static class CommandTree
         var job = new Option<string?>("--job") { Description = "Only this job." };
         var journal = new Command("journal", "Read the record of everything that was compressed, moved or deleted.") { since, job };
         GlobalOptions.AddTo(journal);
-        journal.SetAction(parse => NotYet.Run(CommandContext.From(parse), "journal", milestone: 2));
+        journal.SetAction(parse => JournalCommand.Run(
+            CommandContext.From(parse),
+            parse.GetValue(since),
+            parse.GetValue(job),
+            parse.GetValue(GlobalOptions.ConfigDir)?.FullName));
         return journal;
     }
 

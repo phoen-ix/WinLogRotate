@@ -1,3 +1,5 @@
+using WinLogRotate.Contracts;
+
 namespace WinLogRotate.Cli.Output;
 
 /// <summary>Payload of a verb that returns no data. Registering a concrete type rather
@@ -21,4 +23,31 @@ public sealed record VersionResult
     /// <summary>True for the NativeAOT build. A framework-dependent CLI would mean someone
     /// built it themselves, which is worth knowing in a bug report.</summary>
     public required bool NativeAot { get; init; }
+}
+
+/// <summary>Payload of <c>winlogrotate glob</c>.</summary>
+public sealed record GlobResult
+{
+    public required string Pattern { get; init; }
+
+    /// <summary>The directory the walk actually started from - the longest wildcard-free
+    /// prefix. Shown because a surprising anchor is the usual cause of a surprising result.</summary>
+    public required string Anchor { get; init; }
+
+    public required int Count { get; init; }
+    public required long TotalBytes { get; init; }
+    public required IReadOnlyList<string> Files { get; init; }
+}
+
+/// <summary>Payload of <c>winlogrotate journal</c>.</summary>
+public sealed record JournalResult
+{
+    public required string Directory { get; init; }
+    public required int Count { get; init; }
+
+    /// <summary>Lines that could not be parsed - normally a torn final line from a run that
+    /// was killed. Surfaced rather than swallowed, because it is a clue.</summary>
+    public required int SkippedLines { get; init; }
+
+    public required IReadOnlyList<CliEvent> Entries { get; init; }
 }
