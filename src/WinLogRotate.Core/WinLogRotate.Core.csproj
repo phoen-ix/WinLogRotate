@@ -10,6 +10,14 @@
          sneaks in unnoticed and is discovered by the CLI six months later. -->
     <IsAotCompatible>true</IsAotCompatible>
 
+    <!-- Required by [LibraryImport], the source-generated P/Invoke the AOT toolchain wants.
+         It generates the marshalling code at compile time instead of at runtime, which is
+         what makes the interop AOT-safe; the generated stubs are unsafe by construction.
+         The alternative, [DllImport], needs no unsafe flag but relies on the runtime
+         marshaller that NativeAOT is trying to get away from. No hand-written unsafe code
+         exists in this project - only the generated stubs. -->
+    <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
+
     <!-- Plain net10.0, NOT net10.0-windows: this keeps the project restorable and
          type-checkable on a Linux CI runner, so ~70% of the test suite runs there.
          The Windows-only surface is declared per-assembly in AssemblyInfo.cs instead,
