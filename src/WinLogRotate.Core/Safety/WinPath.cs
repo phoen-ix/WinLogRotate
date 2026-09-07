@@ -177,6 +177,31 @@ public static class WinPath
         return cut < 0 ? path : path[(cut + 1)..];
     }
 
+    /// <summary>
+    /// Joins path segments with a backslash, always.
+    /// <para>
+    /// <see cref="System.IO.Path.Combine(string, string)"/> uses the running platform's
+    /// separator, so on Linux it produces <c>C:\logs/app.log.1</c> - a path that is neither
+    /// valid Windows nor comparable to anything else we produce. Since every path this product
+    /// handles is a Windows path regardless of where the code happens to be running, the
+    /// separator is ours to decide.
+    /// </para>
+    /// </summary>
+    public static string Combine(string left, string right)
+    {
+        if (string.IsNullOrEmpty(left))
+        {
+            return right;
+        }
+
+        if (string.IsNullOrEmpty(right))
+        {
+            return left;
+        }
+
+        return left.TrimEnd('\\', '/') + '\\' + right.TrimStart('\\', '/');
+    }
+
     /// <summary>The directory part of a path, treating both separators as separators.</summary>
     public static string DirectoryName(string path)
     {

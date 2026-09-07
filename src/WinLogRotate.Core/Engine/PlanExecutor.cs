@@ -100,7 +100,32 @@ public sealed class PlanExecutor(IJournal journal, PathGuard guard, TimeProvider
         };
     }
 
-    private static long? Apply(PlannedOp op, EffectiveJob job)
+    private long? Apply(PlannedOp op, EffectiveJob job)
+    {
+        // Applying a plan is where the Win32 surface begins. Guarding here rather than marking
+        // the whole executor Windows-only keeps Execute platform-neutral, which is what lets
+        // the dry-run path - the property that matters most, that --dry-run changes nothing -
+        // be tested on the Linux CI leg alongside the planners.
+        if (!OperatingSystem.IsWindows())
+        {
+            throw new PlatformNotSupportedException(
+                "Applying a rotation plan requires Windows. Use --dry-run to plan anywhere.");
+        }
+
+        return ApplyOnWindows(op, job);
+    }
+
+    /// <summary>
+    /// The Win32 half, split out and annotated rather than guarded inline.
+    /// <para>
+    /// CA1416's flow analysis does not follow a platform check into a lambda, and every call
+    /// below is wrapped in one for the retry policy - so an inline guard silences nothing.
+    /// Splitting the method is what actually lets the analyzer verify the boundary instead of
+    /// having it suppressed.
+    /// </para>
+    /// </summary>
+    [System.Runtime.Versioning.SupportedOSPlatform("windows")]
+    private long? ApplyOnWindows(PlannedOp op, EffectiveJob job)
     {
         switch (op.Action)
         {
@@ -111,14 +136,48 @@ public sealed class PlanExecutor(IJournal journal, PathGuard guard, TimeProvider
                 return result.BytesAfter;
 
             case PlannedAction.Delete:
-                RetryPolicy.Execute(() => File.Delete(op.Source), job.RetryCount, job.RetryIntervalMs);
+                RetryPolicy.Execute(() => FileOps.Delete(op.Source), job.RetryCount, job.RetryIntervalMs);
+                return 0;
+
+            case PlannedAction.Rename:
+            case PlannedAction.MoveToOldDir:
+                RetryPolicy.Execute(
+                    () => FileOps.Rename(op.Source, op.Destination!),
+                    job.RetryCount, job.RetryIntervalMs);
+                return null;
+
+            case PlannedAction.CopyTruncate:
+            case PlannedAction.Copy:
+                var truncate = op.Action == PlannedAction.CopyTruncate;
+                var sizeBefore = RetryPolicy.Execute(
+                    () => FileOps.CopyTruncate(op.Source, op.Destination!, truncate),
+                    job.RetryCount, job.RetryIntervalMs);
+
+                // Recorded so the next run can judge whether the writer honoured the
+                // truncation or resumed at a cached offset and left NTFS to zero-fill the gap.
+                if (truncate)
+                {
+                    RecordTruncation?.Invoke(op.Source, sizeBefore);
+                }
+
+                return sizeBefore;
+
+            case PlannedAction.Create:
+                RetryPolicy.Execute(() => FileOps.Create(op.Destination ?? op.Source),
+                    job.RetryCount, job.RetryIntervalMs);
                 return 0;
 
             default:
-                throw new NotSupportedException(
-                    $"{op.Action} is not implemented yet - rotate jobs land in a later milestone.");
+                throw new NotSupportedException($"{op.Action} has no implementation.");
         }
     }
+
+    /// <summary>
+    /// Called after a truncation with the size the file had beforehand, so the caller can store
+    /// it in state. Without that number the NUL-fill detector has nothing to compare against on
+    /// the following run, and the failure it exists to catch stays invisible.
+    /// </summary>
+    public Action<string, long>? RecordTruncation { get; set; }
 
     private void Emit(
         JobPlan plan, PlannedOp op, string phase, string? result,
