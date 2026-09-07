@@ -249,10 +249,32 @@ jobs:
           Assert-PathEntry -Scope Machine -Contains $entry.InstallLocation `
                            -PreservedPrefix (Get-Content machine-path-before.txt -Raw)
 
+      # The installer treats a failed host registration as non-fatal and reports it through
+      # DetailPrint, which is invisible under /S - so a silent install can report success with
+      # nothing scheduled to run. Re-running the registration here surfaces whatever schtasks
+      # actually said, rather than leaving us to guess from the absence of a task.
       - name: 'Leg A: the scheduled task is registered and hardened'
         shell: pwsh
         run: |
           . .github/scripts/installer-smoke-helpers.ps1
+          $entry = Get-UninstallEntry -Scope machine
+          $exe = Join-Path $entry.InstallLocation 'winlogrotate.exe'
+
+          if (-not (Get-ScheduledTask -TaskPath $env:TASK_PATH -TaskName $env:TASK_NAME -ErrorAction SilentlyContinue)) {
+            Write-Host '::warning::The installer did not register the task. Re-running it to capture the error.'
+            & $exe host use task --verbose 2>&1 | ForEach-Object { Write-Host "    $_" }
+            Write-Host "    host use task exited $LASTEXITCODE"
+
+            Write-Host '  --- the XML we hand to schtasks ---'
+            & $exe host export-task | ForEach-Object { Write-Host "    $_" }
+
+            Write-Host '  --- schtasks, directly, with its own diagnostics ---'
+            & $exe host export-task | Out-File -Encoding unicode task.xml
+            & schtasks.exe /create /tn '\WinLogRotate\Rotate' /xml task.xml /f 2>&1 |
+              ForEach-Object { Write-Host "    $_" }
+            Write-Host "    schtasks exited $LASTEXITCODE"
+          }
+
           Assert-TaskHardening -TaskPath $env:TASK_PATH -TaskName $env:TASK_NAME -ExpectSystem
 
       # The whole chain, end to end: task principal, ACL, event source and the binary itself,

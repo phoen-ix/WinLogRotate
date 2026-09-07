@@ -91,34 +91,41 @@ public static class TaskXmlBuilder
                         new XElement(Ns + "LogonType",
                             definition.Account.ServiceAccount ? "ServiceAccount" : "Password"),
                         new XElement(Ns + "RunLevel", "HighestAvailable"))),
+                // Ordered to match taskSchedulerSchema's documented settingsType sequence and
+                // what schtasks itself emits, on the principle that resembling a known-good
+                // export is free. Whether the scheduler actually enforces this order is not
+                // established - the smoke test captures schtasks' own error now, which will
+                // say so one way or the other.
                 new XElement(Ns + "Settings",
-                    // The anacron equivalent. Without it, a machine that was switched off at
-                    // the scheduled time simply skips that day and logs Event ID 153,
-                    // "Missed task start rejected" - and nobody ever reads that.
-                    new XElement(Ns + "StartWhenAvailable", definition.StartWhenAvailable),
+                    new XElement(Ns + "AllowStartOnDemand", true),
+
+                    // A free second line of defence behind the Global\ mutex.
+                    new XElement(Ns + "MultipleInstancesPolicy", "IgnoreNew"),
 
                     // Both of these default to TRUE, and between them they silently stop the
                     // task on any laptop and on any VM whose host reports a battery.
                     new XElement(Ns + "DisallowStartIfOnBatteries", !definition.RunOnBatteries),
                     new XElement(Ns + "StopIfGoingOnBatteries", !definition.RunOnBatteries),
 
-                    // Defaults to PT72H. A rotation wedged for three days is not a rotation.
-                    new XElement(Ns + "ExecutionTimeLimit",
-                        XmlDuration(definition.ExecutionTimeLimit)),
-
-                    // A free second line of defence behind the Global\ mutex.
-                    new XElement(Ns + "MultipleInstancesPolicy", "IgnoreNew"),
-
                     new XElement(Ns + "AllowHardTerminate", false),
+
+                    // The anacron equivalent. Without it, a machine that was switched off at
+                    // the scheduled time simply skips that day and logs Event ID 153,
+                    // "Missed task start rejected" - and nobody ever reads that.
+                    new XElement(Ns + "StartWhenAvailable", definition.StartWhenAvailable),
+
                     new XElement(Ns + "RunOnlyIfNetworkAvailable", false),
-                    new XElement(Ns + "AllowStartOnDemand", true),
+                    new XElement(Ns + "WakeToRun", false),
                     new XElement(Ns + "Enabled", true),
                     new XElement(Ns + "Hidden", false),
-                    new XElement(Ns + "WakeToRun", false),
-                    new XElement(Ns + "Priority", 7),
                     new XElement(Ns + "IdleSettings",
                         new XElement(Ns + "StopOnIdleEnd", false),
-                        new XElement(Ns + "RestartOnIdle", false))),
+                        new XElement(Ns + "RestartOnIdle", false)),
+
+                    // Defaults to PT72H. A rotation wedged for three days is not a rotation.
+                    new XElement(Ns + "ExecutionTimeLimit", XmlDuration(definition.ExecutionTimeLimit)),
+
+                    new XElement(Ns + "Priority", 7)),
                 new XElement(Ns + "Actions",
                     new XAttribute("Context", "Author"),
                     new XElement(Ns + "Exec",

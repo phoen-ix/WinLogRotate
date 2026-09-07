@@ -103,6 +103,56 @@ public class TaskXmlBuilderTests
     [Fact]
     public void TheXmlParses() => Build().Root!.Name.ShouldBe(Ns + "Task");
 
+    /// <summary>
+    /// Keeps Settings in the documented settingsType sequence.
+    /// <para>
+    /// Whether Task Scheduler enforces the order is not established - a real
+    /// <c>schtasks /query /xml</c> export puts some of these elsewhere, which suggests it does
+    /// not. Matching the documented sequence anyway costs nothing and removes one variable from
+    /// any future investigation of a rejected task.
+    /// </para>
+    /// </summary>
+    [Fact]
+    public void SettingsFollowTheSchemaSequence()
+    {
+        // The subsequence of taskSchedulerSchema's settingsType that we actually emit.
+        string[] schemaOrder =
+        [
+            "AllowStartOnDemand",
+            "RestartOnFailure",
+            "MultipleInstancesPolicy",
+            "DisallowStartIfOnBatteries",
+            "StopIfGoingOnBatteries",
+            "AllowHardTerminate",
+            "StartWhenAvailable",
+            "NetworkProfileName",
+            "RunOnlyIfNetworkAvailable",
+            "WakeToRun",
+            "Enabled",
+            "Hidden",
+            "DeleteExpiredTaskAfter",
+            "IdleSettings",
+            "NetworkSettings",
+            "ExecutionTimeLimit",
+            "Priority",
+            "RunOnlyIfIdle",
+            "UseUnifiedSchedulingEngine",
+        ];
+
+        var emitted = Build().Root!.Element(Ns + "Settings")!
+            .Elements()
+            .Select(e => e.Name.LocalName)
+            .ToArray();
+
+        emitted.ShouldAllBe(name => schemaOrder.Contains(name));
+
+        var positions = emitted.Select(name => Array.IndexOf(schemaOrder, name)).ToArray();
+        positions.ShouldBe(
+            positions.OrderBy(p => p).ToArray(),
+            $"Settings must follow the schema sequence; got: {string.Join(", ", emitted)}");
+    }
+
+
     [Theory]
     [InlineData(1, "PT1H")]
     [InlineData(4, "PT4H")]
