@@ -70,9 +70,39 @@ internal static class RunCommand
             });
         }
 
-        using IJournal journal = options.DryRun
+        // The journal looks after itself before it is opened, so the pass never touches a file
+        // it is holding. It runs through ManageJobPlanner - the same code that tidies IIS logs -
+        // which is deliberate: a log rotator that leaks its own logs would be embarrassing, and
+        // if manage mode ever regresses this is where it shows up first.
+        var journalSettings = LoadJournalSettings(paths);
+
+        if (!options.DryRun && journalSettings.Enabled)
+        {
+            var tidied = JournalMaintenance.Run(
+                paths.JournalDirectory, journalSettings, TimeProvider.System);
+
+            foreach (var error in tidied.Errors)
+            {
+                ctx.Output.Diagnostic(new CliDiagnostic
+                {
+                    Severity = Severity.Warning,
+                    Code = DiagnosticCode.RotationFailed,
+                    Message = $"Journal maintenance: {error}",
+                });
+            }
+
+            if (tidied.DidAnything && ctx.Output.Verbose)
+            {
+                ctx.Output.Line(
+                    $"journal: {tidied.Compressed} compressed, {tidied.Deleted} removed, "
+                    + $"{GlobCommand.Humanize(tidied.BytesFreed)} freed");
+            }
+        }
+
+        using IJournal journal = options.DryRun || !journalSettings.Enabled
             ? new NullJournal()
-            : JournalWriter.Open(paths.JournalDirectory, TimeProvider.System);
+            : JournalWriter.Open(
+                paths.JournalDirectory, TimeProvider.System, maxSize: journalSettings.MaxSize);
 
         var runner = new RotationRunner(journal, guard, state, TimeProvider.System);
         var report = runner.Run(config, options);
@@ -121,5 +151,30 @@ internal static class RunCommand
         };
 
         return ctx.Output.Complete("run", report.ExitCode, result);
+    }
+
+    /// <summary>
+    /// Reads <c>[journal]</c> from config.toml. A malformed config.toml has already been
+    /// reported by the loader above, so failures here fall back to the defaults rather than
+    /// reporting the same problem twice.
+    /// </summary>
+    private static JournalSettings LoadJournalSettings(InstallPaths paths)
+    {
+        if (!File.Exists(paths.ConfigFile))
+        {
+            return JournalSettings.Default;
+        }
+
+        try
+        {
+            var file = TomlFile.Load(paths.ConfigFile);
+            return file.HasErrors
+                ? JournalSettings.Default
+                : ConfigBinder.BindJournal(file, new DiagnosticBag());
+        }
+        catch (IOException)
+        {
+            return JournalSettings.Default;
+        }
     }
 }

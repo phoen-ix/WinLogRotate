@@ -167,6 +167,36 @@ public sealed record JobConfig : JobSettings
 }
 
 /// <summary>
+/// How the journal looks after itself.
+/// </summary>
+/// <remarks>
+/// A log rotator that leaks its own logs would be embarrassing, so the journal is subject to
+/// the same retention rules as anything else - and specifically to the same code, since the
+/// maintenance pass runs through <c>ManageJobPlanner</c>. If manage mode ever breaks, the first
+/// place it shows up is this tool's own output directory.
+/// </remarks>
+public sealed record JournalSettings
+{
+    /// <summary>Write a journal at all. Turning it off means the GUI's History page and
+    /// <c>winlogrotate journal</c> have nothing to show, and "what happened to my logs?"
+    /// becomes unanswerable - so it is on by default.</summary>
+    public bool Enabled { get; init; } = true;
+
+    /// <summary>Days of journal files to keep. -1 keeps everything, which is only sensible
+    /// with an external archiver.</summary>
+    public int Retain { get; init; } = 30;
+
+    /// <summary>How older journal files are compressed. NDJSON compresses extremely well.</summary>
+    public CompressType Compress { get; init; } = CompressType.Zip;
+
+    /// <summary>Roll to a new file mid-day past this size, so one very busy day cannot produce
+    /// a single file too large to open.</summary>
+    public long MaxSize { get; init; } = 50L << 20;
+
+    public static JournalSettings Default { get; } = new();
+}
+
+/// <summary>
 /// The compiled-in defaults, applied beneath config.toml and the job itself.
 /// </summary>
 /// <remarks>

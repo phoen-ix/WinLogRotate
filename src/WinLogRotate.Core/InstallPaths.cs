@@ -34,7 +34,11 @@ public sealed record InstallPaths
     public string StateFile => Path.Combine(Root, "state.json");
     public string JournalDirectory => Path.Combine(Root, "journal");
     public string RunDirectory => Path.Combine(Root, "run");
-    public string LogFile => Path.Combine(Root, "winlogrotate.log");
+
+    // There is deliberately no LogFile. Diagnostics go to stdout for whoever ran the command
+    // and to the Windows Event Log at Warning and above; the record of what was actually done
+    // to files is the journal, which is queryable and bounded. A third half-used sink would be
+    // one more thing to rotate and one more place to look.
 
     /// <summary>Resolves the paths for this process, honouring an explicit override.</summary>
     public static InstallPaths Resolve(string? overrideRoot = null)

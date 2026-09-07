@@ -25,6 +25,26 @@ public static class ConfigBinder
         return table is null ? null : BindSettings(table, file.Path, diagnostics);
     }
 
+    /// <summary>Binds the <c>[journal]</c> table from <c>config.toml</c>.</summary>
+    public static JournalSettings BindJournal(TomlFile file, DiagnosticBag diagnostics)
+    {
+        var table = FindTable(file.Document, "journal");
+        if (table is null)
+        {
+            return JournalSettings.Default;
+        }
+
+        var defaults = JournalSettings.Default;
+
+        return new JournalSettings
+        {
+            Enabled = GetBool(table, "enabled", file.Path, diagnostics) ?? defaults.Enabled,
+            Retain = GetInt(table, "retain", file.Path, diagnostics) ?? defaults.Retain,
+            Compress = GetEnum<CompressType>(table, "compress", file.Path, diagnostics) ?? defaults.Compress,
+            MaxSize = GetSize(table, "maxsize", file.Path, diagnostics) ?? defaults.MaxSize,
+        };
+    }
+
     /// <summary>Binds one <c>conf.d</c> file into a job, or null if it is unusable.</summary>
     public static JobConfig? BindJob(TomlFile file, DiagnosticBag diagnostics)
     {

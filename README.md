@@ -184,6 +184,39 @@ nothing is guessed: `kill -USR1` becomes `service:paramchange:nginx`, but anythi
 translated exactly is written into the output **as a TODO comment** and the job is created
 disabled.
 
+### Where things live, and the history
+
+Per-machine installs keep everything in `C:\ProgramData\WinLogRotate\` — `config.toml`,
+`conf.d\`, `state.json` (the rotation clocks) and `journal\`. Per-user installs use
+`%APPDATA%\WinLogRotate\`. `winlogrotate doctor` prints them all.
+
+The **journal** is the record of every file compressed, moved or deleted, and the rule that
+caused it. It is what the GUI's History page shows and what `winlogrotate journal` queries —
+deliberately not Task Scheduler's Last Run Result, since the registered task exits 0 when a run
+overlaps and `0x0` therefore proves nothing.
+
+**It rotates itself**, through the same manage-mode code that tidies IIS logs. That is not a
+coincidence: the journal is a directory of dated files written by a producer that rolls them
+itself and never cleans up, which is precisely the case manage mode exists for. If manage mode
+ever regresses, it shows up in this tool's own output before it shows up in anyone's logs.
+
+```toml
+[journal]
+enabled  = true
+retain   = 30        # days
+compress = "zip"     # zip | gzip | none
+maxsize  = "50M"     # roll mid-day past this, so one busy day can't produce an unopenable file
+```
+
+`enabled = false` writes no history at all — at the cost of making "what happened to my logs?"
+unanswerable. Today's journal is never touched while it is being written, for the same reason
+the live IIS log never is.
+
+There is deliberately no separate application log file. Diagnostics go to stdout for whoever
+ran the command and to the Windows Event Log at Warning and above; the record of what was
+*done* is the journal. A third half-used sink would be one more thing to rotate and one more
+place to look.
+
 See [logrotate compatibility](docs/logrotate-compatibility.md) for what matches, what
 deliberately differs, and what cannot exist on Windows.
 

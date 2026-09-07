@@ -419,6 +419,15 @@ Section "-Core" SEC_CORE
     FileWrite $0 "compress     = true$\r$\n"
     FileWrite $0 'compresstype = "zip"$\r$\n'
     FileWrite $0 "notifempty   = true$\r$\n"
+    FileWrite $0 "$\r$\n"
+    FileWrite $0 "# The rotation history: what was compressed, moved or deleted, and why.$\r$\n"
+    FileWrite $0 "# It looks after itself using the same manage-mode code that tidies IIS logs,$\r$\n"
+    FileWrite $0 "# so it cannot grow without limit. Set enabled = false to keep no history.$\r$\n"
+    FileWrite $0 "[journal]$\r$\n"
+    FileWrite $0 "enabled  = true$\r$\n"
+    FileWrite $0 "retain   = 30        # days$\r$\n"
+    FileWrite $0 'compress = "zip"     # zip | gzip | none$\r$\n'
+    FileWrite $0 'maxsize  = "50M"     # roll mid-day past this$\r$\n'
     FileClose $0
   ${EndIf}
 

@@ -39,12 +39,30 @@ public sealed class JournalWriter : IJournal
     }
 
     /// <summary>Opens today's journal file, creating the directory if needed.</summary>
-    public static JournalWriter Open(string journalDirectory, TimeProvider clock, string? runId = null)
+    /// <param name="maxSize">Roll to a numbered sibling past this size, so one very busy day
+    /// cannot produce a single file too large to open. Zero or negative disables the roll.</param>
+    public static JournalWriter Open(
+        string journalDirectory, TimeProvider clock, string? runId = null, long maxSize = 0)
     {
         Directory.CreateDirectory(journalDirectory);
 
         var name = $"journal-{clock.GetUtcNow():yyyy-MM-dd}.ndjson";
         var path = System.IO.Path.Combine(journalDirectory, name);
+
+        // A mid-day roll when today's file is already large. The suffix keeps the date prefix
+        // intact so the maintenance pass still recognises and retains it as that day's data.
+        if (maxSize > 0 && File.Exists(path) && new FileInfo(path).Length >= maxSize)
+        {
+            for (var n = 1; n < 1000; n++)
+            {
+                var candidate = System.IO.Path.Combine(journalDirectory, $"journal-{clock.GetUtcNow():yyyy-MM-dd}.{n}.ndjson");
+                if (!File.Exists(candidate))
+                {
+                    path = candidate;
+                    break;
+                }
+            }
+        }
 
         // FileShare.Read so the GUI can tail while we append; FileShare.Delete so the
         // journal's own retention pass can rename or remove an older file we are not holding.

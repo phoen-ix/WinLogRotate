@@ -70,6 +70,13 @@ public sealed record GuardOptions
     public bool Elevated { get; init; }
 
     /// <summary>
+    /// Overrides <see cref="MaxMatches"/>. Only for directories the product owns and the
+    /// installer created with a locked-down ACL - the journal's own folder - where a
+    /// "did you really mean 40,000 files?" prompt protects nobody.
+    /// </summary>
+    public int? MaxFilesOverride { get; init; }
+
+    /// <summary>
     /// The default protected set. Resolved from the running system where possible so a machine
     /// with Windows on D: is still protected, with literals as a fallback for non-Windows test
     /// runs.
@@ -198,7 +205,7 @@ public sealed class PathGuard(GuardOptions options)
     /// <summary>Checks the size of a resolved match set.</summary>
     public GuardDecision CheckMatchCount(string pattern, int count)
     {
-        if (count <= Options.MaxMatches)
+        if (count <= (Options.MaxFilesOverride ?? Options.MaxMatches))
         {
             return Allow(pattern, overridden: false);
         }
