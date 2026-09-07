@@ -155,3 +155,41 @@ public sealed record ExportTaskResult
 {
     public required string Xml { get; init; }
 }
+
+/// <summary>One producer found by <c>winlogrotate scan</c>.</summary>
+public sealed record ScanFinding
+{
+    public required string Producer { get; init; }
+    public required string Directory { get; init; }
+    public required string Pattern { get; init; }
+    public required bool SelfRotates { get; init; }
+
+    /// <summary>Almost always false, and that is the point of the whole verb.</summary>
+    public required bool SelfDeletes { get; init; }
+
+    public required string SuggestedKind { get; init; }
+    public string? Note { get; init; }
+    public int FileCount { get; init; }
+    public long TotalBytes { get; init; }
+}
+
+/// <summary>Payload of <c>winlogrotate scan</c>.</summary>
+public sealed record ScanResult
+{
+    public required IReadOnlyList<ScanFinding> Findings { get; init; }
+}
+
+/// <summary>Payload of <c>winlogrotate host pause</c>.</summary>
+public sealed record PauseResult
+{
+    public required string PausedUntil { get; init; }
+}
+
+/// <summary>Payload of the <c>update</c> verbs.</summary>
+public sealed record UpdateResult
+{
+    public required string Current { get; init; }
+    public string? Latest { get; init; }
+    public required bool UpdateAvailable { get; init; }
+    public string? Detail { get; init; }
+}

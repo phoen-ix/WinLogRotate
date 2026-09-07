@@ -41,7 +41,7 @@ No locking, no truncation, no risk.
 
 ## Status
 
-Working engine, not yet released. `manage` and `rotate` jobs both plan and execute, the CLI is
+Feature-complete for a 1.0, not yet released. Every CLI verb is implemented. `manage` and `rotate` jobs both plan and execute, the CLI is
 complete enough to be useful, the installer and release pipeline are written, and the GUI is a
 functioning administration console. 258 tests.
 

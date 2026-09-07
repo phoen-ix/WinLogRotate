@@ -16,6 +16,23 @@ internal static class RunCommand
         var paths = InstallPaths.Resolve(configDir);
         var guard = new PathGuard(new GuardOptions { Elevated = Privilege.IsElevated() });
 
+        // Honour a pause before doing anything. Exit 0, not an error: pausing is a deliberate
+        // operator action, and a scheduled task logging a daily failure because somebody opened
+        // a maintenance window would train people to ignore its failures.
+        if (PauseCommand.PausedUntil(paths) is { } until)
+        {
+            ctx.Output.Diagnostic(new CliDiagnostic
+            {
+                Severity = Severity.Info,
+                Code = DiagnosticCode.JobSkipped,
+                Message = $"Rotations are paused until {until:u}.",
+                Remedy = "Run 'winlogrotate host pause' with no duration to resume early.",
+            });
+
+            ctx.Output.Line($"Paused until {until:u}; nothing was rotated.");
+            return ctx.Output.Complete<RunResult>("run", ExitCode.Ok, null);
+        }
+
         var config = ConfigLoader.Load(paths, guard);
 
         foreach (var d in config.Diagnostics)

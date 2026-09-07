@@ -189,7 +189,7 @@ internal static class CommandTree
         var forDuration = new Option<string?>("--for") { Description = "How long to pause, e.g. 01:00:00." };
         var pause = new Command("pause", "Suspend rotations without unregistering the run host.") { forDuration };
         GlobalOptions.AddTo(pause);
-        pause.SetAction(parse => NotYet.Run(CommandContext.From(parse), "host pause", milestone: 13));
+        pause.SetAction(parse => PauseCommand.Run(CommandContext.From(parse), parse.GetValue(forDuration), parse.GetValue(GlobalOptions.ConfigDir)?.FullName));
 
         var exportTask = new Command("export-task", "Print the Scheduled Task XML, for deployment by GPO or DSC.");
         GlobalOptions.AddTo(exportTask);
@@ -230,7 +230,7 @@ internal static class CommandTree
         var deep = new Option<bool>("--deep") { Description = "Also search for log directories no producer claims." };
         var scan = new Command("scan", "Find log producers on this machine and say which ones rotate but never delete.") { deep };
         GlobalOptions.AddTo(scan);
-        scan.SetAction(parse => NotYet.Run(CommandContext.From(parse), "scan", milestone: 20));
+        scan.SetAction(parse => ScanCommand.Run(CommandContext.From(parse)));
         return scan;
     }
 
@@ -238,12 +238,12 @@ internal static class CommandTree
     {
         var check = new Command("check", "Report whether a newer release exists. Makes no changes.");
         GlobalOptions.AddTo(check);
-        check.SetAction(parse => NotYet.Run(CommandContext.From(parse), "update check", milestone: 21));
+        check.SetAction(parse => UpdateCommand.CheckAsync(CommandContext.From(parse)).GetAwaiter().GetResult());
 
         var yes = new Option<bool>("--yes") { Description = "Install without asking." };
         var apply = new Command("apply", "Install the newest release.") { yes };
         GlobalOptions.AddTo(apply);
-        apply.SetAction(parse => NotYet.Run(CommandContext.From(parse), "update apply", milestone: 21));
+        apply.SetAction(parse => UpdateCommand.Apply(CommandContext.From(parse)));
 
         return new Command("update", "Check for and install newer releases.") { check, apply };
     }
