@@ -164,7 +164,7 @@ internal static class CommandTree
         var doctor = new Command("doctor",
             "Report every path, the conf.d ACL verdict, elevation state, long-path support and which run host is registered.");
         GlobalOptions.AddTo(doctor);
-        doctor.SetAction(parse => NotYet.Run(CommandContext.From(parse), "doctor", milestone: 10));
+        doctor.SetAction(parse => DoctorCommand.Run(CommandContext.From(parse), parse.GetValue(GlobalOptions.ConfigDir)?.FullName));
         return doctor;
     }
 

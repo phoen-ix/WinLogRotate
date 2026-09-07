@@ -96,3 +96,20 @@ public sealed record RunResult
     public required long BytesFreed { get; init; }
     public required IReadOnlyList<string> Errors { get; init; }
 }
+
+/// <summary>Payload of <c>winlogrotate doctor</c>: every fact an operator would otherwise
+/// gather from four different consoles.</summary>
+public sealed record DoctorResult
+{
+    public required string Version { get; init; }
+    public required string Scope { get; init; }
+    public required string Root { get; init; }
+    public required bool ConfigExists { get; init; }
+    public required bool JobsDirectoryExists { get; init; }
+    public required bool Elevated { get; init; }
+    public required string AclVerdict { get; init; }
+    public required bool HooksAllowed { get; init; }
+    public string? AclFix { get; init; }
+    public required string RunHost { get; init; }
+    public required string RunHostDetail { get; init; }
+}

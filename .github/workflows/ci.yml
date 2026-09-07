@@ -129,6 +129,35 @@ jobs:
           if ($v -notmatch '^\d+\.\d+\.\d+$') { throw "--version printed '$v', expected three-part semver" }
           "version = $v"
 
+  # Compile-only, and fast: catches a broken installer script - a bad !insertmacro, an
+  # unreferenced function - within seconds of a push, on a runner that costs nothing. The stub
+  # exes exist only to satisfy the File directives.
+  installer:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+
+      - name: Install NSIS
+        run: sudo apt-get update && sudo apt-get install -y nsis
+
+      # NSIS does NOT suppress message boxes under /S, so one without an /SD default hangs an
+      # unattended install forever on a dialog nobody can see. The reference project calls this
+      # its single most important gotcha and enforces it by review; this enforces it properly.
+      - name: Every MessageBox has a silent default
+        run: ./.github/scripts/check-nsis-silent-defaults.sh packaging/winlogrotate.nsi
+
+      - name: Stub the release binaries
+        run: |
+          : > packaging/winlogrotate.exe
+          : > packaging/winlogrotate-gui.exe
+
+      # -WX: a warning here means the script is not doing what it reads like it does.
+      - name: Compile all three installers
+        run: |
+          makensis -WX -V2 -DVERSION=0.0.0 packaging/winlogrotate.nsi
+          makensis -WX -V2 -DVERSION=0.0.0 -DFULL_ONLY packaging/winlogrotate.nsi
+          makensis -WX -V2 -DVERSION=0.0.0 -DMINIMAL_ONLY packaging/winlogrotate.nsi
+
   # Weekly, allowed to fail: tells us the runner image is about to change under us without
   # turning a Tuesday push red. When this goes red, bump the pinned label deliberately.
   runner-canary:

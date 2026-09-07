@@ -177,3 +177,65 @@ public class NamePinningTests
         Names.RotationMutex.ShouldStartWith(@"Global\");
     }
 }
+
+/// <summary>
+/// Pins the names duplicated between the application and the installer script.
+/// </summary>
+/// <remarks>
+/// Renaming one of these in only one place does not fail loudly. The installer simply stops
+/// recognising a running rotation and overwrites the executable underneath it, or stops finding
+/// the service it is meant to remove. Both are silent, and both would be discovered by a user
+/// rather than by CI - which is what this test exists to prevent.
+/// </remarks>
+public class InstallerNamePinningTests
+{
+    private static string Nsi() =>
+        File.ReadAllText(Path.Combine(RepoRoot.Find().FullName, "packaging", "winlogrotate.nsi"));
+
+    /// <summary>
+    /// Reads a !define, resolving any ${OTHER} references in its value.
+    /// <para>
+    /// The installer legitimately composes values - UNINST_KEY ends in ${APP} - so comparing
+    /// raw text would force the script to repeat itself purely to satisfy a test. Resolving the
+    /// substitution keeps the assertion honest without dictating the file's style.
+    /// </para>
+    /// </summary>
+    private static string Define(string text, string name)
+    {
+        var match = System.Text.RegularExpressions.Regex.Match(
+            text, "^\\s*!define\\s+" + name + "\\s+\"([^\"]*)\"",
+            System.Text.RegularExpressions.RegexOptions.Multiline);
+
+        match.Success.ShouldBeTrue($"the installer should define {name}");
+
+        return System.Text.RegularExpressions.Regex.Replace(
+            match.Groups[1].Value,
+            @"\$\{(\w+)\}",
+            m => Define(text, m.Groups[1].Value));
+    }
+
+    [Fact]
+    public void TheInstallerAndTheApplicationAgreeOnEverySharedName()
+    {
+        var nsi = Nsi();
+
+        Define(nsi, "ROTATION_MUTEX").ShouldBe(Names.RotationMutex);
+        Define(nsi, "GUI_QUIT_EVENT").ShouldBe(Names.GuiQuitEvent);
+        Define(nsi, "SERVICE_NAME").ShouldBe(Names.ServiceName);
+        Define(nsi, "TASK_PATH").ShouldBe(Names.TaskPath);
+        Define(nsi, "UNINST_KEY").ShouldBe(Names.UninstallKey);
+    }
+
+    /// <summary>
+    /// The security descriptor appears in three places - this constant, the installer's icacls
+    /// fallback, and the smoke test's expected value. Two of the three are bound here.
+    /// </summary>
+    [Fact]
+    public void TheInstallerAppliesTheSameSecurityDescriptorTheCodeDoes() =>
+        Define(Nsi(), "DATA_SDDL").ShouldBe(Sddl.ConfigDirectory);
+
+    [Fact]
+    public void TheEventLogKeyMatches() =>
+        Define(Nsi(), "EVENTLOG_KEY")
+            .ShouldBe($@"SYSTEM\CurrentControlSet\Services\EventLog\{Names.EventLogName}\{Names.EventLogSource}");
+}
