@@ -41,8 +41,23 @@ No locking, no truncation, no risk.
 
 ## Status
 
-Early. Milestone 0 of 22 — the skeleton builds, tests pass, and the AOT toolchain is gated
-in CI. Nothing rotates anything yet. See the build order in the project plan.
+Working engine, not yet released. `manage` and `rotate` jobs both plan and execute, the CLI is
+complete enough to be useful, the installer and release pipeline are written, and the GUI is a
+functioning administration console. 258 tests.
+
+What is verified and what is not, plainly: everything platform-neutral — the scheduling rules,
+glob matching, retention arithmetic, config round-trip, planning for both job kinds — is covered
+by tests that run on any machine. Everything Windows-specific — share modes, ACLs, the scheduled
+task, the installer, the GUI's appearance — compiles here but is only exercised on the Windows
+CI leg.
+
+```
+winlogrotate glob "C:/logs/**/*.log"    # what would this pattern match?
+winlogrotate probe C:\logs\app.log      # can this file even be rotated?
+winlogrotate config check               # with file, line and column
+winlogrotate run --dry-run              # exactly what would happen
+winlogrotate doctor                     # paths, permissions, schedule, in one place
+```
 
 ## Two executables, on purpose
 
@@ -68,6 +83,11 @@ runner, which xunit.v3 requires on .NET 10.
 
 Everything except the WinForms project builds and tests on Linux — that's deliberate, and
 it's how the engine's platform-neutral half stays honest.
+
+## Documentation
+
+- [logrotate compatibility](docs/logrotate-compatibility.md) — what matches, what differs, and
+  what cannot exist on Windows.
 
 ## License
 

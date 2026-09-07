@@ -21,6 +21,11 @@
          and the fat build can't be trimmed anyway. -->
     <InvariantGlobalization>false</InvariantGlobalization>
 
+    <!-- For [LibraryImport] on the handful of Win32 calls the shell needs (dark title bars,
+         the UAC shield). Same reasoning as Core: the generated marshalling stubs are unsafe
+         by construction; no hand-written unsafe code exists here. -->
+    <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
+
     <ApplicationManifest>app.manifest</ApplicationManifest>
 
     <!-- .NET 10 WinForms ERRORS (WFO0003) on DPI settings in the manifest and requires

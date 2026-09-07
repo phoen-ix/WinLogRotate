@@ -40,6 +40,62 @@ public partial class ArchitectureTests
     }
 
     /// <summary>
+    /// The GUI must never call <c>MessageBox</c>.
+    /// <para>
+    /// It renders light regardless of Application.SetColorMode, so a single call ruins a
+    /// dark-themed window - and it has never had a way to copy the error text out, which is
+    /// the first thing anyone needs when reporting a problem. LrDialog replaces it and adds
+    /// both. This is exactly the kind of rule that is obvious in review and forgotten in the
+    /// one hurried fix, so it is enforced.
+    /// </para>
+    /// </summary>
+    [Fact]
+    public void TheGuiNeverCallsMessageBox()
+    {
+        var gui = Path.Combine(RepoRoot.Find().FullName, "src", "WinLogRotate.Gui");
+
+        var offenders = Directory
+            .EnumerateFiles(gui, "*.cs", SearchOption.AllDirectories)
+            .Where(f => !f.Contains(Path.Combine("obj", ""), StringComparison.Ordinal))
+            .Where(f => File.ReadAllLines(f).Any(line =>
+                line.Contains("MessageBox.Show", StringComparison.Ordinal)))
+            .Select(Path.GetFileName)
+            .ToArray();
+
+        offenders.ShouldBeEmpty("use LrDialog instead - see WinLogRotate.Gui/Ui/LrDialog.cs");
+    }
+
+    /// <summary>
+    /// Every capability must be reachable from the command line.
+    /// <para>
+    /// WinForms does not run on Server Core, which is where IIS is most often installed. One
+    /// GUI-only feature therefore strands exactly the users who need this tool most, with no
+    /// workaround at all. The GUI shelling out for everything is what keeps that true, so this
+    /// asserts it structurally: the GUI reaches the engine only through CliRunner.
+    /// </para>
+    /// </summary>
+    [Fact]
+    public void TheGuiReachesTheEngineOnlyThroughTheCommandLine()
+    {
+        var gui = Path.Combine(RepoRoot.Find().FullName, "src", "WinLogRotate.Gui");
+
+        var offenders = Directory
+            .EnumerateFiles(gui, "*.cs", SearchOption.AllDirectories)
+            .Where(f => !f.Contains(Path.Combine("obj", ""), StringComparison.Ordinal))
+            .Where(f => File.ReadAllText(f) is var text
+                        && (text.Contains("RotationRunner", StringComparison.Ordinal)
+                            || text.Contains("PlanExecutor", StringComparison.Ordinal)
+                            || text.Contains("ManageJobPlanner", StringComparison.Ordinal)
+                            || text.Contains("RotateJobPlanner", StringComparison.Ordinal)))
+            .Select(Path.GetFileName)
+            .ToArray();
+
+        offenders.ShouldBeEmpty(
+            "the GUI must shell out to winlogrotate.exe rather than driving the engine directly, "
+            + "so that every capability stays reachable on Server Core where WinForms cannot run");
+    }
+
+    /// <summary>
     /// The engine's platform-neutral half must stay neutral.
     /// <para>
     /// Marking the whole Core assembly [SupportedOSPlatform("windows")] is the tempting
