@@ -224,18 +224,59 @@ deliberately differs, and what cannot exist on Windows.
 
 ## Status, honestly
 
-**v0.0.1. The pipeline is proven; the product is not.**
+**v0.0.2.** The installer and scheduler are verified end to end on Windows. The rotation engine
+is verified only against files nothing holds open. The GUI is entirely unverified.
 
-The release builds end to end: 273 tests pass, the NativeAOT binary links and is genuinely
-native, all three installers compile under `-WX`, and the assets publish with matching
-checksums.
+### What has actually run on Windows
 
-**But nothing has been executed on Windows yet.** The installer compiles but has never
-installed. The scheduled task has never been registered. The GUI has never rendered. No file
-has ever actually been rotated by this program.
+Every push exercises an `installer-smoke` job on a fresh GitHub-hosted Windows Server 2025
+runner: it builds a real installer, installs it silently, and asserts the result — then
+upgrades, uninstalls, and does the per-user variant too.
 
-What *is* thoroughly verified is everything platform-neutral, and that's the part where the
-subtle bugs live:
+```
+installed to C:\Program Files\WinLogRotate
+ACL ok: O:BAG:SYD:PAI(A;OICI;FA;;;SY)(A;OICI;FA;;;BA)(A;OICI;0x1200a9;;;BU)
+task LastTaskResult = 0x0
+[smoke] 6 file(s) matched
+  skip      app-2026-09-07.log  (newest file - the application is still writing it)
+  would del app-2026-08-03.log  (rotate = 2 keeps 2 archive(s); this is number 3)
+  would zip app-2026-08-05.log  (compress = zip)
+upgrade took 18.3s
+```
+
+Proven, on a real machine: the silent per-machine install; the configuration directory coming
+out with exactly the intended descriptor, protected and administrator-only; the Event Log source;
+PATH edited without harming what was already there; the scheduled task registered with every
+setting Task Scheduler gets wrong by default; **SYSTEM running the binary and actually deleting
+and compressing files**; an upgrade blocking on a held rotation mutex for 18.3s and resuming the
+moment it was released; a silent uninstall keeping the configuration; `/PURGEDATA` removing it;
+and a per-user install leaving HKLM, the machine PATH and the Event Log alone.
+
+That job found three bugs nothing else could have. The scheduled task **never registered at all**
+in v0.0.1 — `LogonType: ServiceAccount` is a value from the COM enumeration and does not exist in
+the XML schema, so `schtasks` rejected the file, and because the installer treats a failed
+registration as non-fatal the install reported success with nothing scheduled to run.
+`NT AUTHORITY\SYSTEM` is localised and would have failed on a German machine, so the account is
+now named by SID. And a per-user install was editing the machine PATH, because scope was taken
+from elevation rather than from the install.
+
+### What has not
+
+- **The GUI has never rendered.** No window, no theme, no dialog. The runner is Server and every
+  install is silent, so the installer's own wizard pages have never been drawn either.
+- **Nothing unelevated.** The runner is an administrator throughout, so the read-only banner, the
+  "needs administrator" refusals and the UAC child-process elevation are untested.
+- **No locked files.** The smoke test rotates files nothing holds open, so `LockProbe`,
+  `copytruncate` and the NUL-fill detector — the hardest and most Windows-specific code here —
+  have never met a real contended handle.
+- **The .NET bootstrap is skipped** (`/NORUNTIME`), so the winget detection and install path is
+  unexercised.
+- **English locale, no domain, no UNC paths, no IIS installed.**
+- **The Windows Service host is not implemented.** `host use service` says so and refuses.
+
+### What is thoroughly tested, everywhere
+
+289 tests, and the platform-neutral half is where the subtle bugs live:
 
 - logrotate's scheduling rules, including that `--force` does **not** override `notifempty`,
   `minsize` or `minage` — one test per gate
@@ -248,9 +289,7 @@ subtle bugs live:
 - the gzip output, cross-checked against GNU `gzip`: `gzip -t` passes and `gunzip -N` restores
   the original name and timestamp
 
-Treat this as something to try on a machine you don't mind breaking, and use `--dry-run` first.
-
----
+Use `--dry-run` first, and prefer a machine you don't mind breaking.
 
 ## Build from source
 
