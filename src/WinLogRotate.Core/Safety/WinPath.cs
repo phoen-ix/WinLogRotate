@@ -162,6 +162,28 @@ public static class WinPath
         return PathProblem.None;
     }
 
+    /// <summary>
+    /// The final component of a path, treating both separators as separators.
+    /// <para>
+    /// <see cref="System.IO.Path.GetFileName(string)"/> is platform-dependent: on Linux it does
+    /// not split on a backslash, so it returns the whole of <c>C:\logs\app.log</c>. That makes
+    /// any logic built on it untestable off Windows, and it is also wrong on Windows for a
+    /// config path written with forward slashes - which is a spelling we explicitly accept.
+    /// </para>
+    /// </summary>
+    public static string FileName(string path)
+    {
+        var cut = path.AsSpan().LastIndexOfAny('/', '\\');
+        return cut < 0 ? path : path[(cut + 1)..];
+    }
+
+    /// <summary>The directory part of a path, treating both separators as separators.</summary>
+    public static string DirectoryName(string path)
+    {
+        var cut = path.AsSpan().LastIndexOfAny('/', '\\');
+        return cut <= 0 ? string.Empty : path[..cut];
+    }
+
     /// <summary>A DOS device name, with or without an extension - <c>NUL</c> and
     /// <c>NUL.log</c> both open the null device.</summary>
     public static bool IsReserved(string segment)

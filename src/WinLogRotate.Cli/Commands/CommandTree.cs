@@ -1,6 +1,7 @@
 using System.CommandLine;
 using WinLogRotate.Cli.Output;
 using WinLogRotate.Core;
+using WinLogRotate.Core.Engine;
 
 namespace WinLogRotate.Cli.Commands;
 
@@ -95,7 +96,17 @@ internal static class CommandTree
             SkipStateLock, WaitForStateLock, LockHeldExit,
         };
         GlobalOptions.AddTo(run);
-        run.SetAction(parse => NotYet.Run(CommandContext.From(parse), "run", milestone: 12));
+        run.SetAction(parse => RunCommand.Run(
+            CommandContext.From(parse),
+            new RunOptions
+            {
+                DryRun = parse.GetValue(DryRun),
+                Force = parse.GetValue(Force),
+                Catchup = parse.GetValue(Catchup),
+                OnlyJob = parse.GetValue(JobFilter),
+            },
+            parse.GetValue(GlobalOptions.ConfigDir)?.FullName,
+            parse.GetValue(StateFile)?.FullName));
         return run;
     }
 

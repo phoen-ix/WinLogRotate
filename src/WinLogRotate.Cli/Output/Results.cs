@@ -81,3 +81,18 @@ public sealed record ConfigShowResult
     public required string Root { get; init; }
     public required IReadOnlyList<EffectiveJob> Jobs { get; init; }
 }
+
+/// <summary>Payload of <c>winlogrotate run</c>.</summary>
+public sealed record RunResult
+{
+    /// <summary>Groups this run's entries in the journal.</summary>
+    public required string RunId { get; init; }
+
+    public required bool DryRun { get; init; }
+    public required int JobsConsidered { get; init; }
+    public required int JobsRun { get; init; }
+    public required int Completed { get; init; }
+    public required int Failed { get; init; }
+    public required long BytesFreed { get; init; }
+    public required IReadOnlyList<string> Errors { get; init; }
+}
