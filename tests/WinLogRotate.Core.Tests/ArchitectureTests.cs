@@ -96,6 +96,56 @@ public partial class ArchitectureTests
     }
 
     /// <summary>
+    /// Only a small, named set of files may read a secret's value.
+    /// <para>
+    /// <c>SecretString.Reveal</c> is deliberately ugly so that writing it feels like a
+    /// decision rather than a getter, and this is what makes that more than a convention. The
+    /// value has exactly one legitimate destination - the transport that authenticates with it
+    /// - and every other caller is a leak waiting to be discovered in a support bundle.
+    /// </para>
+    /// <para>
+    /// The allowlist is spelled out rather than derived from a folder, because "anything under
+    /// Secrets/ may reveal" is the rule that stops meaning anything the first time somebody
+    /// adds a convenience helper there.
+    /// </para>
+    /// </summary>
+    [Fact]
+    public void OnlyTheAllowlistedFilesRevealASecret()
+    {
+        string[] allowed =
+        [
+            // Where a secret is encrypted and decrypted.
+            "SecretStore.cs",
+            // The type itself.
+            "SecretString.cs",
+            // The tests that prove the redaction works.
+            "SecretStringTests.cs",
+        ];
+
+        // Assembled rather than written out, so that this file - which scans every file under
+        // src/ and tests/, including itself - does not match its own search string. The
+        // alternative, excluding this file, would make it the one place a violation could hide.
+        var needle = "." + "Reveal" + "()";
+
+        var root = RepoRoot.Find().FullName;
+
+        var offenders = new[] { "src", "tests" }
+            .Select(d => Path.Combine(root, d))
+            .Where(Directory.Exists)
+            .SelectMany(d => Directory.EnumerateFiles(d, "*.cs", SearchOption.AllDirectories))
+            .Where(f => !f.Contains(Path.Combine("obj", ""), StringComparison.Ordinal))
+            .Where(f => !f.Contains(Path.Combine("bin", ""), StringComparison.Ordinal))
+            .Where(f => !allowed.Contains(Path.GetFileName(f), StringComparer.Ordinal))
+            .Where(f => File.ReadAllText(f).Contains(needle, StringComparison.Ordinal))
+            .Select(Path.GetFileName)
+            .ToArray();
+
+        offenders.ShouldBeEmpty(
+            "a secret's value has one destination - the transport that authenticates with it. "
+            + "If a new transport needs it, add that file to the allowlist deliberately.");
+    }
+
+    /// <summary>
     /// The engine's platform-neutral half must stay neutral.
     /// <para>
     /// Marking the whole Core assembly [SupportedOSPlatform("windows")] is the tempting
