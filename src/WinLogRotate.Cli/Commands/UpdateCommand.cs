@@ -24,7 +24,7 @@ namespace WinLogRotate.Cli.Commands;
 /// </remarks>
 internal static class UpdateCommand
 {
-    private const string LatestReleaseUrl = "https://github.com/phoen-ix/winlogrotate/releases/latest";
+    private const string LatestReleaseUrl = "https://github.com/phoen-ix/WinLogRotate/releases/latest";
 
     public static async Task<int> CheckAsync(CommandContext ctx)
     {
