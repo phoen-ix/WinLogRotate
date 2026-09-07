@@ -15,6 +15,10 @@ public sealed record ExecutionResult
     public required int Skipped { get; init; }
     public required long BytesFreed { get; init; }
     public required IReadOnlyList<string> Errors { get; init; }
+
+    /// <summary>The same failures as <see cref="Errors"/>, classified and attributed.
+    /// Errors keeps the flat strings the envelope has always carried.</summary>
+    public IReadOnlyList<CliDiagnostic> Diagnostics { get; init; } = [];
 }
 
 /// <summary>
@@ -35,6 +39,7 @@ public sealed class PlanExecutor(IJournal journal, PathGuard guard, TimeProvider
         var skipped = 0;
         long freed = 0;
         var errors = new List<string>();
+        var diagnostics = new List<CliDiagnostic>();
 
         foreach (var op in plan.Operations)
         {
@@ -58,9 +63,10 @@ public sealed class PlanExecutor(IJournal journal, PathGuard guard, TimeProvider
             if (!decision.IsAllowed)
             {
                 failed++;
-                var message = decision.Message ?? $"{op.Source} was refused.";
-                errors.Add(message);
-                Emit(plan, op, Phase.Apply, OpResult.Failed, message, 0);
+                var refusal = Diagnose.Refusal(decision, plan.JobName);
+                errors.Add(refusal.Message);
+                diagnostics.Add(refusal);
+                Emit(plan, op, Phase.Apply, OpResult.Failed, refusal.Message, 0);
                 continue;
             }
 
@@ -80,12 +86,10 @@ public sealed class PlanExecutor(IJournal journal, PathGuard guard, TimeProvider
             catch (Exception e) when (e is IOException or UnauthorizedAccessException)
             {
                 failed++;
-                var code = RetryPolicy.ErrorCode(e);
-                var message = code == 0
-                    ? $"{op.Action} {op.Source}: {e.Message}"
-                    : $"{op.Action} {op.Source}: {Win32Error.Describe(code)}";
-                errors.Add(message);
-                Emit(plan, op, Phase.Apply, OpResult.Failed, message,
+                var failure = Diagnose.Failure(op.Action, op.Source, e, plan.JobName);
+                errors.Add(failure.Message);
+                diagnostics.Add(failure);
+                Emit(plan, op, Phase.Apply, OpResult.Failed, failure.Message,
                     (long)clock.GetElapsedTime(started).TotalMilliseconds);
             }
         }
@@ -97,6 +101,7 @@ public sealed class PlanExecutor(IJournal journal, PathGuard guard, TimeProvider
             Skipped = skipped,
             BytesFreed = freed,
             Errors = errors,
+            Diagnostics = diagnostics,
         };
     }
 

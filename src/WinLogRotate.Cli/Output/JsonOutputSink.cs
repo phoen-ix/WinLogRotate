@@ -22,6 +22,8 @@ internal sealed class JsonOutputSink(bool verbose, bool stream, TextWriter? stre
 
     public bool Verbose { get; } = verbose;
 
+    public IReadOnlyList<CliDiagnostic> Diagnostics => _diagnostics.Items;
+
     public void Diagnostic(CliDiagnostic d) => _diagnostics.Add(d);
 
     public void Event(CliEvent e)

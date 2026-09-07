@@ -47,4 +47,15 @@ public sealed record CliDiagnostic
     /// <summary>What the operator should actually do about it. Populated for everything a
     /// human can fix - an exact icacls command, the directive to set, the account to grant.</summary>
     public string? Remedy { get; init; }
+
+    /// <summary>
+    /// The underlying Win32 error, where one caused this. Null everywhere else.
+    /// </summary>
+    /// <remarks>
+    /// This is the error <em>class</em>, and it exists so that grouping can be done on a
+    /// number rather than on <see cref="Message"/>. Prose gets reworded between releases; if
+    /// anything downstream groups or fingerprints on it, the first improved error message
+    /// makes every ongoing failure look brand new. The number never moves.
+    /// </remarks>
+    public int? NativeError { get; init; }
 }

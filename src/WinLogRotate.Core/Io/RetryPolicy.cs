@@ -16,7 +16,7 @@ public static class RetryPolicy
     /// <summary>True for errors worth trying again: a transient share or lock violation.</summary>
     public static bool IsTransient(Exception e) => e switch
     {
-        IOException io => IsTransientCode(io.HResult & 0xFFFF),
+        IOException io => Win32Error.TryFromHResult(io.HResult, out var code) && IsTransientCode(code),
         UnauthorizedAccessException => true,
         _ => false,
     };
@@ -61,10 +61,10 @@ public static class RetryPolicy
     public static void Execute(Action action, int attempts, int intervalMs, Action<int, Exception>? onRetry = null) =>
         Execute<object?>(() => { action(); return null; }, attempts, intervalMs, onRetry);
 
-    /// <summary>The Win32 error code behind an exception, or 0.</summary>
+    /// <summary>The Win32 error code behind an exception, or 0 when it did not come from Win32.</summary>
     public static int ErrorCode(Exception e) => e switch
     {
-        IOException io => io.HResult & 0xFFFF,
+        IOException io => Win32Error.TryFromHResult(io.HResult, out var code) ? code : 0,
         UnauthorizedAccessException => Win32Error.AccessDenied,
         ExternalException ex => ex.ErrorCode & 0xFFFF,
         _ => 0,

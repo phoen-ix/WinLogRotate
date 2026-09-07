@@ -17,6 +17,17 @@ public interface IOutputSink
     /// <summary>A diagnostic. Collected into the envelope under --json.</summary>
     void Diagnostic(CliDiagnostic diagnostic);
 
+    /// <summary>
+    /// Every diagnostic reported so far, in order.
+    /// <para>
+    /// This is the notifier's input. Everything worth telling someone about already comes
+    /// through <see cref="Diagnostic"/> - a config that would not load, a path that was
+    /// refused, a file that was locked - so reading the same list back is what keeps a
+    /// notification from ever describing a run differently from the run's own output.
+    /// </para>
+    /// </summary>
+    IReadOnlyList<CliDiagnostic> Diagnostics { get; }
+
     /// <summary>One event of a long-running verb.</summary>
     void Event(CliEvent evt);
 

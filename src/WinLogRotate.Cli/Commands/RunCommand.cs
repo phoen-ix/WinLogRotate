@@ -124,14 +124,13 @@ internal static class RunCommand
             }
         }
 
-        foreach (var error in report.Errors)
+        // Forwarded as the engine classified them, not re-labelled. Reporting every failure as
+        // an Error with DiagnosticCode.RotationFailed used to describe a refused dangerous path
+        // - a security decision the guard made deliberately - as a rotation that went wrong,
+        // and dropped the job name and the Win32 code on the way.
+        foreach (var d in report.Diagnostics)
         {
-            ctx.Output.Diagnostic(new CliDiagnostic
-            {
-                Severity = Severity.Error,
-                Code = DiagnosticCode.RotationFailed,
-                Message = error,
-            });
+            ctx.Output.Diagnostic(d);
         }
 
         ctx.Output.Line(options.DryRun
