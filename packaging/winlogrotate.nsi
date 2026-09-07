@@ -61,7 +61,16 @@ SetCompressor /SOLID lzma
 !include "LogicLib.nsh"
 !include "nsDialogs.nsh"
 !include "FileFunc.nsh"
+!include "WordFunc.nsh"
 !include "x64.nsh"
+
+; FileFunc and WordFunc make their macros available on demand rather than automatically. The
+; installer-side ${GetOptions} and ${GetParameters} come for free, but the uninstaller's un.
+; variants and every WordFunc function have to be requested by name - and the failure mode is
+; "Invalid command: ${WordFind}" at compile time, not something subtler.
+!insertmacro WordFind
+!insertmacro un.GetParameters
+!insertmacro un.GetOptions
 
 ; ---------------------------------------------------------------------------------------
 ; Multi-user, inverted for a system tool.
@@ -90,7 +99,6 @@ Var HostPage
 Var HostTask
 Var HostService
 Var HostNone
-Var SkipPath
 
 !define MUI_ICON   "winlogrotate.ico"
 !define MUI_UNICON "winlogrotate.ico"
