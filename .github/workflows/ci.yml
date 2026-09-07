@@ -1,0 +1,143 @@
+name: ci
+
+on:
+  push:
+    branches: [ main ]
+  pull_request:
+    branches: [ main ]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  DOTNET_NOLOGO: 'true'
+  DOTNET_CLI_TELEMETRY_OPTOUT: 'true'
+
+jobs:
+  # Pinned to windows-2025 rather than windows-latest. The `latest` label migrated to
+  # Server 2025 + VS 2026 over 8-15 June 2026, and because our CLI is NativeAOT an image
+  # change alters the machine code we actually ship. That should arrive as a reviewed PR,
+  # not as a surprise on a Tuesday. The canary job below watches for the next one.
+  build:
+    runs-on: windows-2025
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+
+      - uses: actions/setup-dotnet@26b0ec14cb23fa6904739307f278c14f94c95bf1 # v5
+        with:
+          dotnet-version: '10.0.x'
+
+      - name: Restore
+        run: dotnet restore WinLogRotate.slnx
+
+      - name: Build (Release)
+        run: dotnet build WinLogRotate.slnx -c Release --no-restore
+
+      # global.json opts the repo into the Microsoft.Testing.Platform runner. Without that
+      # block the .NET 10 SDK refuses to run xunit.v3 projects at all.
+      - name: Test
+        run: dotnet test WinLogRotate.slnx -c Release --no-build
+
+      - name: Format check
+        run: dotnet format WinLogRotate.slnx --verify-no-changes --severity warn
+
+  # Everything except the WinForms project must build and its tests must pass off-Windows.
+  # This is not portability for its own sake: it is the standing proof that the engine's
+  # platform-neutral half (schedule math, glob matching, retention arithmetic, TOML
+  # round-trip) really is neutral, which is what keeps ~70% of the suite fast and what
+  # stops [SupportedOSPlatform] creeping onto types that do not need it.
+  linux-typecheck:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+
+      - uses: actions/setup-dotnet@26b0ec14cb23fa6904739307f278c14f94c95bf1 # v5
+        with:
+          dotnet-version: '10.0.x'
+
+      # EnableWindowsTargeting lets the WinForms project restore and type-check here too;
+      # only the runnable exe needs Windows.
+      - name: Build (Release)
+        run: dotnet build WinLogRotate.slnx -c Release
+
+      - name: Test (pure suite)
+        run: dotnet test tests/WinLogRotate.Core.Tests/WinLogRotate.Core.Tests.csproj -c Release --no-build
+
+  # The job that keeps "zero dependencies" honest. NativeAOT cannot cross-compile to
+  # Windows, so this is the only place the CLI is truly linked - a Linux dev box can only
+  # ever see the analyzer half of the story.
+  aot:
+    runs-on: windows-2025
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+
+      - uses: actions/setup-dotnet@26b0ec14cb23fa6904739307f278c14f94c95bf1 # v5
+        with:
+          dotnet-version: '10.0.x'
+
+      # /warnaserror on the publish, not just the build: a trim/AOT warning here means the
+      # published binary will fail at runtime in a way no test will catch, because the
+      # failing path is whichever one happens to hit the trimmed-away metadata.
+      - name: Publish NativeAOT CLI
+        run: >
+          dotnet publish src/WinLogRotate.Cli/WinLogRotate.Cli.csproj
+          -c Release -r win-x64
+          -p:PublishAot=true
+          -p:TrimmerSingleWarn=false
+          /warnaserror
+          -o publish-cli
+
+      # A floor AND a ceiling. The ceiling catches reflection creep - the quiet cost of one
+      # convenient JsonSerializer.Deserialize<T>. The floor catches a publish that silently
+      # produced a framework-dependent apphost stub instead of a native image, which looks
+      # like a wonderful size win right up until it fails on a machine with no runtime.
+      - name: Size gate
+        shell: pwsh
+        run: |
+          $exe = 'publish-cli/winlogrotate.exe'
+          if (-not (Test-Path $exe)) { throw "the AOT publish produced no $exe" }
+          $mb = (Get-Item $exe).Length / 1MB
+          "winlogrotate.exe = {0:N2} MB" -f $mb
+          if ($mb -lt 2)  { throw ("{0:N2} MB is below the floor - this looks like an apphost stub, not a native image" -f $mb) }
+          if ($mb -gt 12) { throw ("{0:N2} MB is above the ceiling - something pulled in reflection" -f $mb) }
+
+      # Turns "zero dependencies" from a claim in the README into an assertion. A native
+      # image may import from OS DLLs and nothing else; an hostfxr/hostpolicy import means
+      # it is not actually self-contained.
+      - name: Dependency gate
+        shell: pwsh
+        run: |
+          $dumpbin = Get-ChildItem "$env:ProgramFiles*\Microsoft Visual Studio\*\*\VC\Tools\MSVC\*\bin\Hostx64\x64\dumpbin.exe" |
+                     Select-Object -First 1
+          if (-not $dumpbin) { Write-Host '::warning::dumpbin not found; skipping import check'; exit 0 }
+          $imports = & $dumpbin /DEPENDENTS publish-cli/winlogrotate.exe |
+                     Select-String -Pattern '^\s{4}(\S+\.dll)$' -AllMatches |
+                     ForEach-Object { $_.Matches.Groups[1].Value.ToLower() }
+          $imports | ForEach-Object { "imports $_" }
+          $forbidden = $imports | Where-Object { $_ -match 'hostfxr|hostpolicy|coreclr|clrjit|System\.' }
+          if ($forbidden) { throw "not self-contained - imports $($forbidden -join ', ')" }
+
+      - name: Smoke the published binary
+        shell: pwsh
+        run: |
+          $v = & publish-cli/winlogrotate.exe --version
+          if ($LASTEXITCODE -ne 0) { throw "--version exited $LASTEXITCODE" }
+          if ($v -notmatch '^\d+\.\d+\.\d+$') { throw "--version printed '$v', expected three-part semver" }
+          "version = $v"
+
+  # Weekly, allowed to fail: tells us the runner image is about to change under us without
+  # turning a Tuesday push red. When this goes red, bump the pinned label deliberately.
+  runner-canary:
+    runs-on: windows-latest
+    continue-on-error: true
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+      - uses: actions/setup-dotnet@26b0ec14cb23fa6904739307f278c14f94c95bf1 # v5
+        with:
+          dotnet-version: '10.0.x'
+      - run: dotnet build WinLogRotate.slnx -c Release

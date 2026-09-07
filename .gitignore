@@ -1,0 +1,24 @@
+# Build output
+bin/
+obj/
+publish*/
+artifacts/
+dist/
+*.user
+*.suo
+.vs/
+.vscode/
+.idea/
+
+# Release artifacts staged at the repo root by the pipeline
+WinLogRotate-Setup-*.exe
+WinLogRotate-*.zip
+SHA256SUMS.txt
+winlogrotate.exe
+winlogrotate-gui.exe
+
+# Test output
+TestResults/
+*.trx
+*.received.*
+coverage*.xml

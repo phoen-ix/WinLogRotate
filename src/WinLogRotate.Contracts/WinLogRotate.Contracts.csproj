@@ -1,0 +1,11 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+    <RootNamespace>WinLogRotate.Contracts</RootNamespace>
+    <!-- The CLI-to-GUI wire format. Deliberately dependency-free: both an AOT binary
+         and a WinForms app reference it, so it must constrain neither. -->
+    <IsAotCompatible>true</IsAotCompatible>
+  </PropertyGroup>
+
+</Project>

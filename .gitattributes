@@ -1,0 +1,18 @@
+* text=auto eol=lf
+
+# The release workflow writes latest.json with deliberate LF and a trailing newline;
+# ConvertTo-Json emits CRLF on Windows, which would rewrite the whole file every
+# release and look like a change that isn't one. Pin it so a dev with
+# core.autocrlf=true doesn't fight the pipeline.
+web/site/latest.json text eol=lf
+
+*.sln       text eol=crlf
+*.csproj    text eol=lf
+*.nsi       text eol=crlf
+*.bat       text eol=crlf
+*.ps1       text eol=crlf
+*.sh        text eol=lf
+
+*.ico  binary
+*.png  binary
+*.exe  binary

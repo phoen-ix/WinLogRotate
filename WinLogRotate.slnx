@@ -1,0 +1,12 @@
+<Solution>
+  <Folder Name="/src/">
+    <Project Path="src/WinLogRotate.Cli/WinLogRotate.Cli.csproj" />
+    <Project Path="src/WinLogRotate.Contracts/WinLogRotate.Contracts.csproj" />
+    <Project Path="src/WinLogRotate.Core/WinLogRotate.Core.csproj" />
+    <Project Path="src/WinLogRotate.Gui/WinLogRotate.Gui.csproj" />
+    <Project Path="src/WinLogRotate.Hosting/WinLogRotate.Hosting.csproj" />
+  </Folder>
+  <Folder Name="/tests/">
+    <Project Path="tests/WinLogRotate.Core.Tests/WinLogRotate.Core.Tests.csproj" />
+  </Folder>
+</Solution>

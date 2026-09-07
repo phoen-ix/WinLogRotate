@@ -1,0 +1,44 @@
+<Project>
+
+  <PropertyGroup>
+    <LangVersion>latest</LangVersion>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+
+    <!-- A warning here means the code isn't doing what it reads like it does. -->
+    <TreatWarningsAsErrors>true</TreatWarningsAsErrors>
+    <EnforceCodeStyleInBuild>true</EnforceCodeStyleInBuild>
+
+    <!-- Placeholder only: CI injects the real version via -p:Version (release.yml).
+         Local builds show an obviously-dev v0.0.0 instead of a stale-looking number.
+         The app reads it back with Assembly.GetName().Version. -->
+    <Version>0.0.0-dev</Version>
+
+    <Product>WinLogRotate</Product>
+    <Company>phoen-ix</Company>
+    <Authors>phoen-ix</Authors>
+    <Copyright>Copyright (c) 2026 phoen-ix</Copyright>
+    <PackageLicenseExpression>MIT</PackageLicenseExpression>
+
+    <!-- Nothing here is localized yet; every user-facing string goes through the
+         Strings resource layer so adding a language later is a translation job,
+         not a refactor. Until then, don't carry satellite assemblies around. -->
+    <SatelliteResourceLanguages>en</SatelliteResourceLanguages>
+
+    <!-- Lets the Windows-desktop (WinForms) project restore and type-check on a Linux
+         CI runner or dev box. The runnable exe is still built on Windows. -->
+    <EnableWindowsTargeting>true</EnableWindowsTargeting>
+
+    <Deterministic>true</Deterministic>
+    <GenerateDocumentationFile>false</GenerateDocumentationFile>
+    <ManagePackageVersionsCentrally>false</ManagePackageVersionsCentrally>
+  </PropertyGroup>
+
+  <!-- x64 only for 1.0. arm64 is wired into CI as a build-only gate so the code stays
+       arch-clean, but nothing arm64 ships until someone asks. -->
+  <PropertyGroup>
+    <Platforms>AnyCPU</Platforms>
+    <DefaultWinLogRotateRid>win-x64</DefaultWinLogRotateRid>
+  </PropertyGroup>
+
+</Project>

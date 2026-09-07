@@ -1,0 +1,37 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <OutputType>WinExe</OutputType>
+    <TargetFramework>net10.0-windows</TargetFramework>
+    <UseWindowsForms>true</UseWindowsForms>
+    <RootNamespace>WinLogRotate.Gui</RootNamespace>
+    <AssemblyName>winlogrotate-gui</AssemblyName>
+
+    <!-- WinForms lives INSIDE the .NET Desktop Runtime, so a framework-dependent build
+         of this project costs ~200 KB. That is the whole reason it is WinForms and not
+         Avalonia. It also means this project can never be trimmed or AOT-compiled -
+         Microsoft disabled both in the SDK (dotnet/winforms#4649) and it is not coming
+         back. Publish-shape properties stay on the command line so one csproj yields
+         both the framework-dependent and the self-contained build. -->
+
+    <!-- Deviation from the reference pipeline, which sets this true app-wide. The
+         justification there ("parses/formats with invariant culture throughout") holds
+         for our engine but not for a window rendering dates and file sizes to an
+         Austrian admin. Costs nothing: the thin build gets ICU from the shared runtime,
+         and the fat build can't be trimmed anyway. -->
+    <InvariantGlobalization>false</InvariantGlobalization>
+
+    <ApplicationManifest>app.manifest</ApplicationManifest>
+
+    <!-- .NET 10 WinForms ERRORS (WFO0003) on DPI settings in the manifest and requires
+         this property instead; ApplicationConfiguration.Initialize() emits the call.
+         The reference project's NoWarn WFAC010 is a .NET 8-ism that no longer applies. -->
+    <ApplicationHighDpiMode>PerMonitorV2</ApplicationHighDpiMode>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="../WinLogRotate.Core/WinLogRotate.Core.csproj" />
+    <ProjectReference Include="../WinLogRotate.Hosting/WinLogRotate.Hosting.csproj" />
+  </ItemGroup>
+
+</Project>

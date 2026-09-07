@@ -1,0 +1,31 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+    <RootNamespace>WinLogRotate.Core</RootNamespace>
+
+    <!-- The engine is consumed by the NativeAOT CLI, so it must stay AOT-clean.
+         This enables the AOT/trim analyzers at BUILD time, which is what actually
+         keeps the promise honest - the first reflection-using package otherwise
+         sneaks in unnoticed and is discovered by the CLI six months later. -->
+    <IsAotCompatible>true</IsAotCompatible>
+
+    <!-- Plain net10.0, NOT net10.0-windows: this keeps the project restorable and
+         type-checkable on a Linux CI runner, so ~70% of the test suite runs there.
+         The Windows-only surface is declared per-assembly in AssemblyInfo.cs instead,
+         which satisfies CA1416 without pinning the TFM to Windows. -->
+  </PropertyGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="../WinLogRotate.Contracts/WinLogRotate.Contracts.csproj" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <InternalsVisibleTo Include="WinLogRotate.Core.Tests" />
+    <InternalsVisibleTo Include="WinLogRotate.Windows.Tests" />
+    <InternalsVisibleTo Include="WinLogRotate.Snapshot.Tests" />
+    <InternalsVisibleTo Include="WinLogRotate.Hosting" />
+    <InternalsVisibleTo Include="WinLogRotate.Cli" />
+  </ItemGroup>
+
+</Project>

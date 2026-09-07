@@ -1,0 +1,37 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net10.0</TargetFramework>
+    <RootNamespace>WinLogRotate.Cli</RootNamespace>
+    <AssemblyName>winlogrotate</AssemblyName>
+
+    <!-- A real console subsystem exe: pipes, redirection, exit codes, stdin and Ctrl+C
+         all work for free. The GUI is a separate WinExe. Nobody successfully ships one
+         binary that is both - VS Code, Docker and git all ship two. -->
+
+    <!-- Deviation from the reference pipeline, deliberate: it keeps publish-shape
+         properties on the command line only, because one csproj there yields both a fat
+         and a thin GUI build. The CLI has exactly one shape, and PublishAot in the
+         csproj is what turns the AOT analyzers on during `dotnet build` - which is the
+         whole point. Microsoft's own AOT docs recommend it here. -->
+    <PublishAot>true</PublishAot>
+    <InvariantGlobalization>true</InvariantGlobalization>
+    <UseSystemResourceKeys>true</UseSystemResourceKeys>
+    <StackTraceSupport>false</StackTraceSupport>
+    <TrimmerSingleWarn>false</TrimmerSingleWarn>
+
+    <ApplicationManifest>app.manifest</ApplicationManifest>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="../WinLogRotate.Core/WinLogRotate.Core.csproj" />
+    <ProjectReference Include="../WinLogRotate.Hosting/WinLogRotate.Hosting.csproj" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <InternalsVisibleTo Include="WinLogRotate.Core.Tests" />
+    <InternalsVisibleTo Include="WinLogRotate.Snapshot.Tests" />
+  </ItemGroup>
+
+</Project>

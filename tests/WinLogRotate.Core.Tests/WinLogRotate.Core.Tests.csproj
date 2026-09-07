@@ -1,0 +1,34 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+    <RootNamespace>WinLogRotate.Core.Tests</RootNamespace>
+    <!-- xunit.v3 test projects are executables (Microsoft.Testing.Platform), which is
+         what makes the AOT-published test run in CI possible at all. -->
+    <OutputType>Exe</OutputType>
+    <IsPackable>false</IsPackable>
+    <IsTestProject>true</IsTestProject>
+    <TrimmerSingleWarn>false</TrimmerSingleWarn>
+
+    <!-- xunit.v3 runs on Microsoft.Testing.Platform, which the .NET 10 SDK will not route
+         through the legacy VSTest bridge. The opt-in is the "test": { "runner": ... }
+         block in global.json at the repo root - NOT a project property and NOT
+         dotnet.config, both of which look plausible and are silently ignored. Without it
+         `dotnet test` fails with "Testing with VSTest target is no longer supported". -->
+
+    <!-- PublishAot is NOT set here: the AOT run is a separate CI publish invocation, so
+         the ordinary `dotnet test` on the Linux path isn't forced through an AOT
+         toolchain. The AOT analyzers still fire, because Core sets IsAotCompatible. -->
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="xunit.v3" Version="4.0.0" />
+    <PackageReference Include="Shouldly" Version="4.3.0" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="../../src/WinLogRotate.Core/WinLogRotate.Core.csproj" />
+    <ProjectReference Include="../../src/WinLogRotate.Hosting/WinLogRotate.Hosting.csproj" />
+  </ItemGroup>
+
+</Project>
