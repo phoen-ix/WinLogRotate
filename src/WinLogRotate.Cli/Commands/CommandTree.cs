@@ -198,13 +198,23 @@ internal static class CommandTree
         // Called by the installer rather than having NSIS edit PATH itself: stock makensis is
         // built with NSIS_MAX_STRLEN=1024 and silently truncates a longer PATH, and writing
         // that back destroys it for every program on the machine.
-        var pathAdd = new Command("path-add", "Add the install directory to PATH.");
-        GlobalOptions.AddTo(pathAdd);
-        pathAdd.SetAction(parse => HostCommand.Path(CommandContext.From(parse), add: true));
+        // The installer passes --machine only for an all-users install. Without it the user's
+        // own PATH is edited, which is what a per-user install must do even when the person
+        // running it happens to be an administrator.
+        var machineScope = new Option<bool>("--machine")
+        {
+            Description = "Edit the machine PATH rather than this user's. Needs administrator.",
+        };
 
-        var pathRemove = new Command("path-remove", "Remove the install directory from PATH.");
+        var pathAdd = new Command("path-add", "Add the install directory to PATH.") { machineScope };
+        GlobalOptions.AddTo(pathAdd);
+        pathAdd.SetAction(parse => HostCommand.Path(
+            CommandContext.From(parse), add: true, machine: parse.GetValue(machineScope)));
+
+        var pathRemove = new Command("path-remove", "Remove the install directory from PATH.") { machineScope };
         GlobalOptions.AddTo(pathRemove);
-        pathRemove.SetAction(parse => HostCommand.Path(CommandContext.From(parse), add: false));
+        pathRemove.SetAction(parse => HostCommand.Path(
+            CommandContext.From(parse), add: false, machine: parse.GetValue(machineScope)));
 
         return new Command("host", "Manage what runs rotations: a Scheduled Task, a Windows Service, or nothing.")
         {

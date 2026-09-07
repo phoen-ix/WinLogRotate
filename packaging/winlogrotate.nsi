@@ -456,7 +456,13 @@ Section "-Core" SEC_CORE
   ${GetParameters} $0
   ${GetOptions} $0 "/NOPATH" $1
   ${If} ${Errors}
-    nsExec::ExecToLog '"$INSTDIR\${CLI}" host path-add --config-dir "$DataDir"'
+    ; --machine only for an all-users install. A per-user install must edit only that user's
+    ; PATH even when an administrator is running it, which is most of the time.
+    ${If} $MultiUser.InstallMode == "AllUsers"
+      nsExec::ExecToLog '"$INSTDIR\${CLI}" host path-add --machine'
+    ${Else}
+      nsExec::ExecToLog '"$INSTDIR\${CLI}" host path-add'
+    ${EndIf}
     Pop $0
   ${EndIf}
 
@@ -610,7 +616,11 @@ Section "Uninstall"
   nsExec::ExecToLog '"$SYSDIR\sc.exe" delete "${SERVICE_NAME}"'
   Pop $0
 
-  nsExec::ExecToLog '"$INSTDIR\${CLI}" host path-remove'
+  ${If} $MultiUser.InstallMode == "AllUsers"
+    nsExec::ExecToLog '"$INSTDIR\${CLI}" host path-remove --machine'
+  ${Else}
+    nsExec::ExecToLog '"$INSTDIR\${CLI}" host path-remove'
+  ${EndIf}
   Pop $0
 
   DeleteRegKey HKLM "${EVENTLOG_KEY}"

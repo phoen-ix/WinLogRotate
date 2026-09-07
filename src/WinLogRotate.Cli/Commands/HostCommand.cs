@@ -200,7 +200,7 @@ internal static class HostCommand
     /// with NSIS_MAX_STRLEN=1024, and its ReadRegStr silently truncates a longer PATH. Writing
     /// that truncated value back destroys the machine PATH for every program on the system.
     /// </remarks>
-    public static int Path(CommandContext ctx, bool add)
+    public static int Path(CommandContext ctx, bool add, bool machine)
     {
         if (!OperatingSystem.IsWindows())
         {
@@ -213,7 +213,12 @@ internal static class HostCommand
             return ctx.Output.Complete<HostResult>("host path", ExitCode.Errors, null);
         }
 
-        var target = Privilege.IsElevated()
+        // Scope follows the INSTALL, not the token. Deciding from elevation alone means a
+        // per-user install performed by an administrator - which is most of them, and every one
+        // on a CI runner - silently edits the machine PATH for everybody. The installer knows
+        // which kind of install it is doing and says so; elevation only gates whether the
+        // machine PATH can be written at all.
+        var target = machine && Privilege.IsElevated()
             ? EnvironmentVariableTarget.Machine
             : EnvironmentVariableTarget.User;
 
@@ -241,7 +246,9 @@ internal static class HostCommand
         }
 
         Environment.SetEnvironmentVariable("PATH", string.Join(';', parts), target);
-        ctx.Output.Line(add ? $"Added {directory} to PATH." : $"Removed {directory} from PATH.");
+        ctx.Output.Line(add
+            ? $"Added {directory} to the {target} PATH."
+            : $"Removed {directory} from the {target} PATH.");
         return ctx.Output.Complete<HostResult>("host path", ExitCode.Ok, null);
     }
 
