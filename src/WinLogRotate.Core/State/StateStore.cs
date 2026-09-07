@@ -138,24 +138,8 @@ public sealed class StateStore
     {
         _document = _document with { Written = clock.GetUtcNow() };
 
-        var directory = System.IO.Path.GetDirectoryName(_path);
-        if (!string.IsNullOrEmpty(directory))
-        {
-            Directory.CreateDirectory(directory);
-        }
-
-        var temp = _path + ".tmp";
-        var json = JsonSerializer.Serialize(_document, StateJsonContext.Default.StateDocument);
-
-        using (var stream = new FileStream(temp, FileMode.Create, FileAccess.Write, FileShare.None))
-        using (var writer = new StreamWriter(stream))
-        {
-            writer.Write(json);
-            writer.Flush();
-            stream.Flush(flushToDisk: true);
-        }
-
-        File.Move(temp, _path, overwrite: true);
+        AtomicJson.Write(
+            _path, JsonSerializer.Serialize(_document, StateJsonContext.Default.StateDocument));
     }
 
     /// <summary>

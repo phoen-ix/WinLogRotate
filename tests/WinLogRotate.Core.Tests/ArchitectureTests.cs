@@ -118,8 +118,9 @@ public partial class ArchitectureTests
             "SecretStore.cs",
             // The type itself.
             "SecretString.cs",
-            // The tests that prove the redaction works.
+            // The tests that prove the redaction works, and that a stored secret round-trips.
             "SecretStringTests.cs",
+            "SecretStoreTests.cs",
         ];
 
         // Assembled rather than written out, so that this file - which scans every file under
