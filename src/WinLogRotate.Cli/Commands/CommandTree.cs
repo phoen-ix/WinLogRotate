@@ -117,7 +117,7 @@ internal static class CommandTree
         var path = new Argument<string>("path") { Description = "The log file to probe." };
         var probe = new Command("probe", "Report which locked-file strategies a path actually supports.") { path };
         GlobalOptions.AddTo(probe);
-        probe.SetAction(parse => NotYet.Run(CommandContext.From(parse), "probe", milestone: 5));
+        probe.SetAction(parse => ProbeCommand.Run(CommandContext.From(parse), parse.GetRequiredValue(path)));
         return probe;
     }
 
@@ -175,16 +175,16 @@ internal static class CommandTree
         var kind = new Argument<string>("kind") { Description = "task, service, or none." };
         var use = new Command("use", "Choose what runs rotations, switching freely from whatever is registered now.") { kind };
         GlobalOptions.AddTo(use);
-        use.SetAction(parse => NotYet.Run(CommandContext.From(parse), "host use", milestone: 13));
+        use.SetAction(parse => HostCommand.Use(CommandContext.From(parse), parse.GetRequiredValue(kind), parse.GetValue(GlobalOptions.ConfigDir)?.FullName));
 
         var status = new Command("status", "Report the configured run host, what is actually registered, and any drift between them.");
         GlobalOptions.AddTo(status);
-        status.SetAction(parse => NotYet.Run(CommandContext.From(parse), "host status", milestone: 13));
+        status.SetAction(parse => HostCommand.Status(CommandContext.From(parse), parse.GetValue(GlobalOptions.ConfigDir)?.FullName));
 
         var acl = new Option<bool>("--acl") { Description = "Re-apply the hardened ACL to the configuration directory." };
         var repair = new Command("repair", "Put the run host and directory permissions back the way the installer left them.") { acl };
         GlobalOptions.AddTo(repair);
-        repair.SetAction(parse => NotYet.Run(CommandContext.From(parse), "host repair", milestone: 10));
+        repair.SetAction(parse => HostCommand.Repair(CommandContext.From(parse), parse.GetValue(acl), parse.GetValue(GlobalOptions.ConfigDir)?.FullName));
 
         var forDuration = new Option<string?>("--for") { Description = "How long to pause, e.g. 01:00:00." };
         var pause = new Command("pause", "Suspend rotations without unregistering the run host.") { forDuration };
@@ -193,11 +193,22 @@ internal static class CommandTree
 
         var exportTask = new Command("export-task", "Print the Scheduled Task XML, for deployment by GPO or DSC.");
         GlobalOptions.AddTo(exportTask);
-        exportTask.SetAction(parse => NotYet.Run(CommandContext.From(parse), "host export-task", milestone: 13));
+        exportTask.SetAction(parse => ExportTaskCommand.Run(CommandContext.From(parse), parse.GetValue(GlobalOptions.ConfigDir)?.FullName));
+
+        // Called by the installer rather than having NSIS edit PATH itself: stock makensis is
+        // built with NSIS_MAX_STRLEN=1024 and silently truncates a longer PATH, and writing
+        // that back destroys it for every program on the machine.
+        var pathAdd = new Command("path-add", "Add the install directory to PATH.");
+        GlobalOptions.AddTo(pathAdd);
+        pathAdd.SetAction(parse => HostCommand.Path(CommandContext.From(parse), add: true));
+
+        var pathRemove = new Command("path-remove", "Remove the install directory from PATH.");
+        GlobalOptions.AddTo(pathRemove);
+        pathRemove.SetAction(parse => HostCommand.Path(CommandContext.From(parse), add: false));
 
         return new Command("host", "Manage what runs rotations: a Scheduled Task, a Windows Service, or nothing.")
         {
-            use, status, repair, pause, exportTask,
+            use, status, repair, pause, exportTask, pathAdd, pathRemove,
         };
     }
 
@@ -210,7 +221,7 @@ internal static class CommandTree
         var probe = new Option<bool>("--probe") { Description = "Probe each path and pick a supported locked-file strategy, instead of leaving imported jobs disabled." };
         var import = new Command("import", "Convert a Linux logrotate configuration. One way: what cannot be translated is commented, not guessed.") { source, outDir, probe };
         GlobalOptions.AddTo(import);
-        import.SetAction(parse => NotYet.Run(CommandContext.From(parse), "import", milestone: 20));
+        import.SetAction(parse => ImportCommand.Run(CommandContext.From(parse), parse.GetRequiredValue(source), parse.GetValue(outDir)?.FullName, parse.GetValue(GlobalOptions.ConfigDir)?.FullName));
         return import;
     }
 

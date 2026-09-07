@@ -113,3 +113,45 @@ public sealed record DoctorResult
     public required string RunHost { get; init; }
     public required string RunHostDetail { get; init; }
 }
+
+/// <summary>Payload of the <c>host</c> verbs.</summary>
+public sealed record HostResult
+{
+    public required string Host { get; init; }
+    public required string ConfigRoot { get; init; }
+    public required string Scope { get; init; }
+}
+
+/// <summary>Payload of <c>winlogrotate probe</c>.</summary>
+public sealed record ProbeResultDto
+{
+    public required string Path { get; init; }
+    public required string Verdict { get; init; }
+    public required string Explanation { get; init; }
+
+    /// <summary>The best strategy this file actually supports, for the GUI to preselect.</summary>
+    public string? Suggested { get; init; }
+
+    public int BlockingError { get; init; }
+    public string? BlockingErrorText { get; init; }
+}
+
+/// <summary>Payload of <c>winlogrotate import</c>.</summary>
+public sealed record ImportResult
+{
+    public required string Source { get; init; }
+    public required string OutputDirectory { get; init; }
+    public required int Jobs { get; init; }
+
+    /// <summary>Jobs containing something that could not be translated. Each is written
+    /// disabled, with the untranslatable part preserved as a TODO comment.</summary>
+    public required int NeedingReview { get; init; }
+
+    public required IReadOnlyList<string> Files { get; init; }
+}
+
+/// <summary>Payload of <c>winlogrotate host export-task</c>.</summary>
+public sealed record ExportTaskResult
+{
+    public required string Xml { get; init; }
+}

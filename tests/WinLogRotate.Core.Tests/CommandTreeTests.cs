@@ -63,7 +63,8 @@ public class CommandTreeTests
     {
         var host = Walk(CommandTree.Build()).Single(c => c.Name == "host");
         host.Subcommands.Select(s => s.Name).ShouldBe(
-            ["use", "status", "repair", "pause", "export-task"], ignoreOrder: true);
+            ["use", "status", "repair", "pause", "export-task", "path-add", "path-remove"],
+            ignoreOrder: true);
     }
 
     // The built-in VersionOption's action runs before ours and prints bare text, which would
