@@ -213,7 +213,8 @@ unanswerable. Today's journal is never touched while it is being written, for th
 the live IIS log never is.
 
 There is deliberately no separate application log file. Diagnostics go to stdout for whoever
-ran the command and to the Windows Event Log at Warning and above; the record of what was
+ran the command and to the Windows Event Log at Warning and above (see
+[diagnostics](docs/notifications.md) for the event-ID table); the record of what was
 *done* is the journal. A third half-used sink would be one more thing to rotate and one more
 place to look.
 

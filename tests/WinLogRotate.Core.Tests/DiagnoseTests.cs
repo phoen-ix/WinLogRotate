@@ -31,9 +31,18 @@ public sealed class DiagnoseTests
         var d = Diagnose.Refusal(decision, job: "Bad job");
 
         d.Code.ShouldBe(DiagnosticCode.DangerousPathRefused);
-        d.Severity.ShouldBe(Severity.Critical);
         d.Job.ShouldBe("Bad job");
         d.Path.ShouldBe(decision.Subject);
+    }
+
+    [Fact]
+    public void TheRuntimeAndTheValidatorAgreeOnSeverityForTheSameCondition()
+    {
+        // ConfigValidator reports a refused pattern as an Error. The runtime guard reports the
+        // identical condition, and a severity that depends on which code path happened to
+        // notice it would make any threshold behave differently for the same broken config.
+        Diagnose.Refusal(Guard().CheckPattern(@"C:\Windows\System32\*.log"))
+            .Severity.ShouldBe(Severity.Error);
     }
 
     [Fact]
@@ -51,12 +60,29 @@ public sealed class DiagnoseTests
     }
 
     [Fact]
-    public void TooManyMatchesIsCriticalBecauseTheBlastRadiusIsTheWholeVolume()
+    public void TooManyMatchesIsAMisconfiguration_NotAnAttack()
     {
         var d = Diagnose.Refusal(Guard().CheckMatchCount(@"C:\logs\*", 40_000));
 
-        d.Severity.ShouldBe(Severity.Critical);
+        d.Severity.ShouldBe(Severity.Error);
         d.Code.ShouldBe(DiagnosticCode.DangerousPathRefused);
+    }
+
+    [Fact]
+    public void OnlyAReparsePointEscapeIsCritical()
+    {
+        // Any local user can create a junction with no privilege at all. One inside a directory
+        // we walk as SYSTEM is somebody trying something, which is what Critical is for -
+        // and what it stops meaning if a typo can also produce it.
+        var escape = new GuardDecision
+        {
+            Verdict = GuardVerdict.ReparsePoint,
+            Subject = @"C:\app\logs",
+            Message = "resolves outside the job's root",
+        };
+
+        Diagnose.Refusal(escape).Severity.ShouldBe(Severity.Critical);
+        Diagnose.Refusal(escape).Code.ShouldBe(DiagnosticCode.ReparsePointRefused);
     }
 
     [Fact]
@@ -248,7 +274,6 @@ public sealed class RunReportDiagnosticsTests : IDisposable
         var d = RunWith(@"C:\Windows\System32\*.log").Diagnostics.ShouldHaveSingleItem();
 
         d.Code.ShouldBe(DiagnosticCode.DangerousPathRefused);
-        d.Severity.ShouldBe(Severity.Critical);
         d.Job.ShouldBe("bad");
     }
 

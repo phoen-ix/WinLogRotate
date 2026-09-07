@@ -322,6 +322,59 @@ jobs:
           "  journal:"; Get-ChildItem "$env:DATA_DIR\journal" | ForEach-Object { "    $($_.Name)" }
           & $exe journal | Select-Object -First 10 | Out-Host
 
+      # The one assertion that proves the whole event-ID design on real hardware. The installer
+      # registers EventCreate.exe as the message file, which constrains every ID to 1..1000, one
+      # insertion string, and category 0. Get any of those wrong and the event still appears -
+      # it just renders as "The description for Event ID N ... cannot be found", which no unit
+      # test can catch because it is Event Viewer doing the rendering, not us.
+      - name: 'Leg A: the Event Log actually renders our messages'
+        shell: pwsh
+        run: |
+          . .github/scripts/installer-smoke-helpers.ps1
+          $entry = Get-UninstallEntry -Scope machine
+          $exe = Join-Path $entry.InstallLocation 'winlogrotate.exe'
+
+          # A guaranteed Warning: a job pointing at a directory that is not there, with
+          # missingok unset. No --json, because --json deliberately suppresses the mirroring.
+          $job = @(
+            'schema = 1',
+            '[job]',
+            'name  = "eventlog-probe"',
+            'kind  = "manage"',
+            'paths = ["C:/smoke/definitely-not-here/*.log"]'
+          )
+          Set-Content -Path "$env:DATA_DIR\conf.d\eventlog-probe.toml" -Value $job
+          & $exe run | Out-Host
+          Remove-Item "$env:DATA_DIR\conf.d\eventlog-probe.toml"
+
+          # The Event Log is written asynchronously, so this needs a poll rather than a read.
+          $events = $null
+          Wait-Until -TimeoutSeconds 60 -Because 'an event from WinLogRotate to appear' -Condition {
+            $script:events = Get-WinEvent -ErrorAction SilentlyContinue -FilterHashtable @{
+              LogName = 'Application'; ProviderName = 'WinLogRotate'
+            }
+            $null -ne $script:events -and $script:events.Count -gt 0
+          }
+
+          foreach ($e in $events) {
+            "  event $($e.Id) [$($e.LevelDisplayName)]: $($e.Message -split "`n" | Select-Object -First 1)"
+
+            if ($e.Message -like '*The description for Event ID*') {
+              throw ("Event ID $($e.Id) does not render. EventCreate.exe's message table covers " +
+                     '1..1000 with a single insertion string and no categories - see ' +
+                     'docs/notifications.md. An alert rule on an event that renders like this ' +
+                     'is worse than no event at all.')
+            }
+            if ($e.Id -lt 1 -or $e.Id -gt 1000) {
+              throw "Event ID $($e.Id) is outside the 1..1000 range EventCreate.exe can render."
+            }
+          }
+
+          if (-not ($events | Where-Object { $_.Id -eq 121 })) {
+            throw ('Expected event 121 (a log file was missing, LR2002) from the probe job. ' +
+                   'Found: ' + (($events | ForEach-Object { $_.Id }) -join ', '))
+          }
+
       # ---- Leg B: the upgrade waits for a rotation in progress -----------------------------
       #
       # A floor AND a ceiling. Finishing immediately means the installer never took the mutex;

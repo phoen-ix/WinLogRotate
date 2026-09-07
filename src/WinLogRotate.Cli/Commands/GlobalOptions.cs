@@ -23,6 +23,9 @@ internal static class GlobalOptions
     public static readonly Option<bool> NoColor =
         new("--no-color") { Description = "Suppress ANSI colour. Implied when stdout is redirected." };
 
+    public static readonly Option<bool> NoEventLog =
+        new("--no-event-log") { Description = "Do not mirror warnings and errors to the Windows Event Log." };
+
     public static readonly Option<DirectoryInfo?> ConfigDir =
         new("--config-dir") { Description = "Override the configuration directory. Defaults to the installed location." };
 
@@ -33,6 +36,7 @@ internal static class GlobalOptions
         command.Options.Add(Output);
         command.Options.Add(Verbose);
         command.Options.Add(NoColor);
+        command.Options.Add(NoEventLog);
         command.Options.Add(ConfigDir);
     }
 }

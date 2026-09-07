@@ -4,6 +4,11 @@
     <TargetFramework>net10.0</TargetFramework>
     <RootNamespace>WinLogRotate.Hosting</RootNamespace>
     <IsAotCompatible>true</IsAotCompatible>
+
+    <!-- Required by [LibraryImport] in Diagnostics/EventLogNative.cs. Same reasoning as Core:
+         the generated marshalling stubs are unsafe by construction, and no hand-written
+         unsafe code exists in this project. -->
+    <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
   </PropertyGroup>
 
   <ItemGroup>

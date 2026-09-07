@@ -24,16 +24,21 @@ public static class Diagnose
     /// <summary>A guard refusal, with the guard's own wording and remedy preserved.</summary>
     public static CliDiagnostic Refusal(GuardDecision decision, string? job = null)
     {
-        // Every refusal here is the guard declining to touch something. That is the condition
-        // Severity.Critical is defined for, and its own documentation names a refused
-        // dangerous path as the example - so these are never downgraded to Error just because
-        // the run continues with other jobs.
         var (code, severity) = decision.Verdict switch
         {
+            // The one genuine Critical. Any user can create a junction with no privilege at
+            // all, so one appearing inside a directory we are walking as SYSTEM is the
+            // signature of a privilege-escalation attempt, not a typo - and it is the only
+            // verdict here that means someone may be doing this to you on purpose.
             GuardVerdict.ReparsePoint => (DiagnosticCode.ReparsePointRefused, Severity.Critical),
-            GuardVerdict.ProtectedLocation => (DiagnosticCode.DangerousPathRefused, Severity.Critical),
-            GuardVerdict.VolumeRoot => (DiagnosticCode.DangerousPathRefused, Severity.Critical),
-            GuardVerdict.TooManyMatches => (DiagnosticCode.DangerousPathRefused, Severity.Critical),
+
+            // Error, matching what ConfigValidator has always reported for the identical
+            // condition. A pattern pointing somewhere dangerous is a misconfiguration, and the
+            // same condition arriving at two severities depending on which code path noticed
+            // it is the kind of inconsistency that quietly breaks a severity threshold.
+            GuardVerdict.ProtectedLocation => (DiagnosticCode.DangerousPathRefused, Severity.Error),
+            GuardVerdict.VolumeRoot => (DiagnosticCode.DangerousPathRefused, Severity.Error),
+            GuardVerdict.TooManyMatches => (DiagnosticCode.DangerousPathRefused, Severity.Error),
 
             // A malformed path is a mistake in the configuration, not a security event, and
             // labelling it one would train operators to ignore the band that matters.

@@ -12,8 +12,14 @@ public enum Severity
     /// <summary>A job failed. The run continues with other jobs; exit code becomes 1.</summary>
     Error,
 
-    /// <summary>A security or integrity problem that disables a whole capability -
-    /// a loosened conf.d ACL, a refused dangerous path. Always surfaced, never suppressed.</summary>
+    /// <summary>A security or integrity problem that disables a whole capability, or that
+    /// suggests someone is acting against this machine on purpose - a loosened conf.d ACL, a
+    /// junction escape refused while running as SYSTEM. Always surfaced, never suppressed.
+    /// <para>
+    /// A misconfigured path is NOT this, however alarming it looks: it is
+    /// <see cref="Error"/>. Reserving Critical for the cases that warrant interrupting someone
+    /// is the only thing that keeps it worth interrupting them for.
+    /// </para></summary>
     Critical,
 }
 
