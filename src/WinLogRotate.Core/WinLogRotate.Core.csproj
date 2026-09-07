@@ -17,6 +17,13 @@
   </PropertyGroup>
 
   <ItemGroup>
+    <!-- The only .NET TOML library with a full-fidelity syntax tree: comments and formatting
+         survive a parse-mutate-write cycle, which is what lets the GUI edit one value in a
+         hand-written config without vandalising the rest of it. -->
+    <PackageReference Include="Tomlyn" Version="2.10.1" />
+  </ItemGroup>
+
+  <ItemGroup>
     <ProjectReference Include="../WinLogRotate.Contracts/WinLogRotate.Contracts.csproj" />
   </ItemGroup>
 

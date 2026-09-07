@@ -1,4 +1,5 @@
 using WinLogRotate.Contracts;
+using WinLogRotate.Core.Configuration;
 
 namespace WinLogRotate.Cli.Output;
 
@@ -50,4 +51,33 @@ public sealed record JournalResult
     public required int SkippedLines { get; init; }
 
     public required IReadOnlyList<CliEvent> Entries { get; init; }
+}
+
+/// <summary>A config diagnostic in wire form, so the GUI can jump to file, line and column.</summary>
+public sealed record ConfigDiagnosticDto
+{
+    public required string Severity { get; init; }
+    public required string Code { get; init; }
+    public required string Message { get; init; }
+    public required string File { get; init; }
+    public int Line { get; init; }
+    public int Column { get; init; }
+    public string? Remedy { get; init; }
+}
+
+/// <summary>Payload of <c>winlogrotate config check</c>.</summary>
+public sealed record ConfigCheckResult
+{
+    public required string Root { get; init; }
+    public required int Jobs { get; init; }
+    public required int Errors { get; init; }
+    public required int Warnings { get; init; }
+    public required IReadOnlyList<ConfigDiagnosticDto> Diagnostics { get; init; }
+}
+
+/// <summary>Payload of <c>winlogrotate config show</c> - every default resolved.</summary>
+public sealed record ConfigShowResult
+{
+    public required string Root { get; init; }
+    public required IReadOnlyList<EffectiveJob> Jobs { get; init; }
 }

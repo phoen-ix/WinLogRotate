@@ -125,11 +125,11 @@ internal static class CommandTree
     {
         var check = new Command("check", "Validate the configuration and report problems with file, line and column.");
         GlobalOptions.AddTo(check);
-        check.SetAction(parse => NotYet.Run(CommandContext.From(parse), "config check", milestone: 3));
+        check.SetAction(parse => ConfigCommand.Check(CommandContext.From(parse), parse.GetValue(GlobalOptions.ConfigDir)?.FullName));
 
         var show = new Command("show", "Print the effective configuration, with every default resolved.");
         GlobalOptions.AddTo(show);
-        show.SetAction(parse => NotYet.Run(CommandContext.From(parse), "config show", milestone: 3));
+        show.SetAction(parse => ConfigCommand.Show(CommandContext.From(parse), parse.GetValue(GlobalOptions.ConfigDir)?.FullName));
 
         return new Command("config", "Inspect and validate the configuration.") { check, show };
     }
