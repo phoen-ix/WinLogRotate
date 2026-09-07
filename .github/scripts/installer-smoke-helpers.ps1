@@ -163,7 +163,14 @@ function Assert-PathEntry {
     if ($PreservedPrefix) {
         # The catastrophic failure this guards against is not "our entry is missing", it is
         # "everything else got truncated away".
-        foreach ($entry in @($PreservedPrefix -split ';' | Where-Object { $_ })) {
+        #
+        # TrimEnd on the whole value, not on each entry: the baseline is usually read back with
+        # Get-Content -Raw, which keeps the trailing newline and so contaminates the LAST entry
+        # only. A PATH entry may legitimately end in a space - the runners' own PATH does - so
+        # the entries themselves are compared verbatim.
+        $baseline = $PreservedPrefix.TrimEnd("`r", "`n")
+
+        foreach ($entry in @($baseline -split ';' | Where-Object { $_ })) {
             if ($parts -notcontains $entry) {
                 throw "The $Scope PATH lost a pre-existing entry: '$entry'. " +
                       "That is the NSIS_MAX_STRLEN truncation bug."

@@ -212,7 +212,9 @@ jobs:
         run: |
           . .github/scripts/installer-smoke-helpers.ps1
           $pathBefore = [Environment]::GetEnvironmentVariable('PATH', 'Machine')
-          "$pathBefore" | Set-Content machine-path-before.txt
+          # -NoNewline: a trailing newline would otherwise attach itself to the last PATH
+          # entry when this is read back, and the last entry would look like it went missing.
+          Set-Content machine-path-before.txt -Value $pathBefore -NoNewline
 
           Start-Process -FilePath (Resolve-Path setup.exe) -ArgumentList '/S','/AllUsers','/HOST=task','/NORUNTIME' -Wait
 
