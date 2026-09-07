@@ -20,10 +20,6 @@ public sealed record VersionResult
     /// <summary>True when this process holds an elevated token. The GUI uses it to decide
     /// whether a button needs a shield.</summary>
     public required bool Elevated { get; init; }
-
-    /// <summary>True for the NativeAOT build. A framework-dependent CLI would mean someone
-    /// built it themselves, which is worth knowing in a bug report.</summary>
-    public required bool NativeAot { get; init; }
 }
 
 /// <summary>Payload of <c>winlogrotate glob</c>.</summary>

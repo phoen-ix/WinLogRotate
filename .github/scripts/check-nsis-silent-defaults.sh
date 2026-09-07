@@ -10,9 +10,14 @@ set -euo pipefail
 script="${1:-packaging/winlogrotate.nsi}"
 failed=0
 
-# Join line continuations first: a MessageBox is routinely split across several lines with a
-# trailing backslash, and the /SD usually lives on the last of them.
-joined="$(sed -e :a -e '/\\$/N; s/\\\n//; ta' "$script")"
+# Strip CR first. .gitattributes checks .nsi out as CRLF - which is right for an NSIS script -
+# so a continued line ends "\<CR>" rather than "\", the join below never matches, and every
+# multi-line MessageBox looks like it lacks a default. A checker that only works on one line
+# ending is a broken checker; being robust to whatever it is handed is its job.
+#
+# Then join continuations: a MessageBox is routinely split across several lines with a trailing
+# backslash, and the /SD usually lives on the last of them.
+joined="$(tr -d '\r' < "$script" | sed -e :a -e '/\\$/N; s/\\\n//; ta')"
 
 while IFS= read -r line; do
     case "$line" in
