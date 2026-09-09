@@ -163,6 +163,82 @@ public sealed record SecretResult
     public bool EntropyRehardened { get; init; }
 }
 
+/// <summary>One configured target, as <c>notify show</c> reports it.</summary>
+public sealed record NotifyTargetDto
+{
+    public required string Target { get; init; }
+
+    /// <summary>Masked. A webhook URL's path is its credential.</summary>
+    public required string Display { get; init; }
+    public required string Scheme { get; init; }
+    public required bool Usable { get; init; }
+    public string? Problem { get; init; }
+}
+
+/// <summary>One provider, with how it authenticates but never with what it authenticates using.</summary>
+public sealed record NotifyProviderDto
+{
+    public required string Name { get; init; }
+    public required string Kind { get; init; }
+    public required bool Enabled { get; init; }
+    public required string Target { get; init; }
+
+    /// <summary>"none", "secret:name", "env:NAME", "command" or "literal" - never a value.</summary>
+    public required string Credential { get; init; }
+
+    /// <summary>True when this provider needs nothing stored anywhere.</summary>
+    public required bool CredentialFree { get; init; }
+}
+
+/// <summary>Payload of <c>winlogrotate notify show</c>.</summary>
+public sealed record NotifyShowResult
+{
+    public required bool Enabled { get; init; }
+    public required string On { get; init; }
+    public required string Threshold { get; init; }
+    public required string RemindAfter { get; init; }
+    public required string Budget { get; init; }
+    public required int Retries { get; init; }
+
+    /// <summary>False when nothing could be sent even if something went wrong.</summary>
+    public required bool WouldSend { get; init; }
+
+    /// <summary>True until delivery lands. Said plainly rather than implied.</summary>
+    public required bool DeliveryImplemented { get; init; }
+
+    public required IReadOnlyList<NotifyTargetDto> Targets { get; init; }
+    public required IReadOnlyList<NotifyProviderDto> Providers { get; init; }
+}
+
+/// <summary>What was last reported about one job.</summary>
+public sealed record NotifyJobStatusDto
+{
+    public required string Job { get; init; }
+    public required string Outcome { get; init; }
+    public DateTimeOffset? NotifiedAt { get; init; }
+    public DateTimeOffset? FailingSince { get; init; }
+}
+
+/// <summary>One channel's circuit breaker.</summary>
+public sealed record NotifyChannelStatusDto
+{
+    public required string Channel { get; init; }
+    public required string State { get; init; }
+    public required int ConsecutiveFailures { get; init; }
+    public required int SkipRunsRemaining { get; init; }
+    public string? LastError { get; init; }
+    public DateTimeOffset? LastAttempt { get; init; }
+}
+
+/// <summary>Payload of <c>notify status</c> and <c>notify reset</c>.</summary>
+public sealed record NotifyStatusResult
+{
+    public required string Path { get; init; }
+    public required IReadOnlyList<NotifyJobStatusDto> Jobs { get; init; }
+    public required IReadOnlyList<NotifyChannelStatusDto> Channels { get; init; }
+    public IReadOnlyList<string> Reset { get; init; } = [];
+}
+
 /// <summary>Payload of the <c>host</c> verbs.</summary>
 public sealed record HostResult
 {

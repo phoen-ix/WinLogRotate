@@ -233,7 +233,7 @@ deliberately differs, and what cannot exist on Windows.
 
 ## Status, honestly
 
-**v0.0.2.** The installer and scheduler are verified end to end on Windows. The rotation engine
+**v0.2.x.** The installer and scheduler are verified end to end on Windows. The rotation engine
 is verified only against files nothing holds open. The GUI is entirely unverified.
 
 ### What has actually run on Windows

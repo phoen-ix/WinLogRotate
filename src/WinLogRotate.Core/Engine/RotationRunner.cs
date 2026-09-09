@@ -18,6 +18,16 @@ public sealed record RunOptions
     public bool Catchup { get; init; }
 
     public string? OnlyJob { get; init; }
+
+    /// <summary>
+    /// Whether this run reports its outcome to notification targets.
+    /// </summary>
+    /// <remarks>
+    /// Defaults to true so the scheduled task - which passes nothing - notifies. The GUI's
+    /// "run now" passes --no-notify, because a button somebody pressed while watching should not
+    /// page whoever is on call.
+    /// </remarks>
+    public bool Notify { get; init; } = true;
 }
 
 /// <summary>What a whole run did.</summary>

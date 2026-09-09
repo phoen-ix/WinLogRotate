@@ -31,6 +31,11 @@ internal static class NotifyPhase
         CommandContext ctx, InstallPaths paths, LoadedConfig config,
         RunReport? report, RunOptions options)
     {
+        if (!options.Notify)
+        {
+            return;
+        }
+
         var settings = config.Notify;
         if (!settings.Enabled || settings.On == NotifyOn.Never)
         {

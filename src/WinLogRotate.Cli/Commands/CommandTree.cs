@@ -29,6 +29,7 @@ internal static class CommandTree
             BuildDoctor(),
             BuildUpdate(),
             BuildSecret(),
+            BuildNotify(),
         };
 
         GlobalOptions.AddTo(root);
@@ -88,6 +89,16 @@ internal static class CommandTree
     private static readonly Option<bool> WaitForStateLock =
         new("--wait-for-state-lock") { Description = "Block until the run lock is free instead of exiting 3." };
 
+    /// <summary>
+    /// On the run verb only, not global.
+    /// </summary>
+    /// <remarks>
+    /// The GUI's "run now" button should not page whoever is on call. Global would put it in the
+    /// help text of fourteen verbs that never notify, where it would be a lie.
+    /// </remarks>
+    private static readonly Option<bool> NoNotify =
+        new("--no-notify") { Description = "Do not report this run's outcome to any notification target." };
+
     private static readonly Option<int> LockHeldExit =
         new("--lock-held-exit") { Description = "Exit code to use when another run holds the lock. The registered scheduled task passes 0, because Task Scheduler renders 3 as 0x3 and an admin reads that as a failure.", DefaultValueFactory = _ => ExitCode.LockHeld };
 
@@ -96,7 +107,7 @@ internal static class CommandTree
         var run = new Command("run", "Rotate everything that is due.")
         {
             DryRun, Force, Catchup, JobFilter, StateFile,
-            SkipStateLock, WaitForStateLock, LockHeldExit,
+            SkipStateLock, WaitForStateLock, LockHeldExit, NoNotify,
         };
         GlobalOptions.AddTo(run);
         run.SetAction(parse => RunCommand.Run(
@@ -107,6 +118,7 @@ internal static class CommandTree
                 Force = parse.GetValue(Force),
                 Catchup = parse.GetValue(Catchup),
                 OnlyJob = parse.GetValue(JobFilter),
+                Notify = !parse.GetValue(NoNotify),
             },
             parse.GetValue(GlobalOptions.ConfigDir)?.FullName,
             parse.GetValue(StateFile)?.FullName,
@@ -175,6 +187,45 @@ internal static class CommandTree
         GlobalOptions.AddTo(doctor);
         doctor.SetAction(parse => DoctorCommand.Run(CommandContext.From(parse), parse.GetValue(GlobalOptions.ConfigDir)?.FullName));
         return doctor;
+    }
+
+    // ---- notifications ------------------------------------------------------------------
+
+    /// <summary>
+    /// Inspecting notification configuration and history.
+    /// </summary>
+    /// <remarks>
+    /// Read-only apart from reset. Without these, "why did I not get an email?" has no answer
+    /// short of reading the source - and a notification feature nobody can interrogate is one
+    /// nobody trusts.
+    /// </remarks>
+    private static Command BuildNotify()
+    {
+        var show = new Command("show", "Print the notification configuration, and say plainly what is not yet implemented.");
+        GlobalOptions.AddTo(show);
+        show.SetAction(parse => NotifyCommand.Show(
+            CommandContext.From(parse), parse.GetValue(GlobalOptions.ConfigDir)?.FullName));
+
+        var status = new Command("status", "Report what was last said about each job, and which channels are suppressed.");
+        GlobalOptions.AddTo(status);
+        status.SetAction(parse => NotifyCommand.Status(
+            CommandContext.From(parse), parse.GetValue(GlobalOptions.ConfigDir)?.FullName));
+
+        var channel = new Argument<string?>("channel")
+        {
+            Description = "The channel to close, as notify status names it. Omit for all of them.",
+            Arity = ArgumentArity.ZeroOrOne,
+        };
+        var reset = new Command("reset", "Close a suppressed channel, for when the thing it could not reach is fixed.") { channel };
+        GlobalOptions.AddTo(reset);
+        reset.SetAction(parse => NotifyCommand.Reset(
+            CommandContext.From(parse), parse.GetValue(channel),
+            parse.GetValue(GlobalOptions.ConfigDir)?.FullName));
+
+        return new Command("notify", "Inspect how failures are reported, and to whom.")
+        {
+            show, status, reset,
+        };
     }
 
     // ---- secrets ----------------------------------------------------------------------
