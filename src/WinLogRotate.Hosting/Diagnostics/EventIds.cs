@@ -67,6 +67,9 @@ public static class EventIds
         DiagnosticCode.HostDrift => 141,
         DiagnosticCode.HostRegistrationFailed => 142,
 
+        // 5xxx - notification delivery.
+        DiagnosticCode.NotifyMisconfigured => 150,
+
         // 9xxx - security.
         DiagnosticCode.ConfigDirectoryInsecure => 190,
         DiagnosticCode.DangerousPathRefused => 191,

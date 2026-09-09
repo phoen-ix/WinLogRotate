@@ -38,6 +38,14 @@ public static class DiagnosticCode
     public const string HostDrift = "LR4002";
     public const string HostRegistrationFailed = "LR4003";
 
+    // 5xxx - notification delivery.
+    //
+    // Deliberately its own band rather than sharing 3xxx: a webhook that could not be reached is
+    // not a rotation that failed, and an exit code or an alert rule keyed on the difference has
+    // to be able to tell them apart.
+    /// <summary>A notification target is unparseable, contradictory, or missing its credential.</summary>
+    public const string NotifyMisconfigured = "LR5001";
+
     // 9xxx - security. Never suppressed, never merely warned about.
     /// <summary>conf.d is writable by a non-administrator. All hooks and all
     /// dangerous-path overrides are refused for the entire run.</summary>

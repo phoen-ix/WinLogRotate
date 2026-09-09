@@ -75,6 +75,7 @@ one, and that all of them fall in the range below.
 | 133 | Warning | A previous run abandoned the rotation mutex | `LR3101` |
 | 134 | Error | NUL-fill detected; `copytruncate` quarantined for that path | `LR3102` |
 | 140 | Warning | No run host is registered | `LR4001` |
+| 150 | Warning | A notification target is unparseable or missing its credential | `LR5001` |
 | 141 | Warning | The registered run host has drifted from its definition | `LR4002` |
 | 142 | Error | Registering the run host failed | `LR4003` |
 | 190 | Error | The configuration directory is writable by a non-administrator | `LR9001` |

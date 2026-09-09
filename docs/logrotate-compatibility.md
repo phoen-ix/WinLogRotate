@@ -58,7 +58,7 @@ file inputs auto-decompress `.gz` and generally not `.zip`.
 |---|---|
 | `su user group` | Windows has no `setuid`. `LogonUser` needs a password; the service-logon path needs `SE_TCB_NAME` and yields a token that cannot open files. Parsed, warned about, ignored. **Instead:** run the whole tool under the identity you want, via the scheduled task's principal or a gMSA. |
 | `create mode owner group` | There are no mode bits. A POSIX mode is approximated as a DACL and marked protected, which is honest but lossy. **Instead:** `createsddl` and `createowner`. |
-| `mail` / `mailfirst` / `maillast` | Not implemented. **Instead:** a `postrotate` hook. |
+| `mail` / `mailfirst` / `maillast` | Not implemented, and it would be the wrong shape anyway: upstream mails you the rotated log itself, per job. **Instead:** the `[notify]` table, which reports what a whole run did to whoever is on call - see [diagnostics](notifications.md). Configuration and validation are in place today; delivery is not yet, and `winlogrotate notify show` says so rather than pretending. |
 | `shred` | Not implemented; no `sdelete` dependency is taken. |
 | `compresscmd` / `uncompresscmd` | Windows ships no `gzip.exe`. Compression is in-process. A config naming `/bin/gzip` is translated with a warning. |
 

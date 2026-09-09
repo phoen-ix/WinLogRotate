@@ -1,5 +1,7 @@
 using WinLogRotate.Contracts;
+using WinLogRotate.Core.Notify;
 using WinLogRotate.Core.Safety;
+using WinLogRotate.Core.Secrets;
 
 namespace WinLogRotate.Core.Configuration;
 
@@ -12,6 +14,19 @@ public sealed record LoadedConfig
 
     /// <summary>Files moved aside because they could not be parsed.</summary>
     public required IReadOnlyList<string> Quarantined { get; init; }
+
+    /// <summary>
+    /// The <c>[notify]</c> table, bound and validated alongside everything else.
+    /// </summary>
+    /// <remarks>
+    /// Carried here rather than re-read later so that <c>config check</c> reports a broken
+    /// notification target. A target nobody validates is a target that turns out to be wrong on
+    /// the night it was needed.
+    /// </remarks>
+    public NotifySettings Notify { get; init; } = NotifySettings.Default;
+
+    /// <summary>The named <c>[notify.KIND.NAME]</c> provider tables.</summary>
+    public IReadOnlyList<NotifyProvider> NotifyProviders { get; init; } = [];
 
     public bool HasErrors => Diagnostics.Any(d => d.Severity >= Severity.Error);
 }
@@ -27,18 +42,35 @@ public sealed record LoadedConfig
 /// </remarks>
 public static class ConfigLoader
 {
-    public static LoadedConfig Load(InstallPaths paths, PathGuard guard, bool quarantineBadFiles = true)
+    /// <param name="secrets">
+    /// How to ask whether a named secret exists. Null means nobody asked and nothing is claimed -
+    /// see <see cref="ISecretLookup.Exists"/> for why that is a third answer rather than "no".
+    /// </param>
+    public static LoadedConfig Load(
+        InstallPaths paths, PathGuard guard, bool quarantineBadFiles = true, ISecretLookup? secrets = null)
     {
         var diagnostics = new DiagnosticBag();
         var quarantined = new List<string>();
 
         JobSettings? defaults = null;
+        var notify = NotifySettings.Default;
+        IReadOnlyList<NotifyProvider> providers = [];
         if (File.Exists(paths.ConfigFile))
         {
             var file = TomlFile.Load(paths.ConfigFile);
-            defaults = file.HasErrors
-                ? HandleUnparseable(file, paths.ConfigFile, diagnostics, quarantined, quarantineBadFiles, null)
-                : ConfigBinder.BindDefaults(file, diagnostics);
+            if (file.HasErrors)
+            {
+                defaults = HandleUnparseable(
+                    file, paths.ConfigFile, diagnostics, quarantined, quarantineBadFiles, null);
+            }
+            else
+            {
+                defaults = ConfigBinder.BindDefaults(file, diagnostics);
+                notify = ConfigBinder.BindNotify(file, diagnostics);
+                providers = ConfigBinder.BindProviders(file, diagnostics);
+                ValidateNotifyTargets(notify, providers, paths.ConfigFile, diagnostics);
+                ValidateCredentials(providers, paths.ConfigFile, diagnostics, secrets);
+            }
         }
 
         var jobs = new List<EffectiveJob>();
@@ -60,6 +92,8 @@ public static class ConfigLoader
                 Diagnostics = diagnostics.Items,
                 Paths = paths,
                 Quarantined = quarantined,
+                Notify = notify,
+                NotifyProviders = providers,
             };
         }
 
@@ -128,6 +162,8 @@ public static class ConfigLoader
             Diagnostics = diagnostics.Items,
             Paths = paths,
             Quarantined = quarantined,
+            Notify = notify,
+            NotifyProviders = providers,
         };
     }
 
@@ -162,4 +198,118 @@ public static class ConfigLoader
 
         return fallback;
     }
+    /// <summary>
+    /// Runs every configured notification target through the parser.
+    /// </summary>
+    /// <remarks>
+    /// Warnings, never errors. A mistyped webhook must not stop a rotation: the logs still need
+    /// rotating, and refusing to run because the alerting is misconfigured turns a notification
+    /// problem into a disk-space problem.
+    /// </remarks>
+    private static void ValidateNotifyTargets(
+        NotifySettings notify, IReadOnlyList<NotifyProvider> providers,
+        string file, DiagnosticBag diagnostics)
+    {
+        foreach (var target in notify.To)
+        {
+            // A target is either a provider name or an inline scheme string. Provider names are
+            // checked first: "email.relay" would otherwise be read as a command line, which is
+            // a confusing way to learn you mistyped a provider.
+            if (providers.Any(p => string.Equals(p.Name, target, StringComparison.OrdinalIgnoreCase)))
+            {
+                continue;
+            }
+
+            if (target.Contains('.') && !target.Contains(':') && !target.Contains('\\')
+                && !target.Contains('/'))
+            {
+                diagnostics.Warn(file, DiagnosticCode.NotifyMisconfigured,
+                    $"'{target}' does not match any [notify.*] provider.",
+                    remedy: providers.Count == 0
+                        ? "Define one, e.g. [notify.email.relay], or write an inline target such as eventlog:."
+                        : $"Defined providers: {string.Join(", ", providers.Select(p => p.Name))}.");
+                continue;
+            }
+
+            var result = HookParser.Parse(target);
+
+            if (result.IsOk)
+            {
+                if (HookSchemes.RequiresTarget(result.Action!.Scheme) && result.Action.Target.Length == 0)
+                {
+                    diagnostics.Warn(file, DiagnosticCode.NotifyMisconfigured,
+                        $"'{target}' names a scheme but nothing to send to.",
+                        remedy: "Write the destination after the colon, e.g. service:paramchange:nginx.");
+                }
+
+                continue;
+            }
+
+            diagnostics.Warn(file, DiagnosticCode.NotifyMisconfigured,
+                result.Error switch
+                {
+                    HookParseError.Empty => "An empty notification target.",
+                    HookParseError.UnknownScheme =>
+                        $"'{result.Scheme}:' is not a notification scheme, so '{target}' would never be used.",
+                    _ => $"'{target}' could not be understood.",
+                },
+                remedy: "Known schemes: http, https, smtp, pushover, eventlog, command, service, event. "
+                      + "A target with no scheme is run as a command line.");
+        }
+    }
+
+    /// <summary>
+    /// Reports credentials written in the clear, and references to secrets that are not stored.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// A literal is a warning, never an error. Forbidding them drives people to worse
+    /// workarounds - a password typed into a scheduled task's arguments, or a config file kept
+    /// somewhere even less private - whereas a warning at the exact line, every single run, with
+    /// the two commands that fix it, does not.
+    /// </para>
+    /// <para>
+    /// A missing secret is only reported when the lookup can actually answer. The store grants
+    /// Users nothing, so an unelevated caller gets null from <see cref="ISecretLookup.Exists"/>
+    /// and nothing is said - reporting "no secret called ses-smtp" to somebody who is simply not
+    /// allowed to look would be a false alarm shown to the person least able to judge it.
+    /// </para>
+    /// </remarks>
+    private static void ValidateCredentials(
+        IReadOnlyList<NotifyProvider> providers, string file,
+        DiagnosticBag diagnostics, ISecretLookup? secrets)
+    {
+        foreach (var provider in providers)
+        {
+            foreach (var (field, reference) in provider.Credentials())
+            {
+                switch (reference.Source)
+                {
+                    case SecretSource.Literal:
+                        diagnostics.Warn(file, DiagnosticCode.SecretInPlainConfig,
+                            $"The {field} for '{provider.Name}' is written in this file, which every "
+                            + "local user on this machine can read.",
+                            reference.Line, reference.Column,
+                            remedy: $"winlogrotate secret set {Suggest(provider.Name, field)}   "
+                                  + $"then set {field} = \"@secret:{Suggest(provider.Name, field)}\"");
+                        break;
+
+                    case SecretSource.Store when secrets?.Exists(reference.Key!) == false:
+                        diagnostics.Error(file, DiagnosticCode.SecretMissing,
+                            $"No secret called '{reference.Key}'.",
+                            reference.Line, reference.Column,
+                            remedy: $"winlogrotate secret set {reference.Key}");
+                        break;
+                }
+            }
+        }
+    }
+
+    /// <summary>A secret name somebody would plausibly have chosen, for the remedy text.</summary>
+    private static string Suggest(string provider, string field)
+    {
+        var stem = provider.Replace('.', '-');
+        return field is "password" or "url" ? stem : $"{stem}-{field.Replace('_', '-')}";
+    }
+
 }

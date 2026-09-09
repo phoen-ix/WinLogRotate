@@ -2,6 +2,9 @@ using System.Globalization;
 using Tomlyn.Syntax;
 using WinLogRotate.Contracts;
 
+using WinLogRotate.Core.Notify;
+using WinLogRotate.Core.Secrets;
+
 namespace WinLogRotate.Core.Configuration;
 
 /// <summary>
@@ -43,6 +46,201 @@ public static class ConfigBinder
             Compress = GetEnum<CompressType>(table, "compress", file.Path, diagnostics) ?? defaults.Compress,
             MaxSize = GetSize(table, "maxsize", file.Path, diagnostics) ?? defaults.MaxSize,
         };
+    }
+
+    /// <summary>
+    /// Binds the <c>[notify]</c> table from <c>config.toml</c>.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// Like <see cref="BindJournal"/>, this deliberately does not call ReportSyntaxErrors or
+    /// CheckSchema: BindDefaults has already run over the same file, and repeating them reports
+    /// every syntax error in config.toml twice. It returns a non-null Default when the table is
+    /// absent, for the same reason.
+    /// </para>
+    /// <para>
+    /// Unlike every other table here, unknown keys are reported. That is a deliberate
+    /// divergence: a mistyped rotation directive falls back to a documented default and rotates
+    /// slightly differently, but a mistyped <c>tresh0ld</c> silently disables the alerting, and
+    /// the discovery happens during the incident it was supposed to warn about.
+    /// </para>
+    /// </remarks>
+    public static NotifySettings BindNotify(TomlFile file, DiagnosticBag diagnostics)
+    {
+        var table = FindTable(file.Document, "notify");
+        if (table is null)
+        {
+            return NotifySettings.Default;
+        }
+
+        var defaults = NotifySettings.Default;
+
+        string[] known =
+        [
+            "enabled", "on", "threshold", "remind_after", "budget", "retries",
+            "breaker_after", "breaker_cooldown", "to", "redact",
+            "proxy", "no_proxy", "server_cert_thumbprint",
+        ];
+
+        foreach (var kv in table.Items.OfType<KeyValueSyntax>())
+        {
+            var key = KeyName(kv);
+
+            // "insecure" is reported separately, and better, just below. Two warnings for one
+            // line reads like two problems.
+            if (string.Equals(key, "insecure", StringComparison.OrdinalIgnoreCase))
+            {
+                continue;
+            }
+
+            if (!known.Contains(key, StringComparer.OrdinalIgnoreCase))
+            {
+                diagnostics.Warn(file.Path, DiagnosticCode.NotifyMisconfigured,
+                    $"'{key}' is not a [notify] setting, and is ignored.",
+                    LineOf(kv), ColumnOf(kv),
+                    remedy: $"Valid settings: {string.Join(", ", known)}.");
+            }
+        }
+
+        // There is deliberately no "insecure" here, and adding one would undo the point of
+        // server_cert_thumbprint. A switch that disables verification gets set once during an
+        // incident and is never unset.
+        if (Find(table, "insecure") is { } insecure)
+        {
+            diagnostics.Warn(file.Path, DiagnosticCode.NotifyMisconfigured,
+                "There is no 'insecure' setting, and TLS verification is never skipped.",
+                LineOf(insecure), ColumnOf(insecure),
+                remedy: "For an internal relay with a self-signed certificate, pin it instead: "
+                      + "server_cert_thumbprint = \"<SHA-256>\".");
+        }
+
+        return new NotifySettings
+        {
+            Enabled = GetBool(table, "enabled", file.Path, diagnostics) ?? defaults.Enabled,
+            On = GetEnum<NotifyOn>(table, "on", file.Path, diagnostics) ?? defaults.On,
+            Threshold = GetEnum<Severity>(table, "threshold", file.Path, diagnostics) ?? defaults.Threshold,
+            RemindAfter = GetDuration(table, "remind_after", file.Path, diagnostics) ?? defaults.RemindAfter,
+            Budget = GetDuration(table, "budget", file.Path, diagnostics) ?? defaults.Budget,
+            BreakerAfter = GetInt(table, "breaker_after", file.Path, diagnostics) ?? defaults.BreakerAfter,
+            BreakerCooldown = GetInt(table, "breaker_cooldown", file.Path, diagnostics) ?? defaults.BreakerCooldown,
+            To = GetStringListOrNull(table, "to", file.Path, diagnostics) ?? defaults.To,
+            Redact = GetStringListOrNull(table, "redact", file.Path, diagnostics) ?? defaults.Redact,
+            Proxy = GetString(table, "proxy", file.Path, diagnostics) ?? defaults.Proxy,
+            NoProxy = GetStringListOrNull(table, "no_proxy", file.Path, diagnostics) ?? defaults.NoProxy,
+            ServerCertThumbprint =
+                GetString(table, "server_cert_thumbprint", file.Path, diagnostics)
+                ?? defaults.ServerCertThumbprint,
+        };
+    }
+
+    /// <summary>
+    /// Binds every <c>[notify.KIND.NAME]</c> provider table.
+    /// </summary>
+    /// <remarks>
+    /// Credentials are bound as <see cref="SecretRef"/>, never as a value, so nothing here ever
+    /// holds a password in a field that could be printed. Whether the reference resolves is a
+    /// question for the validator, which has a secret lookup; this only records what was asked
+    /// for and where it was written.
+    /// </remarks>
+    public static IReadOnlyList<NotifyProvider> BindProviders(TomlFile file, DiagnosticBag diagnostics)
+    {
+        var providers = new List<NotifyProvider>();
+
+        foreach (var (kind, kindName) in new[]
+                 {
+                     (NotifyProviderKind.Email, "email"),
+                     (NotifyProviderKind.Pushover, "pushover"),
+                     (NotifyProviderKind.Webhook, "webhook"),
+                 })
+        {
+            foreach (var (table, name) in FindTablesUnder(file.Document, "notify", kindName))
+            {
+                providers.Add(BindProvider(table, kind, $"{kindName}.{name}", file.Path, diagnostics));
+            }
+        }
+
+        // [[notify.email]] is the shape somebody reaches for who has met arrays of tables. It
+        // parses as a different node type entirely, so without this it is silently ignored and
+        // the provider simply never exists.
+        foreach (var array in file.Document.Tables.OfType<TableArraySyntax>())
+        {
+            var parts = KeyParts(array);
+            if (parts.Length >= 2 && string.Equals(parts[0], "notify", StringComparison.OrdinalIgnoreCase))
+            {
+                diagnostics.Error(file.Path, DiagnosticCode.NotifyMisconfigured,
+                    $"[[{string.Join('.', parts)}]] is an array of tables; notification providers are named tables.",
+                    LineOf(array), ColumnOf(array),
+                    remedy: $"Write [{string.Join('.', parts)}.a-name] instead.");
+            }
+        }
+
+        return providers;
+    }
+
+    private static NotifyProvider BindProvider(
+        TableSyntaxBase table, NotifyProviderKind kind, string name, string file, DiagnosticBag d)
+    {
+        var provider = new NotifyProvider
+        {
+            Name = name,
+            Kind = kind,
+            Line = LineOf(table),
+            Column = ColumnOf(table),
+            Enabled = GetBool(table, "enabled", file, d) ?? true,
+        };
+
+        return kind switch
+        {
+            NotifyProviderKind.Email => provider with
+            {
+                Host = GetString(table, "host", file, d),
+                Port = GetInt(table, "port", file, d) ?? 25,
+                Auth = GetEnum<SmtpAuth>(table, "auth", file, d) ?? SmtpAuth.None,
+                Tls = GetEnum<SmtpTls>(table, "tls", file, d) ?? SmtpTls.Opportunistic,
+                Delivery = GetEnum<SmtpDelivery>(table, "delivery", file, d) ?? SmtpDelivery.Network,
+                PickupDirectory = GetString(table, "pickup_directory", file, d),
+                From = GetString(table, "from", file, d),
+                To = GetStringListOrNull(table, "to", file, d) ?? [],
+                Username = GetString(table, "username", file, d),
+                SubjectPrefix = GetString(table, "subject_prefix", file, d),
+                Password = Secret(table, "password", file, d),
+            },
+
+            NotifyProviderKind.Pushover => provider with
+            {
+                Token = Secret(table, "token", file, d),
+                UserKey = Secret(table, "user_key", file, d),
+                Priority = GetInt(table, "priority", file, d) ?? 0,
+            },
+
+            _ => provider with
+            {
+                Url = Secret(table, "url", file, d),
+                Method = GetString(table, "method", file, d) ?? "POST",
+                ContentType = GetString(table, "content_type", file, d) ?? "application/json",
+                Body = GetString(table, "body", file, d),
+            },
+        };
+    }
+
+    /// <summary>
+    /// Reads a credential as a reference, carrying the position of the VALUE.
+    /// </summary>
+    /// <remarks>
+    /// The value's column rather than the key's, so "your password is written in the clear here"
+    /// points at the password. An editor jumping to column 1 makes the operator find it
+    /// themselves, on the one line they would rather not have to read twice.
+    /// </remarks>
+    private static SecretRef Secret(TableSyntaxBase table, string key, string file, DiagnosticBag d)
+    {
+        var kv = Find(table, key);
+        if (kv is null)
+        {
+            return SecretRef.None;
+        }
+
+        var at = (SyntaxNode?)kv.Value ?? kv;
+        return SecretRef.Parse(GetString(table, key, file, d), LineOf(at), ColumnOf(at));
     }
 
     /// <summary>Binds one <c>conf.d</c> file into a job, or null if it is unusable.</summary>
@@ -236,6 +434,69 @@ public static class ConfigBinder
         doc.Tables.FirstOrDefault(t =>
             string.Equals(t.Name?.ToString().Trim(), name, StringComparison.OrdinalIgnoreCase));
 
+    /// <summary>
+    /// The dotted parts of a table header, taken from the syntax tree rather than by splitting
+    /// its text.
+    /// </summary>
+    /// <remarks>
+    /// <c>[notify . email . relay]</c> and <c>["notify".email.relay]</c> are both legal TOML for
+    /// the same table, and neither survives a string split on '.'. Walking the key nodes is what
+    /// makes those behave the same as the ordinary spelling.
+    /// </remarks>
+    private static string[] KeyParts(TableSyntaxBase table)
+    {
+        var key = table.Name;
+        if (key is null)
+        {
+            return [];
+        }
+
+        var parts = new List<string> { Unquote(key.Key?.ToString()?.Trim()) };
+        foreach (var dotted in key.DotKeys)
+        {
+            parts.Add(Unquote(dotted.Key?.ToString()?.Trim()));
+        }
+
+        return [.. parts];
+    }
+
+    private static string Unquote(string? text)
+    {
+        var value = text ?? string.Empty;
+        return value.Length >= 2 && (value[0] == '"' || value[0] == '\'') && value[^1] == value[0]
+            ? value[1..^1]
+            : value;
+    }
+
+    /// <summary>Tables whose header is exactly <paramref name="prefix"/> plus one more part.</summary>
+    private static IEnumerable<(TableSyntaxBase Table, string Name)> FindTablesUnder(
+        DocumentSyntax doc, params string[] prefix)
+    {
+        foreach (var table in doc.Tables)
+        {
+            var parts = KeyParts(table);
+            if (parts.Length != prefix.Length + 1)
+            {
+                continue;
+            }
+
+            var matches = true;
+            for (var i = 0; i < prefix.Length; i++)
+            {
+                if (!string.Equals(parts[i], prefix[i], StringComparison.OrdinalIgnoreCase))
+                {
+                    matches = false;
+                    break;
+                }
+            }
+
+            if (matches)
+            {
+                yield return (table, parts[^1]);
+            }
+        }
+    }
+
     private static string KeyName(KeyValueSyntax kv) =>
         kv.Key?.ToString().Trim() ?? string.Empty;
 
@@ -330,6 +591,68 @@ public static class ConfigBinder
     /// someone converting a logrotate config expects <c>100M</c> to mean the same thing here.
     /// </para>
     /// </summary>
+    /// <summary>
+    /// Reads a duration written either as "7d"/"30m"/"45s" or as a TimeSpan like "01:00:00".
+    /// </summary>
+    /// <remarks>
+    /// Both forms because both already appear: host pause takes "01:00:00" today, and nobody
+    /// writing a reminder interval wants to count hours into a colon-separated triple.
+    /// </remarks>
+    private static TimeSpan? GetDuration(TableSyntaxBase t, string key, string file, DiagnosticBag d)
+    {
+        var text = GetString(t, key, file, d);
+        if (text is null)
+        {
+            return null;
+        }
+
+        if (TryParseDuration(text, out var parsed))
+        {
+            return parsed;
+        }
+
+        var kv = Find(t, key);
+        d.Error(file, DiagnosticCode.ConfigInvalid,
+            $"'{key}' is not a duration.",
+            kv is null ? 0 : LineOf(kv), kv is null ? 0 : ColumnOf(kv),
+            remedy: "Write it as 30s, 15m, 2h, 7d, or as 01:00:00.");
+        return null;
+    }
+
+    /// <summary>Parses "7d", "30m", "45s", "2h" or a TimeSpan.</summary>
+    internal static bool TryParseDuration(string text, out TimeSpan value)
+    {
+        value = default;
+        var trimmed = text.Trim();
+
+        if (trimmed.Length == 0)
+        {
+            return false;
+        }
+
+        var unit = trimmed[^1];
+        if (char.IsAsciiDigit(unit))
+        {
+            return TimeSpan.TryParse(trimmed, System.Globalization.CultureInfo.InvariantCulture, out value);
+        }
+
+        if (!double.TryParse(
+                trimmed[..^1], System.Globalization.NumberStyles.Float,
+                System.Globalization.CultureInfo.InvariantCulture, out var count) || count < 0)
+        {
+            return false;
+        }
+
+        switch (char.ToLowerInvariant(unit))
+        {
+            case 's': value = TimeSpan.FromSeconds(count); return true;
+            case 'm': value = TimeSpan.FromMinutes(count); return true;
+            case 'h': value = TimeSpan.FromHours(count); return true;
+            case 'd': value = TimeSpan.FromDays(count); return true;
+            default: return false;
+        }
+    }
+
     private static long? GetSize(TableSyntaxBase t, string key, string file, DiagnosticBag d)
     {
         var kv = Find(t, key);
