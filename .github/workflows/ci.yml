@@ -400,6 +400,67 @@ jobs:
                    'Found: ' + (($events | ForEach-Object { $_.Id }) -join ', '))
           }
 
+      # Real DPAPI, real entropy in HKLM, real file ACLs, driven through the shipped exe. The
+      # store's logic is covered on the Linux leg behind IByteProtector; this is the half that
+      # can only be true or false on a real machine.
+      - name: 'Leg A: secrets round-trip and are not readable by ordinary users'
+        shell: pwsh
+        run: |
+          . .github/scripts/installer-smoke-helpers.ps1
+          $entry = Get-UninstallEntry -Scope machine
+          $exe = Join-Path $entry.InstallLocation 'winlogrotate.exe'
+          $store = Join-Path $env:DATA_DIR 'secrets.dat'
+
+          # Piped, never as an argument: a command line is readable through Win32_Process and is
+          # written into 4688 audit events. There is deliberately no --value to test.
+          'hunter2-correct-horse' | & $exe secret set ci-probe
+          if ($LASTEXITCODE -ne 0) { throw "secret set exited $LASTEXITCODE" }
+
+          if (-not (Test-Path $store)) { throw "secret set wrote no store at $store" }
+
+          # The whole point of the file. Users must not be on it at all - unlike conf.d, where
+          # they are granted read on purpose so the unelevated read-only GUI works.
+          $rules = (Get-Acl $store).GetAccessRules($true, $true, [System.Security.Principal.SecurityIdentifier])
+          foreach ($rule in $rules) {
+            if ($rule.AccessControlType -ne 'Allow') { continue }
+            if ($rule.IdentityReference.Value -notin @('S-1-5-18', 'S-1-5-32-544')) {
+              throw "secrets.dat grants $($rule.FileSystemRights) to $($rule.IdentityReference.Value); expected SYSTEM and Administrators only."
+            }
+          }
+          "  secrets.dat ACL ok"
+
+          # The entropy that makes the ciphertext machine-bound must not be world-readable
+          # either - it was, for one release, because the descriptor was declared and never
+          # applied.
+          $key = Get-Acl 'HKLM:\SOFTWARE\WinLogRotate' -ErrorAction Stop
+          foreach ($rule in $key.GetAccessRules($true, $true, [System.Security.Principal.SecurityIdentifier])) {
+            if ($rule.AccessControlType -ne 'Allow') { continue }
+            if ($rule.IdentityReference.Value -notin @('S-1-5-18', 'S-1-5-32-544')) {
+              throw "the machine key grants $($rule.RegistryRights) to $($rule.IdentityReference.Value)."
+            }
+          }
+          "  machine key ACL ok"
+
+          $list = & $exe secret list --json | ConvertFrom-Json
+          if ($list.result.secrets.name -notcontains 'ci-probe') { throw 'secret list did not report ci-probe.' }
+
+          # Length only. If this ever starts reporting anything derived from the value, that is
+          # a confirmable oracle for an offline guess.
+          $test = & $exe secret test ci-probe --json | ConvertFrom-Json
+          if ($LASTEXITCODE -ne 0) { throw "secret test exited $LASTEXITCODE" }
+          if ($test.result.length -ne 21) { throw "secret test reported length $($test.result.length), expected 21." }
+
+          # The value must not appear anywhere in the file, and neither must a JSON envelope
+          # ever carry it.
+          if ((Get-Content $store -Raw) -match 'hunter2') { throw 'the plaintext is in secrets.dat.' }
+          if (($list | ConvertTo-Json -Depth 8) -match 'hunter2') { throw 'the plaintext is in the list envelope.' }
+
+          & $exe secret remove ci-probe
+          if ($LASTEXITCODE -ne 0) { throw "secret remove exited $LASTEXITCODE" }
+          & $exe secret test ci-probe 2>$null
+          if ($LASTEXITCODE -eq 0) { throw 'secret test still succeeds after remove.' }
+          $global:LASTEXITCODE = 0
+
       # ---- Leg B: the upgrade waits for a rotation in progress -----------------------------
       #
       # A floor AND a ceiling. Finishing immediately means the installer never took the mutex;

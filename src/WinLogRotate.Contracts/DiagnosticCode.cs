@@ -12,6 +12,10 @@ public static class DiagnosticCode
     public const string ConfigInvalid = "LR1003";
     public const string NoJobsConfigured = "LR1004";
 
+    /// <summary>The verb needs a platform this is not. Distinct from NeedsAdministrator, whose
+    /// name would be a lie: no amount of elevation makes DPAPI exist on Linux.</summary>
+    public const string NotSupportedHere = "LR1005";
+
     // 2xxx - a job or file was skipped
     public const string JobSkipped = "LR2001";
     public const string FileMissing = "LR2002";
@@ -41,4 +45,15 @@ public static class DiagnosticCode
     public const string DangerousPathRefused = "LR9002";
     public const string HookRefused = "LR9003";
     public const string ReparsePointRefused = "LR9004";
+
+    /// <summary>A config file names a secret that is not in the store.</summary>
+    public const string SecretMissing = "LR9005";
+
+    /// <summary>A credential is written in a file every local user can read.</summary>
+    public const string SecretInPlainConfig = "LR9006";
+
+    /// <summary>The secret store, or the key protecting it, is not safe - or was not, and was
+    /// repaired. Never silent: a repair nobody is told about is indistinguishable from a
+    /// problem that never existed.</summary>
+    public const string SecretStoreUnreadable = "LR9007";
 }

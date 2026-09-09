@@ -46,6 +46,7 @@ public static class EventIds
         DiagnosticCode.ConfigUnreadable => 112,
         DiagnosticCode.ConfigInvalid => 113,
         DiagnosticCode.NoJobsConfigured => 114,
+        DiagnosticCode.NotSupportedHere => 115,
 
         // 2xxx - a job or file was skipped.
         DiagnosticCode.JobSkipped => 120,
@@ -71,6 +72,9 @@ public static class EventIds
         DiagnosticCode.DangerousPathRefused => 191,
         DiagnosticCode.HookRefused => 192,
         DiagnosticCode.ReparsePointRefused => 193,
+        DiagnosticCode.SecretMissing => 194,
+        DiagnosticCode.SecretInPlainConfig => 195,
+        DiagnosticCode.SecretStoreUnreadable => 196,
 
         _ => Unclassified,
     };

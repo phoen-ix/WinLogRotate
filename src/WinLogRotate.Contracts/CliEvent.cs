@@ -74,6 +74,11 @@ public static class Op
     public const string Probe = "probe";
     public const string Import = "import";
 
+    /// <summary>A stored credential was added, replaced or removed. The NAME only - never a
+    /// value, and never anything derived from one. An operator asking "who changed that
+    /// password?" has nowhere else to look.</summary>
+    public const string Secret = "secret";
+
     /// <summary>A copytruncate NUL-fill verdict was reached for a path.</summary>
     public const string NulFill = "nulfill";
 

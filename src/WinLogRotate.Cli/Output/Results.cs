@@ -110,6 +110,59 @@ public sealed record DoctorResult
     public required string RunHostDetail { get; init; }
 }
 
+/// <summary>
+/// One stored secret, as <c>secret list</c> reports it.
+/// </summary>
+/// <remarks>
+/// Everything here is metadata. There is deliberately no field that could hold a value, not
+/// even a masked one: a payload type that cannot carry a secret cannot leak one, whatever a
+/// future caller does with it. An architecture test asserts no SecretString appears in this file.
+/// </remarks>
+public sealed record SecretEntryDto
+{
+    public required string Name { get; init; }
+    public DateTimeOffset? Created { get; init; }
+    public DateTimeOffset? Updated { get; init; }
+    public string? SetBy { get; init; }
+
+    /// <summary>ok, UNREADABLE, or "?" when this account may not decrypt.</summary>
+    public required string Status { get; init; }
+}
+
+/// <summary>Payload of <c>winlogrotate secret list</c>.</summary>
+public sealed record SecretListResult
+{
+    public required string Path { get; init; }
+    public required string Protection { get; init; }
+
+    /// <summary>Hardened, Missing, TooOpen, Unknown or NotApplicable.</summary>
+    public required string FileProtection { get; init; }
+    public required IReadOnlyList<SecretEntryDto> Secrets { get; init; }
+}
+
+/// <summary>Payload of <c>secret set</c>, <c>remove</c>, <c>test</c> and <c>import</c>.</summary>
+public sealed record SecretResult
+{
+    public required string Verb { get; init; }
+    public required string Path { get; init; }
+
+    /// <summary>The names acted on. Never a value, and never anything derived from one.</summary>
+    public required IReadOnlyList<string> Names { get; init; }
+
+    /// <summary>
+    /// Character count, for <c>secret test</c> only.
+    /// </summary>
+    /// <remarks>
+    /// A length and nothing else - no hash, not even a prefix, because a few bytes of SHA-256
+    /// over a low-entropy password confirms an offline guess. The length is here because the
+    /// reason that verb exists is spotting the trailing newline a shell appended.
+    /// </remarks>
+    public int? Length { get; init; }
+
+    /// <summary>True when the entropy key was found readable by others and tightened.</summary>
+    public bool EntropyRehardened { get; init; }
+}
+
 /// <summary>Payload of the <c>host</c> verbs.</summary>
 public sealed record HostResult
 {

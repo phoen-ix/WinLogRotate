@@ -122,6 +122,7 @@ public partial class ArchitectureTests
             "SecretStringTests.cs",
             "SecretStoreTests.cs",
             "SecretsTests.cs",
+            "SecretCommandTests.cs",
         ];
 
         // Assembled rather than written out, so that this file - which scans every file under

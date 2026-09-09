@@ -63,6 +63,7 @@ one, and that all of them fall in the range below.
 | 112 | Error | The configuration could not be read | `LR1002` |
 | 113 | Error | The configuration is invalid; nothing was attempted | `LR1003` |
 | 114 | Warning | No jobs are configured | `LR1004` |
+| 115 | Error | The verb needs a platform this is not | `LR1005` |
 | 120 | Warning | A job was skipped | `LR2001` |
 | 121 | Warning | A log file was missing | `LR2002` |
 | 122 | Warning | A log file was empty | `LR2003` |
@@ -80,6 +81,9 @@ one, and that all of them fall in the range below.
 | 191 | Error | A dangerous path was refused | `LR9002` |
 | 192 | Error | A hook was refused | `LR9003` |
 | 193 | Error | A reparse point was refused | `LR9004` |
+| 194 | Error | A configuration names a secret that is not stored | `LR9005` |
+| 195 | Warning | A credential is written in a world-readable configuration file | `LR9006` |
+| 196 | Error | The secret store, or the key protecting it, is unsafe or was repaired | `LR9007` |
 | 999 | Warning | Unclassified, or the per-invocation event cap was reached | — |
 
 `Severity.Critical` is written as an Error event: the registered `TypesSupported` is 7, which is

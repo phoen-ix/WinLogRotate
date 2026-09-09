@@ -2,6 +2,8 @@ using System.CommandLine;
 using WinLogRotate.Cli.Output;
 using WinLogRotate.Core;
 using WinLogRotate.Core.Engine;
+using WinLogRotate.Core.Secrets;
+using WinLogRotate.Hosting.Security;
 
 namespace WinLogRotate.Cli.Commands;
 
@@ -26,6 +28,7 @@ internal static class CommandTree
             BuildJournal(),
             BuildDoctor(),
             BuildUpdate(),
+            BuildSecret(),
         };
 
         GlobalOptions.AddTo(root);
@@ -166,6 +169,71 @@ internal static class CommandTree
         GlobalOptions.AddTo(doctor);
         doctor.SetAction(parse => DoctorCommand.Run(CommandContext.From(parse), parse.GetValue(GlobalOptions.ConfigDir)?.FullName));
         return doctor;
+    }
+
+    // ---- secrets ----------------------------------------------------------------------
+
+    /// <summary>
+    /// The stored-credential verbs.
+    /// </summary>
+    /// <remarks>
+    /// Not one of them takes the value as an option, and that is the point. A command line is
+    /// readable by every local administrator through Win32_Process, is written verbatim into
+    /// 4688 audit events wherever command-line auditing is on, and is captured by essentially
+    /// every EDR agent. Values arrive on standard input, which none of those observe.
+    /// </remarks>
+    private static Command BuildSecret()
+    {
+        var platform = SecretPlatform.ForThisMachine();
+        IInputSource input = new ConsoleInputSource();
+
+        var name = new Argument<string>("name") { Description = "The name a config file refers to as @secret:NAME." };
+        var fromFile = new Option<FileInfo?>("--from-file")
+        {
+            Description = "Read the value from this file instead of standard input. For a value "
+                        + "your shell cannot pipe cleanly - a non-ASCII password, most often.",
+        };
+
+        var set = new Command("set", "Store a secret, reading its value from standard input.") { name, fromFile };
+        GlobalOptions.AddTo(set);
+        set.SetAction(parse => SecretCommand.Set(
+            CommandContext.From(parse), input, platform,
+            parse.GetRequiredValue(name), parse.GetValue(fromFile),
+            parse.GetValue(GlobalOptions.ConfigDir)?.FullName));
+
+        var list = new Command("list", "List stored secrets: names, when they were set and by whom. Never values.");
+        GlobalOptions.AddTo(list);
+        list.SetAction(parse => SecretCommand.List(
+            CommandContext.From(parse), platform, parse.GetValue(GlobalOptions.ConfigDir)?.FullName));
+
+        var removeName = new Argument<string>("name") { Description = "The secret to remove." };
+        var remove = new Command("remove", "Delete a stored secret.") { removeName };
+        GlobalOptions.AddTo(remove);
+        remove.SetAction(parse => SecretCommand.Remove(
+            CommandContext.From(parse), platform, parse.GetRequiredValue(removeName),
+            parse.GetValue(GlobalOptions.ConfigDir)?.FullName));
+
+        var testName = new Argument<string>("name") { Description = "The secret to decrypt." };
+        var test = new Command("test", "Confirm a secret decrypts on this machine, reporting its length and nothing else.") { testName };
+        GlobalOptions.AddTo(test);
+        test.SetAction(parse => SecretCommand.Test(
+            CommandContext.From(parse), platform, parse.GetRequiredValue(testName),
+            parse.GetValue(GlobalOptions.ConfigDir)?.FullName));
+
+        var importFile = new Option<FileInfo?>("--from-file")
+        {
+            Description = "Read name=value lines from this file instead of standard input.",
+        };
+        var import = new Command("import", "Store several secrets from name=value lines, for unattended rollout.") { importFile };
+        GlobalOptions.AddTo(import);
+        import.SetAction(parse => SecretCommand.Import(
+            CommandContext.From(parse), input, platform, parse.GetValue(importFile),
+            parse.GetValue(GlobalOptions.ConfigDir)?.FullName));
+
+        return new Command("secret", "Store the credentials that notification providers authenticate with.")
+        {
+            set, list, remove, test, import,
+        };
     }
 
     // ---- scheduling -------------------------------------------------------------------
