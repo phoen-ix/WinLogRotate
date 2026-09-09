@@ -114,7 +114,7 @@ internal static class RunCommand
         // it is holding. It runs through ManageJobPlanner - the same code that tidies IIS logs -
         // which is deliberate: a log rotator that leaks its own logs would be embarrassing, and
         // if manage mode ever regresses this is where it shows up first.
-        var journalSettings = LoadJournalSettings(paths);
+        var journalSettings = config.Journal;
 
         if (!options.DryRun && journalSettings.Enabled)
         {
@@ -128,6 +128,11 @@ internal static class RunCommand
                     Severity = Severity.Warning,
                     Code = DiagnosticCode.RotationFailed,
                     Message = $"Journal maintenance: {error}",
+
+                    // Attributed, so it can be muted like any other job and so it stops merging
+                    // into the run scope's aggregation - where a full journal directory made
+                    // "the configuration is broken" look like a different problem each time.
+                    Job = JournalMaintenance.JobName,
                 });
             }
 
@@ -194,31 +199,6 @@ internal static class RunCommand
         };
 
         return ctx.Output.Complete("run", report.ExitCode, result);
-    }
-
-    /// <summary>
-    /// Reads <c>[journal]</c> from config.toml. A malformed config.toml has already been
-    /// reported by the loader above, so failures here fall back to the defaults rather than
-    /// reporting the same problem twice.
-    /// </summary>
-    private static JournalSettings LoadJournalSettings(InstallPaths paths)
-    {
-        if (!File.Exists(paths.ConfigFile))
-        {
-            return JournalSettings.Default;
-        }
-
-        try
-        {
-            var file = TomlFile.Load(paths.ConfigFile);
-            return file.HasErrors
-                ? JournalSettings.Default
-                : ConfigBinder.BindJournal(file, new DiagnosticBag());
-        }
-        catch (IOException)
-        {
-            return JournalSettings.Default;
-        }
     }
     /// <summary>
     /// What taking the gate concluded, in terms the platform-neutral caller can read.

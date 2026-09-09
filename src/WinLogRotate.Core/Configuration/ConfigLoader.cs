@@ -28,6 +28,16 @@ public sealed record LoadedConfig
     /// <summary>The named <c>[notify.KIND.NAME]</c> provider tables.</summary>
     public IReadOnlyList<NotifyProvider> NotifyProviders { get; init; } = [];
 
+    /// <summary>
+    /// The <c>[journal]</c> table.
+    /// </summary>
+    /// <remarks>
+    /// Carried here so that config.toml is read once. RunCommand used to load and parse it a
+    /// second time purely to reach this table; that was tolerable at one table and is not at
+    /// three, and two readers of one file is two chances to disagree about it.
+    /// </remarks>
+    public JournalSettings Journal { get; init; } = JournalSettings.Default;
+
     public bool HasErrors => Diagnostics.Any(d => d.Severity >= Severity.Error);
 }
 
@@ -54,6 +64,7 @@ public static class ConfigLoader
 
         JobSettings? defaults = null;
         var notify = NotifySettings.Default;
+        var journal = JournalSettings.Default;
         IReadOnlyList<NotifyProvider> providers = [];
         if (File.Exists(paths.ConfigFile))
         {
@@ -67,6 +78,7 @@ public static class ConfigLoader
             {
                 defaults = ConfigBinder.BindDefaults(file, diagnostics);
                 notify = ConfigBinder.BindNotify(file, diagnostics);
+                journal = ConfigBinder.BindJournal(file, diagnostics);
                 providers = ConfigBinder.BindProviders(file, diagnostics);
                 ValidateNotifyTargets(notify, providers, paths.ConfigFile, diagnostics);
                 ValidateCredentials(providers, paths.ConfigFile, diagnostics, secrets);
@@ -94,6 +106,7 @@ public static class ConfigLoader
                 Quarantined = quarantined,
                 Notify = notify,
                 NotifyProviders = providers,
+                Journal = journal,
             };
         }
 
@@ -164,6 +177,7 @@ public static class ConfigLoader
             Quarantined = quarantined,
             Notify = notify,
             NotifyProviders = providers,
+            Journal = journal,
         };
     }
 

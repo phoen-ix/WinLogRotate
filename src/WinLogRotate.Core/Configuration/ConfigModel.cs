@@ -126,6 +126,16 @@ public record JobSettings
     /// <summary>Skip a missing log silently instead of reporting it.</summary>
     public bool? MissingOk { get; init; }
 
+    /// <summary>
+    /// Whether this job's failures are reported to notification targets.
+    /// </summary>
+    /// <remarks>
+    /// For the share that fails whenever the NAS reboots, or the file held open by a writer
+    /// nobody will ever fix. It silences a job's ROTATION failures only: a problem with the
+    /// configuration itself is reported against the run and cannot be turned off this way.
+    /// </remarks>
+    public bool? Notify { get; init; }
+
     /// <summary>Do not rotate a zero-length log.</summary>
     public bool? NotIfEmpty { get; init; }
 
@@ -193,6 +203,17 @@ public sealed record JournalSettings
     /// a single file too large to open.</summary>
     public long MaxSize { get; init; } = 50L << 20;
 
+    /// <summary>
+    /// Whether a failure to tidy the journal is reported to notification targets.
+    /// </summary>
+    /// <remarks>
+    /// Off by default. This is the product's own housekeeping, and a tool that pages the on-call
+    /// about its own bookkeeping is a tool people mute. The failure is still on stdout, in the
+    /// Event Log and in the journal itself; only the mail stops. Set it true if an untidied
+    /// journal is something you want waking up for.
+    /// </remarks>
+    public bool Notify { get; init; }
+
     public static JournalSettings Default { get; } = new();
 }
 
@@ -220,6 +241,7 @@ public static class BuiltInDefaults
         DateExt = false,
         DateFormat = "-yyyyMMdd",
         MissingOk = false,
+        Notify = true,
         NotIfEmpty = true,
         CreateOldDir = false,
         LockStrategy = Configuration.LockStrategy.Rename,
@@ -256,6 +278,18 @@ public sealed record EffectiveJob
     public required bool DateExt { get; init; }
     public required string DateFormat { get; init; }
     public required bool MissingOk { get; init; }
+
+    /// <summary>
+    /// Whether this job's failures are reported. See <see cref="JobSettings.Notify"/>.
+    /// </summary>
+    /// <remarks>
+    /// Deliberately NOT <c>required</c>, unlike almost every member here. That convention exists
+    /// because a forgotten value means a silently wrong rotation; a forgotten value here means
+    /// "notifications on", which is safe and is what anybody would expect. Making it required
+    /// would also churn eight object initializers across five test files to say something they
+    /// do not care about. The next reader will want to "fix" this - please do not.
+    /// </remarks>
+    public bool Notify { get; init; } = true;
     public required bool NotIfEmpty { get; init; }
     public required string? OldDir { get; init; }
     public required bool CreateOldDir { get; init; }

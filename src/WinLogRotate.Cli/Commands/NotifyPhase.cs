@@ -3,6 +3,7 @@ using WinLogRotate.Contracts;
 using WinLogRotate.Core;
 using WinLogRotate.Core.Configuration;
 using WinLogRotate.Core.Engine;
+using WinLogRotate.Core.Journaling;
 using WinLogRotate.Core.Notify;
 using WinLogRotate.Core.State;
 
@@ -75,6 +76,15 @@ internal static class NotifyPhase
             Completed = report?.Completed ?? 0,
             BytesFreed = report?.BytesFreed ?? 0,
             ObservedJobs = report is null ? [] : [.. report.Plans.Select(p => p.JobName)],
+
+            // The journal's own upkeep is muted the same way any other job is, rather than
+            // through a special case in the planner - so it obeys exactly the rules everything
+            // else does, and turning it on is a config key rather than a code change.
+            MutedJobs =
+            [
+                .. config.Jobs.Where(j => !j.Notify).Select(j => j.Name),
+                .. config.Journal.Notify ? Array.Empty<string>() : [JournalMaintenance.JobName],
+            ],
         };
 
         var plan = NotificationPlanner.PlanFor(summary, seen, settings, state, TimeProvider.System.GetUtcNow());

@@ -59,6 +59,13 @@ public sealed class NotificationPlannerTests : IDisposable
             Run(jobs.Length == 0 ? ["iis"] : jobs), diagnostics,
             settings ?? Settings(), state, at ?? _now);
 
+    private NotificationPlan PlanMuting(
+        IReadOnlyList<CliDiagnostic> diagnostics, NotifyStateStore state,
+        string[] muted, DateTimeOffset? at = null, string[]? jobs = null) =>
+        NotificationPlanner.PlanFor(
+            Run(jobs ?? ["iis"]) with { MutedJobs = muted }, diagnostics,
+            Settings(), state, at ?? _now);
+
     // ---- the truth table -------------------------------------------------------------------
 
     [Fact]
@@ -435,6 +442,150 @@ public sealed class NotificationPlannerTests : IDisposable
             .Messages.ShouldHaveSingleItem().Fingerprint
             .ShouldBe(Plan([Bad(path: @"C:\inetpub\logs\W3SVC1\u_ex260909.log")], BaselinedState())
                 .Messages.ShouldHaveSingleItem().Fingerprint);
+    }
+
+    // ---- the opt-out ---------------------------------------------------------------------------
+
+    [Fact]
+    public void MutingAFailingJobDoesNotMailARecovery()
+    {
+        // THE trap. Filtering only the diagnostics leaves the job in ObservedJobs with nothing
+        // above the threshold, which reads as healthy - so muting a broken job mails "RECOVERED"
+        // about it. That is the same lie ObservedJobs exists to prevent, arriving by the other
+        // door, and it is one .Where() away.
+        var state = State();
+        state.SetJob("iis", Failing(_now.AddDays(-1), "abc"));
+
+        var plan = PlanMuting([Bad()], state, muted: ["iis"]);
+
+        plan.Messages.ShouldNotContain(m => m.Reason == NotifyReason.Recovered);
+        plan.IsEmpty.ShouldBeTrue();
+    }
+
+    [Fact]
+    public void MutingActuallySilencesTheJob()
+    {
+        // The other half-measure: filtering only ObservedJobs lets the diagnostics loop add the
+        // job straight back, and the opt-out silently does nothing at all.
+        var state = State();
+        state.SetJob("iis", new JobNotifyState { Outcome = NotifyOutcome.Healthy, NotifiedAt = _now.AddDays(-1) });
+
+        PlanMuting([Bad()], state, muted: ["iis"]).IsEmpty.ShouldBeTrue();
+    }
+
+    [Fact]
+    public void MutingCannotSilenceARunScopedFinding()
+    {
+        // "*" is deliberately in the muted set. A per-job opt-out must never be able to turn off
+        // "your configuration directory is writable by anyone" - and after Aggregate replaces a
+        // null job with the run scope, a job named "*" would be indistinguishable from one.
+        var insecure = new CliDiagnostic
+        {
+            Severity = Severity.Critical,
+            Code = DiagnosticCode.ConfigDirectoryInsecure,
+            Message = "conf.d is writable",
+        };
+
+        var plan = PlanMuting([insecure, Bad()], BaselinedRunScope(), muted: ["iis", "*"]);
+
+        var message = plan.Messages.ShouldHaveSingleItem();
+        message.Job.ShouldBe(NotifyStateDocument.RunScope);
+        message.Lines.ShouldContain(l => l.Code == DiagnosticCode.ConfigDirectoryInsecure);
+    }
+
+    [Fact]
+    public void MutingIsCaseInsensitive()
+    {
+        // Job names are compared that way everywhere else. A caller passing an ordinal set would
+        // produce a partial mute that nothing detects, so the planner re-wraps it.
+        var state = State();
+        state.SetJob("iis", Failing(_now.AddDays(-1), "abc"));
+
+        PlanMuting([Bad(job: "iis")], state, muted: ["IIS"]).IsEmpty.ShouldBeTrue();
+    }
+
+    [Theory]
+    [InlineData(NotifyOutcome.Unknown, true)]
+    [InlineData(NotifyOutcome.Unknown, false)]
+    [InlineData(NotifyOutcome.Healthy, true)]
+    [InlineData(NotifyOutcome.Healthy, false)]
+    [InlineData(NotifyOutcome.Failing, true)]
+    [InlineData(NotifyOutcome.Failing, false)]
+    public void AMutedJobIsNeverReportedFromAnyPriorState(NotifyOutcome prior, bool failingNow)
+    {
+        // Proves no send path survives the guard, from every cell of the table.
+        var state = State();
+        if (prior != NotifyOutcome.Unknown)
+        {
+            state.SetJob("iis", prior == NotifyOutcome.Failing
+                ? Failing(_now.AddDays(-40), "abc")
+                : new JobNotifyState { Outcome = prior, NotifiedAt = _now.AddDays(-40) });
+        }
+
+        var plan = PlanMuting(failingNow ? [Bad()] : [], state, muted: ["iis"]);
+
+        plan.Messages.ShouldNotContain(m => m.Job == "iis");
+    }
+
+    [Fact]
+    public void MutingLeavesTheReportedStateExactlyAsItWas()
+    {
+        // Muting is a configuration edit, not a delivery event, so it must not move the side of
+        // state that records what somebody was told. Only LastSeen may change.
+        var state = State();
+        var before = Failing(_now.AddDays(-5), "abc");
+        state.SetJob("iis", before);
+
+        var recorded = PlanMuting([Bad()], state, muted: ["iis"], at: _now)
+            .Baseline.ShouldHaveSingleItem();
+
+        recorded.State.Outcome.ShouldBe(before.Outcome);
+        recorded.State.Fingerprint.ShouldBe(before.Fingerprint);
+        recorded.State.NotifiedAt.ShouldBe(before.NotifiedAt);
+        recorded.State.FailingSince.ShouldBe(before.FailingSince);
+        recorded.State.LastSeen.ShouldBe(_now);
+    }
+
+    [Fact]
+    public void MutingAJobWithNoHistoryWritesNothing()
+    {
+        // Otherwise a machine in opt-in mode with 200 jobs grows 200 useless entries per run.
+        PlanMuting([Bad()], State(), muted: ["iis"]).Baseline.ShouldBeEmpty();
+    }
+
+    [Fact]
+    public void UnmutingAJobThatIsStillBrokenSaysSoAtOnce()
+    {
+        // The day somebody turns it back on, and the reason state is frozen rather than cleared.
+        // Cleared, this run would baseline and stay silent for another week.
+        var state = State();
+        state.SetJob("iis", Failing(_now.AddDays(-30), FingerprintOf(Bad())));
+
+        var message = Plan([Bad()], state).Messages.ShouldHaveSingleItem();
+
+        message.Reason.ShouldBe(NotifyReason.Reminder);
+        message.FailingSince.ShouldBe(_now.AddDays(-30));
+    }
+
+    [Fact]
+    public void UnmutingAJobThatWasFixedClosesTheOutstandingFailure()
+    {
+        var state = State();
+        state.SetJob("iis", Failing(_now.AddDays(-30), "abc"));
+
+        Plan([], state).Messages.ShouldHaveSingleItem().Reason.ShouldBe(NotifyReason.Recovered);
+    }
+
+    [Fact]
+    public void AMutedJobSaysWhyInTheSuppressionTrace()
+    {
+        // The trace is the answer to "why did I not get an email?", which is most of what makes
+        // a notification feature trustworthy.
+        var state = State();
+        state.SetJob("iis", Failing(_now.AddDays(-1), "abc"));
+
+        PlanMuting([Bad()], state, muted: ["iis"])
+            .Suppressed.ShouldContain(x => x.Contains("notify = false", StringComparison.Ordinal));
     }
 
     // ---- helpers ------------------------------------------------------------------------------

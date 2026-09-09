@@ -36,6 +36,17 @@ public sealed record JournalMaintenanceResult
 public static class JournalMaintenance
 {
     /// <summary>
+    /// The name the journal's own upkeep reports under.
+    /// </summary>
+    /// <remarks>
+    /// Attributed rather than left run-scoped, for two reasons. A failure to tidy the journal is
+    /// the product's own housekeeping and should not page anybody unless asked for - and while it
+    /// carried no job it merged into the run scope's aggregation, so a full journal directory
+    /// made "the configuration is broken" look like a different problem every time it changed.
+    /// </remarks>
+    public const string JobName = "journal";
+
+    /// <summary>
     /// Works out what the journal directory needs, without touching anything.
     /// </summary>
     /// <remarks>

@@ -59,6 +59,7 @@ public static class SettingsMerge
             DateExt = Pick(s => s.DateExt, false),
             DateFormat = PickString(s => s.DateFormat) ?? "-yyyyMMdd",
             MissingOk = Pick(s => s.MissingOk, false),
+            Notify = Pick(s => s.Notify, true),
             NotIfEmpty = Pick(s => s.NotIfEmpty, true),
             OldDir = PickString(s => s.OldDir),
             CreateOldDir = Pick(s => s.CreateOldDir, false),

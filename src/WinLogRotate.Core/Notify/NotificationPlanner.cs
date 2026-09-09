@@ -38,8 +38,20 @@ public static class NotificationPlanner
             return NotificationPlan.Nothing("on = \"never\"");
         }
 
+        // Case-insensitively, rather than trusting the caller's comparer: job names are
+        // compared that way everywhere else, and an ordinal set here would produce a partial
+        // mute that nothing detects.
+        var muted = new HashSet<string>(run.MutedJobs, StringComparer.OrdinalIgnoreCase);
+
         // Every group found, regardless of the threshold. The threshold decides what is worth
         // waking somebody for; the body of a recovery still has to be able to say what remains.
+        //
+        // Muted jobs are NOT filtered out here. An earlier version did, on the raw diagnostics,
+        // as a second line of defence for the run scope - but it turned out to have no
+        // observable effect: the guard below skips a muted job before its lines are ever read,
+        // and what actually protects the run scope is ConfigBinder refusing "*" as a job name.
+        // A second mechanism that changes no outcome is not defence in depth, it is untested
+        // code with a comment claiming otherwise.
         var all = Aggregate(diagnostics);
 
         var jobs = new HashSet<string>(run.ObservedJobs, StringComparer.OrdinalIgnoreCase);
@@ -54,6 +66,25 @@ public static class NotificationPlanner
 
         foreach (var job in jobs.OrderBy(j => j, StringComparer.Ordinal))
         {
+            // The second half of the mute, and both halves are needed. Filtering only the
+            // diagnostics would leave the job in ObservedJobs with nothing above the threshold,
+            // which reads as healthy - so muting a broken job would mail "RECOVERED" about it.
+            // That is the same lie ObservedJobs was introduced to prevent, arriving by the other
+            // door. Filtering only here would let the diagnostics loop add it straight back.
+            if (job != NotifyStateDocument.RunScope && muted.Contains(job))
+            {
+                // Muted is neither healthy nor absent: nothing is decided and nothing is sent,
+                // and the reported side of state is left exactly as it was. Only LastSeen moves,
+                // so that muting a job does not quietly cause Prune to forget it was ever broken.
+                if (state.Jobs.ContainsKey(job))
+                {
+                    baseline.Add((job, state.JobOrDefault(job) with { LastSeen = now }));
+                }
+
+                suppressed.Add($"{Describe(job)}: notify = false");
+                continue;
+            }
+
             var lines = all.Where(l => Same(l.Job, job)).ToArray();
             var above = lines.Where(l => l.Severity >= settings.Threshold).ToArray();
 
@@ -339,4 +370,15 @@ public sealed record RunSummary
     /// mails everybody "recovered" the moment somebody disables a job.
     /// </remarks>
     public required IReadOnlyList<string> ObservedJobs { get; init; }
+
+    /// <summary>
+    /// Jobs whose failures are not to be reported. Empty means everything reports.
+    /// </summary>
+    /// <remarks>
+    /// Non-required, so nothing that builds a summary has to have an opinion about muting. The
+    /// planner re-wraps this case-insensitively rather than trusting its caller's comparer: job
+    /// names are compared that way everywhere else, and an ordinal set here would produce a
+    /// partial mute that nothing detects.
+    /// </remarks>
+    public IReadOnlyCollection<string> MutedJobs { get; init; } = [];
 }

@@ -45,6 +45,7 @@ public static class ConfigBinder
             Retain = GetInt(table, "retain", file.Path, diagnostics) ?? defaults.Retain,
             Compress = GetEnum<CompressType>(table, "compress", file.Path, diagnostics) ?? defaults.Compress,
             MaxSize = GetSize(table, "maxsize", file.Path, diagnostics) ?? defaults.MaxSize,
+            Notify = GetBool(table, "notify", file.Path, diagnostics) ?? defaults.Notify,
         };
     }
 
@@ -265,6 +266,22 @@ public static class ConfigBinder
         var name = GetString(table, "name", file.Path, diagnostics)
                    ?? Path.GetFileNameWithoutExtension(file.Path);
 
+        // "*" is how findings that belong to the run rather than to any one job are recorded in
+        // notify.json. A job of that name would share an outcome, an aggregation group and a
+        // fingerprint with them - so an unrelated job going green could report the configuration
+        // as recovered while conf.d was still world-writable.
+        //
+        // Referenced through the constant rather than as a literal so the coupling is greppable,
+        // and so the doc comment on RunScope claiming this cannot happen becomes true.
+        if (string.Equals(name, State.NotifyStateDocument.RunScope, StringComparison.Ordinal))
+        {
+            diagnostics.Error(file.Path, DiagnosticCode.ConfigInvalid,
+                $"'{name}' is not a usable job name: it is how run-wide findings are recorded.",
+                LineOf(table), ColumnOf(table),
+                "Any other name will do.");
+            return null;
+        }
+
         var paths = GetStringList(table, "paths", file.Path, diagnostics);
         if (paths.Count == 0)
         {
@@ -318,6 +335,7 @@ public static class ConfigBinder
             DateExt = settings.DateExt,
             DateFormat = settings.DateFormat,
             MissingOk = settings.MissingOk,
+            Notify = settings.Notify,
             NotIfEmpty = settings.NotIfEmpty,
             OldDir = settings.OldDir,
             CreateOldDir = settings.CreateOldDir,
@@ -388,6 +406,7 @@ public static class ConfigBinder
             DateExt = GetBool(table, "dateext", file, d),
             DateFormat = GetString(table, "dateformat", file, d),
             MissingOk = GetBool(table, "missingok", file, d),
+            Notify = GetBool(table, "notify", file, d),
             NotIfEmpty = GetBool(table, "notifempty", file, d),
             OldDir = GetString(table, "olddir", file, d),
             CreateOldDir = GetBool(table, "createolddir", file, d),
