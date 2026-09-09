@@ -150,6 +150,71 @@ public partial class ArchitectureTests
     }
 
     /// <summary>
+    /// Every identity the product publishes is declared in exactly one place.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// The publisher, the copyright holder and the author are claims about a real person or
+    /// organisation. They belong in LICENSE, Directory.Build.props and the installer script, and
+    /// nowhere else - so that changing who owns this is one edit rather than a search.
+    /// </para>
+    /// <para>
+    /// This test exists because an identity was once derived from the working directory path and
+    /// written into all three, where it survived twenty-one commits and five releases before
+    /// anybody noticed. It was compiled into both executables' file properties and shown in
+    /// Add/Remove Programs on every machine that installed it. Nothing was watching, which is the
+    /// only reason it lasted.
+    /// </para>
+    /// </remarks>
+    [Fact]
+    public void ThePublishedIdentityIsDeclaredInOnePlaceOnly()
+    {
+        var root = RepoRoot.Find().FullName;
+
+        // The four places the owner is named on purpose, each for a different reason. Anywhere
+        // else is a copy, and a copy is what goes stale or turns out to have been wrong all along.
+        string[] declarations =
+        [
+            // The legal attribution.
+            Path.Combine(root, "LICENSE"),
+
+            // Company, Authors and Copyright, compiled into both executables' file properties.
+            Path.Combine(root, "Directory.Build.props"),
+
+            // The Publisher shown in Add/Remove Programs.
+            Path.Combine(root, "packaging", "winlogrotate.nsi"),
+
+            // The release feed the updater polls, which is necessarily an address under the
+            // owner's account.
+            Path.Combine(root, "src", "WinLogRotate.Cli", "Commands", "UpdateCommand.cs"),
+        ];
+
+        // Read from the declaration rather than hard-coded, so this keeps working when the owner
+        // changes and fails when a copy of the old value is left behind somewhere.
+        var props = File.ReadAllText(Path.Combine(root, "Directory.Build.props"));
+        var company = System.Text.RegularExpressions.Regex
+            .Match(props, @"<Company>([^<]+)</Company>").Groups[1].Value;
+
+        company.ShouldNotBeNullOrWhiteSpace("Directory.Build.props must declare a Company");
+
+        var offenders = new[] { "src", "tests", "docs", ".github" }
+            .Select(d => Path.Combine(root, d))
+            .Where(Directory.Exists)
+            .SelectMany(d => Directory.EnumerateFiles(d, "*", SearchOption.AllDirectories))
+            .Where(f => !f.Contains(Path.Combine("obj", ""), StringComparison.Ordinal))
+            .Where(f => !f.Contains(Path.Combine("bin", ""), StringComparison.Ordinal))
+            .Where(f => !declarations.Contains(f, StringComparer.Ordinal))
+            .Where(f => File.ReadAllText(f).Contains(company, StringComparison.OrdinalIgnoreCase))
+            .Select(f => Path.GetRelativePath(root, f))
+            .ToArray();
+
+        offenders.ShouldBeEmpty(
+            $"'{company}' identifies the owner and belongs only in LICENSE, Directory.Build.props "
+            + "and the installer script. A copy anywhere else is one more thing to miss when it "
+            + "changes, and one more place for a wrong value to hide.");
+    }
+
+    /// <summary>
     /// The engine's platform-neutral half must stay neutral.
     /// <para>
     /// Marking the whole Core assembly [SupportedOSPlatform("windows")] is the tempting
