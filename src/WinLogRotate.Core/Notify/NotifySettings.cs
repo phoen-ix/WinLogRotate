@@ -63,6 +63,17 @@ public sealed record NotifySettings
     /// <summary>The whole notification phase's wall clock, not a per-target timeout.</summary>
     public TimeSpan Budget { get; init; } = TimeSpan.FromSeconds(30);
 
+    /// <summary>
+    /// Attempts after the first, per channel, within one run.
+    /// </summary>
+    /// <remarks>
+    /// Clamped to 0..5 by the binder. A third retry buys nothing a human would not rather have
+    /// as a fast failure, and every attempt is spent out of the phase's single wall-clock
+    /// budget - so a large number here does not mean more tries, it means fewer channels
+    /// reached before the budget runs out.
+    /// </remarks>
+    public int Retries { get; init; } = 2;
+
     /// <summary>Consecutive failures before a channel is suppressed.</summary>
     public int BreakerAfter { get; init; } = 5;
 

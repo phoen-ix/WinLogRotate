@@ -100,14 +100,42 @@ public sealed class NotifyCredentialTests : IDisposable
     }
 
     [Fact]
-    public void AStoredReferenceThatIsMissingIsAnError()
+    public void AStoredReferenceThatIsMissingIsReportedButDoesNotStopTheRun()
     {
-        var d = Load(WithReference, new KnownSecrets("something-else"))
-            .Diagnostics.FirstOrDefault(x => x.Code == DiagnosticCode.SecretMissing)
+        // A warning, not an error, and the two validators in ConfigLoader have to agree on that.
+        // An error would mean that the moment a real secret lookup is wired in, one mistyped
+        // Pushover token name sets HasErrors and stops every rotation on the machine - turning a
+        // notification problem into a disk-space problem, which is exactly what the sibling
+        // ValidateNotifyTargets says in its own comment that it exists to avoid.
+        var config = Load(WithReference, new KnownSecrets("something-else"));
+
+        var d = config.Diagnostics.FirstOrDefault(x => x.Code == DiagnosticCode.SecretMissing)
             .ShouldNotBeNull();
 
-        d.Severity.ShouldBe(Severity.Error);
+        d.Severity.ShouldBe(Severity.Warning);
         d.Remedy.ShouldNotBeNull().ShouldContain("secret set ses-smtp");
+        config.HasErrors.ShouldBeFalse();
+    }
+
+    [Fact]
+    public void ANotifyMisconfigurationNeverChangesTheExitCode()
+    {
+        // Everything that can be wrong about notifications, at once. None of it may stop logs
+        // being rotated: the rotation is the product, and the alerting is how you hear about it.
+        var config = Load("""
+            schema = 1
+            [notify]
+            to = ["email.typo", "htp://nope"]
+            [notify.email.ses]
+            host = "smtp.example.com"
+            password = "@secret:not-stored"
+            [notify.email.plain]
+            host = "smtp.example.com"
+            password = "in-the-clear"
+            """, new KnownSecrets());
+
+        config.Diagnostics.ShouldNotBeEmpty();
+        config.HasErrors.ShouldBeFalse();
     }
 
     [Fact]

@@ -54,6 +54,11 @@ one, and that all of them fall in the range below.
 > *"The description for Event ID N … cannot be found"*. For the same reason every event carries
 > exactly one insertion string holding the whole message, and the category is always 0.
 
+The **Type** column is the type these events normally carry. It is derived from the severity of
+the diagnostic at the time, and a few codes legitimately appear at more than one - a refused path
+is an Error from the configuration validator and from the runtime guard, but an override of the
+same guard is a Warning. The **ID** never varies, which is what an alert rule should match on.
+
 | ID | Type | Condition | Code |
 |---:|---|---|---|
 | 100 | Information | Run completed, nothing was due | — |
@@ -70,12 +75,16 @@ one, and that all of them fall in the range below.
 | 123 | Warning | Not due yet | `LR2004` |
 | 124 | Warning | First run: a baseline was recorded | `LR2005` |
 | 130 | Error | A rotation failed | `LR3001` |
-| 131 | Warning | The file was locked by another process | `LR3002` |
+| 131 | Error | The file was locked by another process | `LR3002` |
 | 132 | Warning | The configured lock strategy was unavailable | `LR3003` |
 | 133 | Warning | A previous run abandoned the rotation mutex | `LR3101` |
 | 134 | Error | NUL-fill detected; `copytruncate` quarantined for that path | `LR3102` |
 | 140 | Warning | No run host is registered | `LR4001` |
 | 150 | Warning | A notification target is unparseable or missing its credential | `LR5001` |
+| 151 | Warning | A notification channel could not be reached | `LR5002` |
+| 152 | Warning | A notification channel is suppressed after repeated failures | `LR5003` |
+| 153 | Warning | The notification state could not be read; change detection starts over | `LR5004` |
+| 154 | Warning | The notification phase was cut short to protect the run's deadline | `LR5005` |
 | 141 | Warning | The registered run host has drifted from its definition | `LR4002` |
 | 142 | Error | Registering the run host failed | `LR4003` |
 | 190 | Error | The configuration directory is writable by a non-administrator | `LR9001` |

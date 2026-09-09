@@ -6,12 +6,15 @@ using WinLogRotate.Core.Engine;
 using WinLogRotate.Core.Journaling;
 using WinLogRotate.Core.Safety;
 using WinLogRotate.Core.State;
+using WinLogRotate.Hosting;
 
 namespace WinLogRotate.Cli.Commands;
 
 internal static class RunCommand
 {
-    public static int Run(CommandContext ctx, RunOptions options, string? configDir, string? stateOverride)
+    public static int Run(
+        CommandContext ctx, RunOptions options, string? configDir, string? stateOverride,
+        RunLockOptions? locking = null)
     {
         var paths = InstallPaths.Resolve(configDir);
         var guard = new PathGuard(new GuardOptions { Elevated = Privilege.IsElevated() });
@@ -31,6 +34,37 @@ internal static class RunCommand
 
             ctx.Output.Line($"Paused until {until:u}; nothing was rotated.");
             return ctx.Output.Complete<RunResult>("run", ExitCode.Ok, null);
+        }
+
+        // The machine-wide gate, taken before anything is read and held for the whole run.
+        //
+        // Two rotations over the same files is the worst bug this product could have, and until
+        // now nothing ever took this: the option was declared on the verb, the scheduled task
+        // passed --lock-held-exit 0, and RunCommand never received either.
+        var locks = locking ?? new RunLockOptions();
+        var gate = EnterGate(ctx, locks);
+        using var held = gate.Handle;
+
+        if (!gate.Entered)
+        {
+            ctx.Output.Line("Another rotation is already running; nothing was done.");
+            return ctx.Output.Complete<RunResult>("run", locks.HeldExitCode, null);
+        }
+
+        if (gate.Outcome == GateOutcome.AcquiredAfterAbandon)
+        {
+            // Worth saying rather than swallowing: a previous run was killed mid-rotation, so
+            // there may be a half-renamed file or an uncompressed archive about. The planners
+            // are written to cope, but the operator should know it happened.
+            ctx.Output.Diagnostic(new CliDiagnostic
+            {
+                Severity = Severity.Warning,
+                Code = DiagnosticCode.PreviousRunAbandoned,
+                Message = "A previous run ended without releasing the rotation lock.",
+                Remedy = "It was probably killed - by a reboot, or by the task's ExecutionTimeLimit. "
+                       + "This run continues; check the journal for operations that were planned "
+                       + "but never applied.",
+            });
         }
 
         var config = ConfigLoader.Load(paths, guard);
@@ -53,6 +87,12 @@ internal static class RunCommand
         // task needs in order to treat 1 as "go read the logs" without ambiguity.
         if (config.HasErrors)
         {
+            // Notified on the way out, and this is the case that matters most. "The
+            // configuration is so broken that nothing rotated" is the single night an operator
+            // most wants to hear about, and returning here without a notification would make it
+            // the one night that says nothing at all.
+            NotifyPhase.Run(ctx, paths, config, report: null, options);
+
             ctx.Output.Line("winlogrotate: the configuration has errors; nothing was attempted.");
             return ctx.Output.Complete<RunResult>("run", ExitCode.ConfigInvalid, null);
         }
@@ -137,6 +177,10 @@ internal static class RunCommand
             ? $"dry run: {report.JobsRun} job(s), {report.Plans.Sum(p => p.Destructive.Count())} operation(s) planned. Nothing was changed."
             : $"{report.JobsRun} job(s), {report.Completed} operation(s), {GlobCommand.Humanize(report.BytesFreed)} freed, {report.Failed} failure(s).");
 
+        // After the journal is closed and after state.Save, so a notification can never delay or
+        // fail the thing it is reporting on.
+        NotifyPhase.Run(ctx, paths, config, report, options);
+
         var result = new RunResult
         {
             RunId = report.RunId,
@@ -176,4 +220,47 @@ internal static class RunCommand
             return JournalSettings.Default;
         }
     }
+    /// <summary>
+    /// What taking the gate concluded, in terms the platform-neutral caller can read.
+    /// </summary>
+    /// <remarks>
+    /// RotationGate is [SupportedOSPlatform("windows")], so its members cannot be touched from
+    /// here. Returning the handle as an IDisposable alongside a plain enum keeps the analyzer
+    /// satisfied without an annotation spreading up into every caller of the run verb.
+    /// </remarks>
+    private readonly record struct GateResult(IDisposable? Handle, bool Entered, GateOutcome Outcome);
+
+    /// <summary>
+    /// Takes the machine-wide rotation gate.
+    /// </summary>
+    /// <remarks>
+    /// Two cases carry on without one, and neither is a failure: the operator passed
+    /// --skip-state-lock, and this is not Windows, where the gate is a named kernel mutex.
+    /// </remarks>
+    private static GateResult EnterGate(CommandContext ctx, RunLockOptions locking)
+    {
+        if (locking.Skip)
+        {
+            ctx.Output.Diagnostic(new CliDiagnostic
+            {
+                Severity = Severity.Warning,
+                Code = DiagnosticCode.JobSkipped,
+                Message = "The rotation lock was skipped, so nothing prevents two runs overlapping.",
+                Remedy = "Only use --skip-state-lock where a named kernel mutex is unavailable.",
+            });
+            return new GateResult(null, Entered: true, GateOutcome.Acquired);
+        }
+
+        return OperatingSystem.IsWindows()
+            ? EnterOnWindows(locking)
+            : new GateResult(null, Entered: true, GateOutcome.Acquired);
+    }
+
+    [System.Runtime.Versioning.SupportedOSPlatform("windows")]
+    private static GateResult EnterOnWindows(RunLockOptions locking)
+    {
+        var gate = RotationGate.Enter(locking.Wait ? locking.WaitFor : TimeSpan.Zero);
+        return new GateResult(gate, gate.Entered, gate.Outcome);
+    }
+
 }

@@ -46,6 +46,20 @@ public static class DiagnosticCode
     /// <summary>A notification target is unparseable, contradictory, or missing its credential.</summary>
     public const string NotifyMisconfigured = "LR5001";
 
+    /// <summary>A channel could not be reached. Never an error: the rotation already happened,
+    /// and its exit code must not depend on a webhook.</summary>
+    public const string NotifyFailed = "LR5002";
+
+    /// <summary>A channel is suppressed after repeated failures, so it was not attempted.</summary>
+    public const string NotifyCircuitOpen = "LR5003";
+
+    /// <summary>The notification state could not be read, so change detection starts over.</summary>
+    public const string NotifyStateUnreadable = "LR5004";
+
+    /// <summary>The notification phase was cut short, or skipped, to protect the run's
+    /// deadline. See the remark on 0x41306 in docs/notifications.md.</summary>
+    public const string NotifyBudgetClamped = "LR5005";
+
     // 9xxx - security. Never suppressed, never merely warned about.
     /// <summary>conf.d is writable by a non-administrator. All hooks and all
     /// dangerous-path overrides are refused for the entire run.</summary>

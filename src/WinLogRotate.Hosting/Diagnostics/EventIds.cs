@@ -69,6 +69,10 @@ public static class EventIds
 
         // 5xxx - notification delivery.
         DiagnosticCode.NotifyMisconfigured => 150,
+        DiagnosticCode.NotifyFailed => 151,
+        DiagnosticCode.NotifyCircuitOpen => 152,
+        DiagnosticCode.NotifyStateUnreadable => 153,
+        DiagnosticCode.NotifyBudgetClamped => 154,
 
         // 9xxx - security.
         DiagnosticCode.ConfigDirectoryInsecure => 190,

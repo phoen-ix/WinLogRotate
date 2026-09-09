@@ -121,8 +121,12 @@ public static class ConfigBinder
             Threshold = GetEnum<Severity>(table, "threshold", file.Path, diagnostics) ?? defaults.Threshold,
             RemindAfter = GetDuration(table, "remind_after", file.Path, diagnostics) ?? defaults.RemindAfter,
             Budget = GetDuration(table, "budget", file.Path, diagnostics) ?? defaults.Budget,
-            BreakerAfter = GetInt(table, "breaker_after", file.Path, diagnostics) ?? defaults.BreakerAfter,
-            BreakerCooldown = GetInt(table, "breaker_cooldown", file.Path, diagnostics) ?? defaults.BreakerCooldown,
+            Retries = Clamp(GetInt(table, "retries", file.Path, diagnostics) ?? defaults.Retries, 0, 5),
+            // Clamped rather than trusted. A negative breaker_after opens the circuit on the
+            // first success; a negative cooldown never closes it. Neither is a configuration
+            // anybody meant to write, and both are silent.
+            BreakerAfter = Clamp(GetInt(table, "breaker_after", file.Path, diagnostics) ?? defaults.BreakerAfter, 1, 1000),
+            BreakerCooldown = Clamp(GetInt(table, "breaker_cooldown", file.Path, diagnostics) ?? defaults.BreakerCooldown, 1, 1000),
             To = GetStringListOrNull(table, "to", file.Path, diagnostics) ?? defaults.To,
             Redact = GetStringListOrNull(table, "redact", file.Path, diagnostics) ?? defaults.Redact,
             Proxy = GetString(table, "proxy", file.Path, diagnostics) ?? defaults.Proxy,
@@ -618,6 +622,8 @@ public static class ConfigBinder
             remedy: "Write it as 30s, 15m, 2h, 7d, or as 01:00:00.");
         return null;
     }
+
+    private static int Clamp(int value, int min, int max) => Math.Clamp(value, min, max);
 
     /// <summary>Parses "7d", "30m", "45s", "2h" or a TimeSpan.</summary>
     internal static bool TryParseDuration(string text, out TimeSpan value)

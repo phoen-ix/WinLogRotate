@@ -295,8 +295,14 @@ public static class ConfigLoader
                         break;
 
                     case SecretSource.Store when secrets?.Exists(reference.Key!) == false:
-                        diagnostics.Error(file, DiagnosticCode.SecretMissing,
-                            $"No secret called '{reference.Key}'.",
+                        // Warning, not error, and the two validators in this file must agree on
+                        // that. An error here would mean that the moment a real secret lookup is
+                        // passed in, one mistyped Pushover token name stops every rotation on
+                        // the machine - turning a notification problem into a disk-space
+                        // problem, which is precisely what ValidateNotifyTargets says it exists
+                        // to avoid.
+                        diagnostics.Warn(file, DiagnosticCode.SecretMissing,
+                            $"No secret called '{reference.Key}', so '{provider.Name}' cannot authenticate.",
                             reference.Line, reference.Column,
                             remedy: $"winlogrotate secret set {reference.Key}");
                         break;

@@ -109,7 +109,13 @@ internal static class CommandTree
                 OnlyJob = parse.GetValue(JobFilter),
             },
             parse.GetValue(GlobalOptions.ConfigDir)?.FullName,
-            parse.GetValue(StateFile)?.FullName));
+            parse.GetValue(StateFile)?.FullName,
+            new RunLockOptions
+            {
+                Skip = parse.GetValue(SkipStateLock),
+                Wait = parse.GetValue(WaitForStateLock),
+                HeldExitCode = parse.GetValue(LockHeldExit),
+            }));
         return run;
     }
 
