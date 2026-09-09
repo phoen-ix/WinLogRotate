@@ -1,6 +1,7 @@
 using System.Security.AccessControl;
 using System.Security.Principal;
 using Shouldly;
+using WinLogRotate.Core;
 using WinLogRotate.Hosting.Security;
 using Xunit;
 
@@ -157,4 +158,71 @@ public sealed class ConfDirHardeningTests : IDisposable
             (rule.FileSystemRights & Writeish).ShouldBe(default);
         }
     }
+    [Fact]
+    public void APerUserDirectoryIsRefusedButNotReportedAsAFault()
+    {
+        WindowsOnly.Require();
+
+        // A per-user installation keeps its configuration in the user's own profile, which that
+        // user can necessarily write. Hooks must still be refused - knowing why a directory is
+        // writable does not make executing its contents safer - but there is nothing to repair.
+        MakeItLookLikeProgramData(_root);
+        var confd = _root.CreateSubdirectory("conf.d");
+
+        var finding = ConfDirGuard.Verify(confd.FullName, scope: InstallScope.PerUser);
+
+        finding.HooksAllowed.ShouldBeFalse();
+        finding.ExpectedForScope.ShouldBeTrue();
+        finding.Explanation.ShouldNotBeNull().ShouldContain("per-user");
+    }
+
+    [Fact]
+    public void ThePerUserRemedyDoesNotTellAnyoneToRunIcacls()
+    {
+        WindowsOnly.Require();
+
+        // The remedy that used to be offered would have applied a descriptor granting Users
+        // read-only to the owner's own AppData folder, taking away their write access to their
+        // own jobs. Worse than the hooks they were not getting.
+        MakeItLookLikeProgramData(_root);
+        var confd = _root.CreateSubdirectory("conf.d");
+
+        var finding = ConfDirGuard.Verify(confd.FullName, scope: InstallScope.PerUser);
+
+        finding.FixCommand.ShouldNotBeNull().ShouldNotContain("icacls");
+    }
+
+    [Fact]
+    public void PortableStaysStrict_BecauseThatIsWhatConfigDirProduces()
+    {
+        WindowsOnly.Require();
+
+        // The installer verifies its own work by shelling "host repair --acl --config-dir ...",
+        // and an explicit --config-dir resolves to Portable. Softening that scope would blind
+        // the installer to a genuinely open ProgramData.
+        MakeItLookLikeProgramData(_root);
+        var confd = _root.CreateSubdirectory("conf.d");
+
+        var finding = ConfDirGuard.Verify(confd.FullName, scope: InstallScope.Portable);
+
+        finding.ExpectedForScope.ShouldBeFalse();
+        finding.FixCommand.ShouldNotBeNull().ShouldContain("icacls");
+    }
+
+    [Fact]
+    public void AHardenedDirectoryIsNeverReportedAsScopeExpected()
+    {
+        WindowsOnly.Require();
+
+        // ExpectedForScope is about explaining a refusal, so it must never appear on a verdict
+        // that is not a refusal - otherwise "expected" starts reading as "fine either way".
+        var confd = _root.CreateSubdirectory("conf.d");
+        Harden(confd);
+
+        var finding = ConfDirGuard.Verify(confd.FullName, scope: InstallScope.PerUser);
+
+        finding.Verdict.ShouldBe(AclVerdict.Hardened, Explain(finding));
+        finding.ExpectedForScope.ShouldBeFalse();
+    }
+
 }

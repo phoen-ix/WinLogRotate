@@ -179,6 +179,13 @@ destroy comments on write.
 named event, plus `http:`, `command:` and raw scripts. Every hook has a timeout, and hooks are
 refused outright if the config directory isn't locked down.
 
+> **Hooks need a per-machine install.** They run commands, and that is only safe from a directory
+> an ordinary account cannot write. A per-user install keeps its configuration in
+> `%APPDATA%\WinLogRotate\`, which its owner can necessarily write — so hooks are refused there,
+> permanently and by design. Nothing is wrong with such an install and there is nothing to repair;
+> `winlogrotate doctor` says so rather than reporting it as a fault. Everything else — rotation,
+> compression, retention, scheduling — works exactly the same either way.
+
 Coming from Linux? `winlogrotate import \\srv\etc\logrotate.d\nginx` converts it. One way, and
 nothing is guessed: `kill -USR1` becomes `service:paramchange:nginx`, but anything that can't be
 translated exactly is written into the output **as a TODO comment** and the job is created
@@ -188,7 +195,8 @@ disabled.
 
 Per-machine installs keep everything in `C:\ProgramData\WinLogRotate\` — `config.toml`,
 `conf.d\`, `state.json` (the rotation clocks) and `journal\`. Per-user installs use
-`%APPDATA%\WinLogRotate\`. `winlogrotate doctor` prints them all.
+`%APPDATA%\WinLogRotate\`, and consequently cannot run hooks (see above). `winlogrotate doctor`
+prints them all.
 
 The **journal** is the record of every file compressed, moved or deleted, and the rule that
 caused it. It is what the GUI's History page shows and what `winlogrotate journal` queries —

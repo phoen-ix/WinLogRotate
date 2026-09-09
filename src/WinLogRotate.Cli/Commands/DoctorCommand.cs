@@ -40,7 +40,7 @@ internal static class DoctorCommand
 
         if (OperatingSystem.IsWindows())
         {
-            var finding = ConfDirGuard.Verify(paths.ConfigDirectory);
+            var finding = ConfDirGuard.Verify(paths.ConfigDirectory, scope: paths.Scope);
             aclVerdict = finding.Verdict.ToString();
             hooksAllowed = finding.HooksAllowed;
             aclFix = finding.FixCommand;
@@ -49,7 +49,22 @@ internal static class DoctorCommand
             ctx.Output.Line($"  conf.d ACL    {finding.Verdict}");
             ctx.Output.Line($"  hooks         {(finding.HooksAllowed ? "permitted" : "REFUSED")}");
 
-            if (finding.Verdict is not AclVerdict.Hardened and not AclVerdict.Unknown)
+            // A per-user installation always lands here, and it is not broken. Reporting it as
+            // a Critical security finding would be crying wolf at the one person least able to
+            // judge it, and the repair it suggested would lock them out of their own config.
+            if (finding.ExpectedForScope)
+            {
+                ctx.Output.Line("                by design for a per-user installation");
+                ctx.Output.Diagnostic(new CliDiagnostic
+                {
+                    Severity = Severity.Info,
+                    Code = DiagnosticCode.ConfigDirectoryInsecure,
+                    Message = finding.Explanation ?? "Hooks are refused for a per-user installation.",
+                    Path = paths.ConfigDirectory,
+                    Remedy = finding.FixCommand,
+                });
+            }
+            else if (finding.Verdict is not AclVerdict.Hardened and not AclVerdict.Unknown)
             {
                 foreach (var ace in finding.OffendingAces)
                 {

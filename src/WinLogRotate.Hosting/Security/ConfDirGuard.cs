@@ -1,6 +1,7 @@
 using System.Runtime.Versioning;
 using System.Security.AccessControl;
 using System.Security.Principal;
+using WinLogRotate.Core;
 
 namespace WinLogRotate.Hosting.Security;
 
@@ -31,7 +32,24 @@ public sealed record AclFinding
     public string? Explanation { get; init; }
     public string? FixCommand { get; init; }
 
+    /// <summary>
+    /// True when this verdict follows from how the product was installed rather than from
+    /// anything being misconfigured.
+    /// </summary>
+    /// <remarks>
+    /// A per-user installation keeps its configuration in the user's own profile, which that
+    /// user can necessarily write. There is nothing to repair and nothing to warn about: hooks
+    /// are refused, which is correct, and telling the operator to run icacls against their own
+    /// AppData folder would be advice that damages a working installation.
+    /// </remarks>
+    public bool ExpectedForScope { get; init; }
+
     /// <summary>Hooks run only from a directory nobody but an administrator can write.</summary>
+    /// <remarks>
+    /// Deliberately unaffected by <see cref="ExpectedForScope"/>. Knowing why a directory is
+    /// writable does not make executing what it contains any safer, so the gate is the same
+    /// either way; only the explanation changes.
+    /// </remarks>
     public bool HooksAllowed => Verdict == AclVerdict.Hardened;
 }
 
@@ -45,7 +63,14 @@ public sealed record AclFinding
 [SupportedOSPlatform("windows")]
 public static class ConfDirGuard
 {
-    public static AclFinding Verify(string directory, string? runAccountSid = null)
+    /// <param name="scope">
+    /// How this copy was installed. Only <see cref="InstallScope.PerUser"/> softens the
+    /// wording. <see cref="InstallScope.Portable"/> stays strict on purpose: it is what an
+    /// explicit --config-dir produces, which is exactly how the installer verifies its own
+    /// work against ProgramData.
+    /// </param>
+    public static AclFinding Verify(
+        string directory, string? runAccountSid = null, InstallScope scope = InstallScope.PerMachine)
     {
         if (!Directory.Exists(directory))
         {
@@ -77,7 +102,7 @@ public static class ConfDirGuard
         if (security.GetOwner(typeof(SecurityIdentifier)) is SecurityIdentifier owner
             && !trusted.Contains(owner.Value))
         {
-            return new AclFinding
+            return Scoped(new AclFinding
             {
                 Verdict = AclVerdict.LooseOwner,
                 Path = directory,
@@ -85,7 +110,7 @@ public static class ConfDirGuard
                 Explanation =
                     $"'{directory}' is owned by {Describe(owner)}, who can therefore rewrite its permissions at will.",
                 FixCommand = FixCommand(directory),
-            };
+            }, scope);
         }
 
         var offending = new List<string>();
@@ -117,7 +142,7 @@ public static class ConfDirGuard
 
         if (offending.Count > 0)
         {
-            return new AclFinding
+            return Scoped(new AclFinding
             {
                 Verdict = AclVerdict.LooseWritable,
                 Path = directory,
@@ -126,7 +151,7 @@ public static class ConfDirGuard
                     $"'{directory}' can be written by an account that is not an administrator, so a job file " +
                     "placed there would be executed by the run host. Hooks are refused for the whole run.",
                 FixCommand = FixCommand(directory),
-            };
+            }, scope);
         }
 
         if (!security.AreAccessRulesProtected)
@@ -144,6 +169,29 @@ public static class ConfDirGuard
 
         return new AclFinding { Verdict = AclVerdict.Hardened, Path = directory };
     }
+
+    /// <summary>
+    /// Re-words a loose verdict when looseness is inherent to the installation.
+    /// </summary>
+    /// <remarks>
+    /// The verdict itself is never changed - a per-user directory really is writable, and hooks
+    /// really are refused. What changes is that it stops being reported as a fault with a
+    /// repair command attached, because there is no fault and the repair would lock the owner
+    /// out of their own configuration.
+    /// </remarks>
+    private static AclFinding Scoped(AclFinding finding, InstallScope scope) =>
+        scope != InstallScope.PerUser
+            ? finding
+            : finding with
+            {
+                ExpectedForScope = true,
+                Explanation =
+                    $"'{finding.Path}' belongs to a per-user installation, so the account that owns it can " +
+                    "write it. That is inherent to installing for one user, not a misconfiguration - but it " +
+                    "does mean a job file there is not trustworthy enough to execute, so hooks are refused.",
+                FixCommand = "Install for all users if you need hooks: their whole point is running commands, "
+                           + "and that is only safe from a directory an ordinary account cannot write.",
+            };
 
     private static string FixCommand(string directory) =>
         $"winlogrotate host repair --acl   (or: icacls \"{directory}\" /inheritance:r " +

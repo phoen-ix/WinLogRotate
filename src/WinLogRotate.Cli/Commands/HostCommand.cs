@@ -156,6 +156,28 @@ internal static class HostCommand
             return ctx.Output.Complete<HostResult>("host repair", ExitCode.Errors, null);
         }
 
+        // Refused rather than obeyed. The hardened descriptor grants SYSTEM and Administrators
+        // full control and everyone else read - so applying it to a per-user installation, whose
+        // configuration lives in that user's own profile, would take away their write access to
+        // their own jobs. They would then be unable to edit or repair anything, which is a
+        // considerably worse outcome than the hooks they were already not getting.
+        if (paths.Scope == InstallScope.PerUser)
+        {
+            ctx.Output.Diagnostic(new CliDiagnostic
+            {
+                Severity = Severity.Warning,
+                Code = DiagnosticCode.ConfigDirectoryInsecure,
+                Message = $"'{paths.Root}' belongs to a per-user installation and was left alone.",
+                Path = paths.Root,
+                Remedy = "A per-user configuration directory is writable by its owner by definition, "
+                       + "so hooks are refused there and no permission change would alter that. "
+                       + "Install for all users if you need hooks.",
+            });
+
+            ctx.Output.Line($"{paths.Root} is a per-user directory; its permissions were left as they are.");
+            return ctx.Output.Complete("host repair", ExitCode.Ok, Describe(RunHostKind.None, paths));
+        }
+
         try
         {
             ApplyAcl(paths);
@@ -174,7 +196,7 @@ internal static class HostCommand
             return ctx.Output.Complete<HostResult>("host repair", ExitCode.Errors, null);
         }
 
-        var finding = ConfDirGuard.Verify(paths.ConfigDirectory);
+        var finding = ConfDirGuard.Verify(paths.ConfigDirectory, scope: paths.Scope);
         if (finding.Verdict != AclVerdict.Hardened)
         {
             ctx.Output.Diagnostic(new CliDiagnostic

@@ -107,6 +107,29 @@ Var HostNone
 
 !insertmacro MUI_PAGE_WELCOME
 !insertmacro MUI_PAGE_LICENSE "..\LICENSE"
+
+; ---------------------------------------------------------------------------------------
+; The install-mode page says what the choice actually costs, on the page where it is made.
+;
+; Hooks - postrotate commands, service control - run programs, and that is only defensible
+; from a directory an ordinary account cannot write. A per-user install keeps its
+; configuration in the user's own profile, which its owner can necessarily write, so hooks
+; are refused there permanently and by design. That is not a defect and there is nothing to
+; repair, but somebody who picks "just me" and later finds their postrotate silently doing
+; nothing deserves to have been told here rather than in a support thread.
+;
+; These are declared with /IfNDef inside MultiUser.nsh, so defining them first wins.
+; ---------------------------------------------------------------------------------------
+!define MULTIUSER_INSTALLMODEPAGE_TEXT_TOP \
+  "Choose whether to install WinLogRotate for everyone on this machine or only for you.$\r$\n$\r$\n\
+Rotation, compression, retention and scheduling work the same either way. Hooks - postrotate \
+commands and service control - need the all-users install, because they run programs and that \
+is only safe from a directory an ordinary account cannot write."
+!define MULTIUSER_INSTALLMODEPAGE_TEXT_ALLUSERS \
+  "Anyone who uses this computer (recommended - runs as SYSTEM, hooks available)"
+!define MULTIUSER_INSTALLMODEPAGE_TEXT_CURRENTUSER \
+  "Only for me (no administrator needed; hooks are disabled)"
+
 !insertmacro MULTIUSER_PAGE_INSTALLMODE
 Page custom HostPageCreate HostPageLeave
 !insertmacro MUI_PAGE_COMPONENTS
