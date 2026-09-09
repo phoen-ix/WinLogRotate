@@ -368,13 +368,15 @@ jobs:
           Remove-Item "$env:DATA_DIR\conf.d\eventlog-probe.toml"
 
           # The Event Log is written asynchronously, so this needs a poll rather than a read.
-          $events = $null
+          # Every result is wrapped in @(): Get-WinEvent returns a bare object rather than an
+          # array when there is exactly one event, and the helpers run under
+          # Set-StrictMode -Version Latest, where reading .Count off a scalar is an error.
+          $query = @{ LogName = 'Application'; ProviderName = 'WinLogRotate' }
           Wait-Until -TimeoutSeconds 60 -Because 'an event from WinLogRotate to appear' -Condition {
-            $script:events = Get-WinEvent -ErrorAction SilentlyContinue -FilterHashtable @{
-              LogName = 'Application'; ProviderName = 'WinLogRotate'
-            }
-            $null -ne $script:events -and $script:events.Count -gt 0
+            @(Get-WinEvent -ErrorAction SilentlyContinue -FilterHashtable $query).Count -gt 0
           }
+
+          $events = @(Get-WinEvent -ErrorAction SilentlyContinue -FilterHashtable $query)
 
           foreach ($e in $events) {
             "  event $($e.Id) [$($e.LevelDisplayName)]: $($e.Message -split "`n" | Select-Object -First 1)"
@@ -393,7 +395,7 @@ jobs:
             }
           }
 
-          if (-not ($events | Where-Object { $_.Id -eq 121 })) {
+          if (@($events | Where-Object { $_.Id -eq 121 }).Count -eq 0) {
             throw ('Expected event 121 (a log file was missing, LR2002) from the probe job. ' +
                    'Found: ' + (($events | ForEach-Object { $_.Id }) -join ', '))
           }
