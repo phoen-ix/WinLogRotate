@@ -47,8 +47,18 @@ public sealed class DpapiMachineProtector : IByteProtector
     /// false: a non-elevated caller must fail to decrypt, never quietly mint a new key and
     /// thereby strand every secret already stored under the old one.
     /// </param>
-    public static DpapiMachineProtector? TryCreate(bool provision = false)
+    public static DpapiMachineProtector? TryCreate(bool provision = false) =>
+        TryCreate(provision, out _);
+
+    /// <param name="state">
+    /// What had to be done to the entropy key. A caller that provisions should report
+    /// <see cref="EntropyKeyState.Rehardened"/> rather than swallowing it: the key having been
+    /// readable by ordinary users is worth a line in the journal, not silence.
+    /// </param>
+    public static DpapiMachineProtector? TryCreate(bool provision, out EntropyKeyState state)
     {
+        state = EntropyKeyState.Absent;
+
         if (!OperatingSystem.IsWindows())
         {
             return null;
@@ -56,7 +66,20 @@ public sealed class DpapiMachineProtector : IByteProtector
 
         try
         {
-            var entropy = provision ? MachineEntropy.ReadOrCreate() : MachineEntropy.Read();
+            byte[]? entropy;
+            if (provision)
+            {
+                entropy = MachineEntropy.ReadOrCreate(out state);
+            }
+            else
+            {
+                entropy = MachineEntropy.Read();
+
+                // A reader never provisions and never repairs - repairing needs write access it
+                // is not entitled to - but it can still say what it saw.
+                state = entropy is null ? EntropyKeyState.Absent : EntropyKeyState.Sound;
+            }
+
             return entropy is null ? null : new DpapiMachineProtector(entropy);
         }
         catch (Exception e) when (e is UnauthorizedAccessException or System.Security.SecurityException)

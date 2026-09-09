@@ -181,6 +181,16 @@ public sealed class SecretStore
                 "The secret store is empty. It has been left untouched.", entropyId, machine);
         }
 
+        // Rebuilt case-insensitively at the boundary, because System.Text.Json hands back a
+        // dictionary with the default ordinal comparer no matter what Set built. Without this,
+        // a store behaves case-insensitively until it is written and read again, and then
+        // "secret remove SES-SMTP" against a stored "ses-smtp" fails the ContainsKey guard and
+        // silently reports success having removed nothing.
+        document = document with
+        {
+            Secrets = new Dictionary<string, SecretEntry>(document.Secrets, StringComparer.OrdinalIgnoreCase),
+        };
+
         if (document.Version > 1)
         {
             return Refuse(path, protector, SecretStoreStatus.Refused,

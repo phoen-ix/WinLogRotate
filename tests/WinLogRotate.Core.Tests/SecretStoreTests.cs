@@ -232,6 +232,36 @@ public sealed class SecretStoreTests : IDisposable
     }
 
     [Fact]
+    public void CaseInsensitivitySurvivesARoundTripThroughTheFile()
+    {
+        // The gap in the test above: Set builds its own case-insensitive dictionary, so that one
+        // passes without ever asking whether a LOADED store is case-insensitive. It was not -
+        // System.Text.Json returns the default ordinal comparer - so every read path went
+        // case-sensitive the moment the process restarted.
+        Load().Set("ses-smtp", SecretString.From("value"), null, _clock).Save(_clock);
+
+        var store = Load();
+
+        store.Contains("SES-SMTP").ShouldBeTrue();
+        store.Meta("Ses-Smtp").ShouldNotBeNull();
+        store.TryGet("SES-smtp", out var value, out _).ShouldBeTrue();
+        value.Reveal().ShouldBe("value");
+    }
+
+    [Fact]
+    public void RemovingWithDifferentCasingActuallyRemovesIt()
+    {
+        // The worst shape of the bug: Remove guarded on a case-sensitive ContainsKey and
+        // returned the store unchanged, so the caller reported success having deleted nothing.
+        Load().Set("ses-smtp", SecretString.From("x"), null, _clock).Save(_clock);
+
+        Load().Remove("SES-SMTP").Save(_clock);
+
+        Load().Contains("ses-smtp").ShouldBeFalse();
+        Load().Names.ShouldBeEmpty();
+    }
+
+    [Fact]
     public void TheFileNeverContainsTheValue()
     {
         Load().Set("k", SecretString.From("super-secret-value"), "alice", _clock).Save(_clock);
