@@ -96,16 +96,24 @@ jobs:
       # produced a framework-dependent apphost stub instead of a native image, which looks
       # like a wonderful size win right up until it fails on a machine with no runtime.
       #
-      # The ceiling was 12 MB until milestone 10 added notification delivery, which took this
-      # binary from 10.05 to 11.34 MB. System.Net.Mail is the only new framework assembly -
-      # HttpClient and System.Text.Json were already in the image - and it added no new DLL
-      # import at all, so the dependency gate below is unaffected. Raised once, with the
-      # number, rather than reflexively after it went red: a canary nobody re-sets on purpose
-      # is decoration, and one raised the moment it fires is worse. 11.34 would have squeaked
-      # under 12, which is exactly why it moved - 0.66 MB of headroom is not a tripwire.
+      # 16 MB against a binary currently measuring 11.34, which is deliberate slack rather than
+      # a number fitted to today's build. It was 12 until milestone 10 added notification
+      # delivery and took this from 10.05 to 11.34; System.Net.Mail was the only new framework
+      # assembly - HttpClient and System.Text.Json were already in the image - and it added no
+      # new DLL import at all, so the dependency gate below was unaffected.
       #
-      # The size is written to the run summary because it never used to be recorded anywhere,
-      # which is how the figure in README.md drifted for five releases without anyone noticing.
+      # Sized for what the gate is FOR. Reflection creep under NativeAOT is not a slow drift:
+      # one reflection-based serializer on a reachable path makes ILC retain whole type graphs
+      # plus the metadata to walk them, and the image jumps by megabytes at once. A ceiling with
+      # ~40% headroom still fails loudly on that while surviving several milestones of honest
+      # growth - and a gate nobody has to raise is a gate nobody learns to raise reflexively,
+      # which is the failure mode that turns a canary into decoration.
+      #
+      # What it does NOT catch, and this is the accepted trade: a couple of hundred KB per
+      # release accumulating quietly. The run summary below is the answer to that - the number
+      # is recorded on every build, so drift is visible to anyone who looks, which is more than
+      # was true before (nothing recorded it, which is how README.md's figure was wrong by 2 MB
+      # for five releases). The gate that actually matters is the dependency check that follows.
       - name: Size gate
         shell: pwsh
         run: |
@@ -113,10 +121,10 @@ jobs:
           if (-not (Test-Path $exe)) { throw "the AOT publish produced no $exe" }
           $mb = (Get-Item $exe).Length / 1MB
           "winlogrotate.exe = {0:N2} MB" -f $mb
-          "``winlogrotate.exe`` = **{0:N2} MB** (floor 2, ceiling 13)" -f $mb |
+          "``winlogrotate.exe`` = **{0:N2} MB** (floor 2, ceiling 16)" -f $mb |
             Out-File -Append $env:GITHUB_STEP_SUMMARY
           if ($mb -lt 2)  { throw ("{0:N2} MB is below the floor - this looks like an apphost stub, not a native image" -f $mb) }
-          if ($mb -gt 13) { throw ("{0:N2} MB is above the ceiling - something pulled in reflection" -f $mb) }
+          if ($mb -gt 16) { throw ("{0:N2} MB is above the ceiling - something pulled in reflection" -f $mb) }
 
       # Turns "zero dependencies" from a claim in the README into an assertion. A native
       # image may import from OS DLLs and nothing else; an hostfxr/hostpolicy import means
