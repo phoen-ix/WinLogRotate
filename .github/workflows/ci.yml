@@ -343,8 +343,46 @@ jobs:
           )
           Set-Content -Path "$env:DATA_DIR\conf.d\smoke.toml" -Value $job
 
+          # A rotate job too, because until milestone 12 nothing in CI ever ran one: both smoke
+          # jobs were kind = "manage", and the rotate branch of the engine had no caller at all.
+          # This is the first time the product's headline behaviour executes on real hardware.
+          New-Item -ItemType Directory -Force "C:\smoke\rot" | Out-Null
+          Set-Content "C:\smoke\rot\svc.log" ('y' * 4096)
+
+          $rotate = @(
+            'schema = 1',
+            '[job]',
+            'name  = "smoke-rotate"',
+            'kind  = "rotate"',
+            'paths = ["C:/smoke/rot/svc.log"]',
+            'rotate   = 3',
+            'compress = false',
+            'notifempty = false'
+          )
+          Set-Content -Path "$env:DATA_DIR\conf.d\smoke-rotate.toml" -Value $rotate
+
           & $exe config check --json | Out-Host
           & $exe run --dry-run --verbose | Out-Host
+
+          # First run baselines rather than rotating - the property that stops a fresh install
+          # rotating every log on the machine at once - so --catchup is what actually rotates.
+          & $exe run --catchup --verbose | Out-Host
+
+          if (-not (Test-Path "C:\smoke\rot\svc.log.1")) {
+            throw 'The rotate job produced no svc.log.1, so the live log was never renamed.'
+          }
+          if (-not (Test-Path "C:\smoke\rot\svc.log")) {
+            throw 'The live log was not recreated, so the writer would keep appending to the archive.'
+          }
+          if ((Get-Item "C:\smoke\rot\svc.log").Length -ne 0) {
+            throw 'The recreated log is not empty, so the rename did not do what it claimed.'
+          }
+
+          # And again: the clock has just been set, so a second run must decline.
+          & $exe run --verbose | Out-Host
+          if (Test-Path "C:\smoke\rot\svc.log.2") {
+            throw 'A second run rotated again within the interval; the rotation clock is not being read.'
+          }
 
           $result = Wait-TaskResult -TaskPath $env:TASK_PATH -TaskName $env:TASK_NAME
           if ($result -ne 0) { throw "The scheduled task exited 0x$('{0:X}' -f $result)." }

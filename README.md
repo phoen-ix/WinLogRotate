@@ -253,8 +253,10 @@ deliberately differs, and what cannot exist on Windows.
 
 ## Status, honestly
 
-**v0.2.x.** The installer and scheduler are verified end to end on Windows. The rotation engine
-is verified only against files nothing holds open. The GUI is entirely unverified.
+**v0.3.x.** The installer and scheduler are verified end to end on Windows. Rotation itself ran
+for the first time in 0.4.0 — before that the engine skipped every `kind = "rotate"` job silently,
+which is to say the headline feature had never executed at all. It is verified only against files
+nothing holds open. The GUI is entirely unverified.
 
 ### What has actually run on Windows
 

@@ -79,8 +79,19 @@ public sealed record RunReport
 
 /// <summary>Runs every due job.</summary>
 public sealed class RotationRunner(
-    IJournal journal, PathGuard guard, StateStore state, TimeProvider clock)
+    IJournal journal, PathGuard guard, StateStore state, TimeProvider clock,
+    IArchiveSource? archiveSource = null)
 {
+    /// <summary>
+    /// Where a rotate job looks for the archives it wrote last time.
+    /// </summary>
+    /// <remarks>
+    /// Optional, so every existing caller is unchanged, and injectable because discovery is the
+    /// code that decides which files the planner may delete - and that decision deserves tests
+    /// that do not need a file system.
+    /// </remarks>
+    private readonly IArchiveSource _archives = archiveSource ?? new FileArchiveSource();
+
     public RunReport Run(LoadedConfig config, RunOptions options)
     {
         var now = clock.GetUtcNow();
@@ -166,13 +177,10 @@ public sealed class RotationRunner(
                 continue;
             }
 
-            // Only the manage planner exists so far; rotate lands in milestones 8 and 9.
-            if (job.Kind != JobKind.Manage)
-            {
-                continue;
-            }
+            var plan = job.Kind == JobKind.Manage
+                ? ManageJobPlanner.Plan(job, matched, now)
+                : PlanRotation(job, matched, options, now, Fail);
 
-            var plan = ManageJobPlanner.Plan(job, matched, now);
             plans.Add(plan);
             jobsRun++;
 
@@ -182,6 +190,14 @@ public sealed class RotationRunner(
             freed += result.BytesFreed;
             errors.AddRange(result.Errors);
             diagnostics.AddRange(result.Diagnostics);
+
+            // The clock advances from what the executor actually did, never from what was
+            // planned. A dry run reports no moves and so writes no state, which is what makes
+            // --dry-run safe against production: it cannot change when anything next rotates.
+            foreach (var path in result.Rotated)
+            {
+                state.Update(path, existing => existing with { LastRotated = now });
+            }
         }
 
         journal.Write(new CliEvent
@@ -212,5 +228,77 @@ public sealed class RotationRunner(
             Diagnostics = diagnostics,
             Plans = plans,
         };
+    }
+
+    /// <summary>
+    /// Decides what a rotate job should do to each of its logs.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// This is the branch that did not exist. The runner skipped every job whose kind was not
+    /// <c>manage</c>, behind a comment saying rotate would land in milestone 8 - and
+    /// <see cref="JobKind.Rotate"/> is the DEFAULT, so a job that simply did not say which kind
+    /// it was did nothing at all, silently, and reported success.
+    /// </para>
+    /// <para>
+    /// Everything it calls was already written and tested and had no production caller.
+    /// <see cref="LogSeries.Discover"/> is new; <see cref="RotationCriteria.Evaluate"/>,
+    /// <see cref="RotateJobPlanner.Plan"/> and <see cref="StateStore.RecordFirstSighting"/> were
+    /// all reachable only from tests.
+    /// </para>
+    /// </remarks>
+    internal JobPlan PlanRotation(
+        EffectiveJob job, IReadOnlyList<MatchedFile> matched, RunOptions options,
+        DateTimeOffset now, Action<CliDiagnostic> report)
+    {
+        var due = new Dictionary<string, DueVerdict>(StringComparer.OrdinalIgnoreCase);
+        var consider = new List<MatchedFile>(matched.Count);
+
+        foreach (var file in matched)
+        {
+            // Always recorded, whatever --catchup says. RotationCriteria refuses a log with no
+            // recorded rotation - "anyone who has deleted a state file and wondered why nothing
+            // rotated that night has met this rule" - so a first sighting that skipped this would
+            // leave the clock null for ever and the log would never become due at all.
+            var first = state.RecordFirstSighting(file.Path, now);
+
+            // A log this machine has never seen is recorded, not rotated. Without that, the first
+            // night after installing rotates every log on the server at once, purely because none
+            // of them has a recorded rotation yet - indistinguishable from the tool
+            // malfunctioning, and how a product gets uninstalled on day one.
+            if (first && !options.Catchup)
+            {
+                report(new CliDiagnostic
+                {
+                    Severity = Severity.Info,
+                    Code = DiagnosticCode.FirstRunBaseline,
+                    Message = $"[{job.Name}] {file.Path} was seen for the first time, so its "
+                            + "clock starts now rather than rotating it immediately.",
+                    Job = job.Name,
+                    Path = file.Path,
+                    Remedy = "Pass --catchup to rotate a log the first time it is seen instead.",
+                });
+
+                continue;
+            }
+
+            consider.Add(file);
+
+            // Synthesised rather than evaluated for the --catchup case: the baseline above has
+            // just set the clock to now, so asking the criteria would correctly answer "rotated a
+            // moment ago, not due" and --catchup would silently do nothing.
+            due[file.Path] = first
+                ? new DueVerdict
+                {
+                    Due = true,
+                    Reason = DueReason.FirstSighting,
+                    Explanation = "--catchup: rotating on the first sighting rather than baselining",
+                }
+                : RotationCriteria.Evaluate(
+                    job, state.Get(file.Path)?.LastRotated, now, file.Length, file.LastWriteUtc,
+                    options.Force);
+        }
+
+        return RotateJobPlanner.Plan(job, LogSeries.Discover(job, consider, _archives), due, now);
     }
 }

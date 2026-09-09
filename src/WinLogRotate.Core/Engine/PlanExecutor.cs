@@ -19,6 +19,18 @@ public sealed record ExecutionResult
     /// <summary>The same failures as <see cref="Errors"/>, classified and attributed.
     /// Errors keeps the flat strings the envelope has always carried.</summary>
     public IReadOnlyList<CliDiagnostic> Diagnostics { get; init; } = [];
+
+    /// <summary>
+    /// Live logs that were actually moved out of the way.
+    /// </summary>
+    /// <remarks>
+    /// The rotation clock advances from this and from nothing else. Advancing it because a
+    /// rotation was <i>planned</i> would record a log that failed on a share violation as
+    /// rotated, and it would then never be due again - a locked file rotating exactly once and
+    /// falling silent for ever. Only the executor knows which renames really happened, so the
+    /// answer is produced here rather than inferred by the caller.
+    /// </remarks>
+    public IReadOnlyList<string> Rotated { get; init; } = [];
 }
 
 /// <summary>
@@ -40,6 +52,7 @@ public sealed class PlanExecutor(IJournal journal, PathGuard guard, TimeProvider
         long freed = 0;
         var errors = new List<string>();
         var diagnostics = new List<CliDiagnostic>();
+        var rotated = new List<string>();
 
         foreach (var op in plan.Operations)
         {
@@ -80,6 +93,14 @@ public sealed class PlanExecutor(IJournal journal, PathGuard guard, TimeProvider
                     freed += op.Bytes;
                 }
 
+                // Only the three that move the live log out of the way. Compressing or deleting
+                // an older generation is not what the rotation clock measures, and counting it
+                // would mark a log as rotated on a night it was not.
+                if (op.Action is PlannedAction.Rename or PlannedAction.Copy or PlannedAction.CopyTruncate)
+                {
+                    rotated.Add(op.Source);
+                }
+
                 Emit(plan, op, Phase.Apply, OpResult.Ok, null,
                     (long)clock.GetElapsedTime(started).TotalMilliseconds, bytes);
             }
@@ -102,6 +123,7 @@ public sealed class PlanExecutor(IJournal journal, PathGuard guard, TimeProvider
             BytesFreed = freed,
             Errors = errors,
             Diagnostics = diagnostics,
+            Rotated = rotated,
         };
     }
 
