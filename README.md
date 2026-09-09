@@ -79,22 +79,20 @@ server. Only the GUI needs the .NET runtime, and only in the `-min` builds.
 
 | Installer | Size | Needs anything installed? |
 | --- | ---: | --- |
-| [`WinLogRotate-Setup-min.exe`](../../releases/latest) | 3.3 MB | Only for the GUI — the [.NET 10 Desktop Runtime](https://dotnet.microsoft.com/download/dotnet/10.0), fetched for you if missing |
-| [`WinLogRotate-Setup-full.exe`](../../releases/latest) | 43.8 MB | **No** — everything is inside |
-| [`WinLogRotate-Setup.exe`](../../releases/latest) | 43.8 MB | Asks which of the two to install |
+| [`WinLogRotate-Setup-min.exe`](../../releases/latest) | 3.9 MB | Only for the GUI — the [.NET 10 Desktop Runtime](https://dotnet.microsoft.com/download/dotnet/10.0), fetched for you if missing |
+| [`WinLogRotate-Setup-full.exe`](../../releases/latest) | 44.4 MB | **No** — everything is inside |
+| [`WinLogRotate-Setup.exe`](../../releases/latest) | 44.4 MB | Asks which of the two to install |
 
 | Portable | Size | Needs anything installed? |
 | --- | ---: | --- |
-| [`WinLogRotate-min.zip`](../../releases/latest) | 4.2 MB | Only for the GUI |
-| [`WinLogRotate.zip`](../../releases/latest) | 45.7 MB | **No** |
+| [`WinLogRotate-min.zip`](../../releases/latest) | 5.1 MB | Only for the GUI |
+| [`WinLogRotate.zip`](../../releases/latest) | 46.6 MB | **No** |
 
-Inside a portable zip: `winlogrotate.exe` (native, zero dependencies) and `winlogrotate-gui.exe`.
-`SHA256SUMS.txt` covers every download.
+Inside a portable zip: `winlogrotate.exe` (11.3 MB, native, zero dependencies) and
+`winlogrotate-gui.exe` (1.0 MB). `SHA256SUMS.txt` covers every download.
 
-> **Sizes above are from the 0.0.5 release and are a guide, not a promise** — the release page has
-> the actual bytes. The CLI grew about 1.3 MB in 0.3.0 when notification delivery landed, so every
-> figure here shifts by roughly that. They were wrong before anyone noticed because nothing
-> recorded the real number; CI now writes it to each run's summary.
+Figures are from v0.3.0. They were stale for five releases because nothing recorded the real
+number; CI now writes the measured binary size to every run's summary.
 
 Installing per-machine puts config in `C:\ProgramData\WinLogRotate\`, registers a scheduled
 task that runs as SYSTEM, and **locks that directory down to SYSTEM and Administrators**. That

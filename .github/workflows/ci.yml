@@ -96,12 +96,13 @@ jobs:
       # produced a framework-dependent apphost stub instead of a native image, which looks
       # like a wonderful size win right up until it fails on a machine with no runtime.
       #
-      # The ceiling was 12 MB until milestone 10 added notification delivery, which cost a
-      # measured +1.30 MB (8.88 -> 10.18 MB, published linux-x64 on the same machine, at
-      # 8c64847 and at the merge). System.Net.Mail is the only new framework assembly;
-      # HttpClient and System.Text.Json were already in the image. Raised once, with the
-      # number, rather than reflexively after it went red - a canary nobody re-sets on purpose
-      # is decoration, and one raised the moment it fires is worse.
+      # The ceiling was 12 MB until milestone 10 added notification delivery, which took this
+      # binary from 10.05 to 11.34 MB. System.Net.Mail is the only new framework assembly -
+      # HttpClient and System.Text.Json were already in the image - and it added no new DLL
+      # import at all, so the dependency gate below is unaffected. Raised once, with the
+      # number, rather than reflexively after it went red: a canary nobody re-sets on purpose
+      # is decoration, and one raised the moment it fires is worse. 11.34 would have squeaked
+      # under 12, which is exactly why it moved - 0.66 MB of headroom is not a tripwire.
       #
       # The size is written to the run summary because it never used to be recorded anywhere,
       # which is how the figure in README.md drifted for five releases without anyone noticing.
