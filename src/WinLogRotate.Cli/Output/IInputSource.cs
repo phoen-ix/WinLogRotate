@@ -39,12 +39,6 @@ public interface IInputSource
 /// <summary>The real console.</summary>
 internal sealed class ConsoleInputSource : IInputSource
 {
-    /// <summary>
-    /// Long enough for any credential anybody actually has, short enough that piping a file in
-    /// by mistake is refused rather than stored.
-    /// </summary>
-    internal const int MaxSecretChars = 4096;
-
     public bool IsRedirected => Console.IsInputRedirected;
 
     public string ReadAllText()
@@ -62,29 +56,16 @@ internal sealed class ConsoleInputSource : IInputSource
         value = SecretString.None;
         error = null;
 
-        var text = IsRedirected ? ReadPiped() : ReadTyped(prompt, out error);
-        if (text is null)
+        if (IsRedirected)
         {
-            error ??= "No value was given.";
-            return false;
+            return FromPiped(ReadAllText(), out value, out error);
         }
 
-        if (text.Length == 0)
-        {
-            error = "An empty secret is not stored. Use 'secret remove' to delete one.";
-            return false;
-        }
+        var text = ReadTyped(prompt, out error);
 
-        if (text.Length > MaxSecretChars)
-        {
-            error = $"That is {text.Length:N0} characters, above the {MaxSecretChars:N0} limit. "
-                  + "If you meant to store a file, store its contents deliberately with --from-file.";
-            return false;
-        }
-
-        error = null;
-        value = SecretString.From(text);
-        return true;
+        // "Cancelled." and "The two entries did not match." come from the typed path and are more
+        // specific than anything SecretInput could say, so they survive.
+        return text is not null && SecretInput.Validate(text, out value, out error);
     }
 
     /// <summary>
@@ -97,17 +78,19 @@ internal sealed class ConsoleInputSource : IInputSource
     /// authentication error somewhere else entirely. <c>secret test</c> reports the length for
     /// exactly this reason.
     /// </remarks>
-    private string ReadPiped()
-    {
-        var text = ReadAllText();
+    private string ReadPiped() => SecretInput.StripOneNewline(ReadAllText());
 
-        if (text.EndsWith("\r\n", StringComparison.Ordinal))
-        {
-            return text[..^2];
-        }
-
-        return text.EndsWith('\n') ? text[..^1] : text;
-    }
+    /// <summary>
+    /// The piped path's rules, without the console.
+    /// </summary>
+    /// <remarks>
+    /// A seam, and a deliberate one. Console.OpenStandardInput cannot be redirected from a test,
+    /// so without this the only way to cover the console reader is to assert against SecretInput
+    /// directly - which proves the rules work and says nothing about whether this reader still
+    /// applies them. That is the shape of test that goes green after somebody stops calling them.
+    /// </remarks>
+    internal static bool FromPiped(string raw, out SecretString value, out string? error) =>
+        SecretInput.Validate(SecretInput.StripOneNewline(raw), out value, out error);
 
     private static string? ReadTyped(string prompt, out string? error)
     {

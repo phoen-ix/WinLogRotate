@@ -38,7 +38,7 @@ public sealed class MainForm : Form
         ClientSize = new Size(1000, 640);
         StartPosition = FormStartPosition.CenterScreen;
 
-        _nav.Items.AddRange(["Jobs", "Run", "History", "Scheduling", "Settings"]);
+        _nav.Items.AddRange(["Jobs", "Run", "History", "Scheduling", "Notifications", "Settings"]);
         _nav.SelectedIndexChanged += (_, _) => ShowPage(_nav.SelectedIndex);
 
         Controls.Add(_content);
@@ -102,6 +102,7 @@ public sealed class MainForm : Form
             1 => new RunPage(_cli, _configDir),
             2 => new HistoryPage(_cli, _configDir),
             3 => new SchedulingPage(_cli, _configDir),
+            4 => new NotificationsPage(_cli, _configDir),
             _ => new SettingsPage(_cli, _configDir),
         };
 

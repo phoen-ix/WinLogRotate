@@ -5,6 +5,7 @@ using WinLogRotate.Cli.Commands;
 using WinLogRotate.Cli.Output;
 using WinLogRotate.Contracts;
 using WinLogRotate.Core;
+using WinLogRotate.Core.Configuration;
 using WinLogRotate.Core.Secrets;
 using Xunit;
 
@@ -131,6 +132,202 @@ public sealed class SecretCommandTests : IDisposable
 
     private int Set(ISecretPlatform platform, string name, string? piped = "hunter2") =>
         SecretCommand.Set(Context(), new FakeInput(piped), platform, name, null, Root);
+
+    private string ConfigPath => Path.Combine(Root, "config.toml");
+
+    /// <summary>A config with one provider of each kind, all credentials in the clear.</summary>
+    private const string PlaintextConfig =
+        "schema = 1\r\n"
+        + "\r\n"
+        + "# the shipper cannot read .gz - do not turn compression on.  -- rmk\r\n"
+        + "[notify.email.relay]\r\n"
+        + "host     = \"smtp.example\"\r\n"
+        + "auth     = \"login\"\r\n"
+        + "password = \"hunter2\"\r\n"
+        + "\r\n"
+        + "[notify.webhook.slack]\r\n"
+        + "url = \"https://hooks.example/services/T/B/xxxx\"\r\n"
+        + "\r\n"
+        + "[notify.pushover.oncall]\r\n"
+        + "token    = \"apptoken\"\r\n"
+        + "user_key = \"userkey\"\r\n";
+
+    private int SetForProvider(
+        ISecretPlatform platform, string provider, string field, string? piped = "s3cret") =>
+        SecretCommand.SetForProvider(Context(), new FakeInput(piped), platform, provider, field, Root);
+
+    // ---- notify set-secret ------------------------------------------------------------------
+
+    [Fact]
+    public void SetSecretStoresTheValueAndRewritesTheReference()
+    {
+        // The LR9006 remedy as one command. Doing it in two steps is how the second step gets
+        // forgotten, leaving the password in the file with a warning nobody reads any more.
+        File.WriteAllText(ConfigPath, PlaintextConfig);
+
+        SetForProvider(new FakePlatform(), "email.relay", "password").ShouldBe(ExitCode.Ok);
+
+        var after = File.ReadAllText(ConfigPath);
+        after.ShouldContain("password = \"@secret:email-relay\"");
+        after.ShouldNotContain("hunter2");
+
+        // Read back, not merely counted. Asserting the config text and the file's existence would
+        // pass just as well if the store had been handed the prompt string, an empty value, or
+        // the previous secret - and every one of those looks like a working setup until the relay
+        // rejects it.
+        var store = SecretStore.Load(StorePath, new XorProtector(), "1111111111111111", "2222222222222222");
+        store.TryGet("email-relay", out var stored, out _).ShouldBeTrue();
+        stored.Reveal().ShouldBe("s3cret");
+
+        // And the name it chose is the one the remedy would have told them to use.
+        ConfigLoader.SuggestSecretName("email.relay", "password").ShouldBe("email-relay");
+    }
+
+    [Fact]
+    public void SetSecretLeavesTheRestOfTheFileExactlyAsItWas()
+    {
+        File.WriteAllText(ConfigPath, PlaintextConfig);
+        SetForProvider(new FakePlatform(), "email.relay", "password");
+
+        var before = PlaintextConfig.Replace("\r\n", "\n").Split('\n');
+        var after = File.ReadAllText(ConfigPath).Replace("\r\n", "\n").Split('\n');
+
+        after.Length.ShouldBe(before.Length);
+        before.Zip(after).Count(p => p.First != p.Second).ShouldBe(1);
+        File.ReadAllText(ConfigPath).ShouldContain("the shipper cannot read .gz");
+    }
+
+    [Fact]
+    public void SetSecretWorksForEveryKindOfProvider()
+    {
+        File.WriteAllText(ConfigPath, PlaintextConfig);
+        var platform = new FakePlatform();
+
+        SetForProvider(platform, "webhook.slack", "url").ShouldBe(ExitCode.Ok);
+        SetForProvider(platform, "pushover.oncall", "token").ShouldBe(ExitCode.Ok);
+        SetForProvider(platform, "pushover.oncall", "user_key").ShouldBe(ExitCode.Ok);
+
+        var after = File.ReadAllText(ConfigPath);
+        after.ShouldContain("url = \"@secret:webhook-slack\"");
+        after.ShouldContain("token    = \"@secret:pushover-oncall-token\"");
+        after.ShouldContain("user_key = \"@secret:pushover-oncall-user-key\"");
+        after.ShouldNotContain("apptoken");
+    }
+
+    /// <summary>
+    /// The value is stored before the configuration is touched.
+    /// </summary>
+    /// <remarks>
+    /// A failed rewrite leaves a stored secret nothing references, which is inert. The other order
+    /// leaves a configuration referencing a secret that does not exist - LR9005, and a provider
+    /// that has silently stopped authenticating. The save is made to fail by putting a directory
+    /// where TomlFile.Save wants to write its temporary sibling.
+    /// </remarks>
+    [Fact]
+    public void TheSecretIsStoredEvenWhenTheConfigCannotBeWritten()
+    {
+        File.WriteAllText(ConfigPath, PlaintextConfig);
+        Directory.CreateDirectory(ConfigPath + ".tmp");
+
+        SetForProvider(new FakePlatform(), "email.relay", "password").ShouldBe(ExitCode.Errors);
+
+        File.ReadAllText(ConfigPath).ShouldBe(PlaintextConfig, "a failed save must change nothing");
+        File.Exists(StorePath).ShouldBeTrue("the secret was stored first, and is still there");
+
+        // And the operator is told what to do with it rather than left guessing.
+        _sink.Diagnostics.ShouldContain(d => d.Remedy != null && d.Remedy.Contains("@secret:"));
+    }
+
+    [Fact]
+    public void SetSecretRefusesAProviderThatIsNotThere()
+    {
+        File.WriteAllText(ConfigPath, PlaintextConfig);
+
+        SetForProvider(new FakePlatform(), "email.nope", "password").ShouldBe(ExitCode.Errors);
+
+        File.Exists(StorePath).ShouldBeFalse("nothing should be stored for a provider that does not exist");
+        _sink.Diagnostics.ShouldContain(d => d.Message.Contains("email.nope", StringComparison.Ordinal));
+    }
+
+    [Theory]
+    [InlineData("email.relay", "token")]
+    [InlineData("email.relay", "url")]
+    [InlineData("webhook.slack", "password")]
+    [InlineData("pushover.oncall", "url")]
+    public void SetSecretRefusesAFieldThatKindDoesNotHave(string provider, string field)
+    {
+        // A token on an email provider is a typo. Writing it would produce a key the binder
+        // ignores and a secret nothing ever reads.
+        File.WriteAllText(ConfigPath, PlaintextConfig);
+
+        SetForProvider(new FakePlatform(), provider, field).ShouldBe(ExitCode.Errors);
+        File.ReadAllText(ConfigPath).ShouldBe(PlaintextConfig);
+    }
+
+    [Fact]
+    public void SetSecretWillNotEditAFileItCouldNotParse()
+    {
+        // A rewrite driven by a partial parse is how a typo becomes data loss.
+        const string Broken = "schema = 1\n[notify.email.relay\nhost = \"x\"\n";
+        File.WriteAllText(ConfigPath, Broken);
+
+        SetForProvider(new FakePlatform(), "email.relay", "password").ShouldBe(ExitCode.Errors);
+
+        File.ReadAllText(ConfigPath).ShouldBe(Broken);
+        File.Exists(StorePath).ShouldBeFalse();
+    }
+
+    [Fact]
+    public void SetSecretRefusesWithoutElevation()
+    {
+        File.WriteAllText(ConfigPath, PlaintextConfig);
+
+        SetForProvider(new FakePlatform { IsElevated = false }, "email.relay", "password")
+            .ShouldBe(ExitCode.Errors);
+
+        _sink.CodeOf(Severity.Error).ShouldBe(DiagnosticCode.NeedsAdministrator);
+        File.ReadAllText(ConfigPath).ShouldBe(PlaintextConfig);
+    }
+
+    [Fact]
+    public void SetSecretStoresNothingWhenNoValueArrives()
+    {
+        File.WriteAllText(ConfigPath, PlaintextConfig);
+
+        SetForProvider(new FakePlatform(), "email.relay", "password", piped: null)
+            .ShouldBe(ExitCode.Errors);
+
+        File.Exists(StorePath).ShouldBeFalse();
+        File.ReadAllText(ConfigPath).ShouldBe(PlaintextConfig);
+    }
+
+    /// <summary>
+    /// There is no way to pass a credential as an argument, and there must never be one.
+    /// </summary>
+    /// <remarks>
+    /// A command line is readable by every local administrator through Win32_Process, is recorded
+    /// verbatim in 4688 audit events, and is captured by essentially every EDR agent. This asserts
+    /// the shape of the verb rather than trusting the comment that says so.
+    /// </remarks>
+    [Fact]
+    public void NoSecretVerbAcceptsAValueOnTheCommandLine()
+    {
+        var forbidden = new[] { "--value", "--password", "--secret", "--token" };
+
+        foreach (var verb in new[]
+                 {
+                     new[] { "secret", "set", "n" },
+                     ["secret", "import"],
+                     ["notify", "set-secret", "email.relay", "password"],
+                 })
+        {
+            foreach (var option in forbidden)
+            {
+                CommandTree.Build().Parse([.. verb, option, "hunter2"])
+                    .Errors.ShouldNotBeEmpty($"{string.Join(' ', verb)} must reject {option}");
+            }
+        }
+    }
 
     // ---- refusals -------------------------------------------------------------------------
 

@@ -125,6 +125,11 @@ public partial class ArchitectureTests
             "SecretCommandTests.cs",
             "NotifyBindingTests.cs",
 
+            // Added in milestone 11: the pipe tests assert the value that ARRIVED, not its
+            // length. A length-only assertion passes for a frame misaligned by a byte, which is
+            // the defect most worth catching in a channel that carries a password.
+            "SecretInputTests.cs",
+
             // The three transports that authenticate, added deliberately in milestone 10. Each
             // reveals exactly one thing at the moment it needs it: the webhook URL (whose entropy
             // is in its path, which is why it is a credential at all), the Pushover application

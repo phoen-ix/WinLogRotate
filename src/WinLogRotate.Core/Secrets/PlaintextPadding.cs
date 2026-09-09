@@ -22,9 +22,24 @@ public static class PlaintextPadding
     private const int LengthPrefixBytes = 4;
 
     /// <summary>Length-prefixed UTF-8, padded to <see cref="Boundary"/> with random bytes.</summary>
-    public static byte[] Wrap(string value)
+    public static byte[] Wrap(string value) => Wrap(value.AsSpan());
+
+    /// <summary>
+    /// The same, for a caller holding characters rather than a string.
+    /// </summary>
+    /// <remarks>
+    /// The GUI reads a credential out of a text box into a <c>char[]</c> it can zero afterwards.
+    /// Routing it through a <c>string</c> to get here would undo that: the string would sit in the
+    /// managed heap until a collection that may never come, and land in any crash dump taken in
+    /// between.
+    /// </remarks>
+    public static byte[] Wrap(ReadOnlySpan<char> value)
     {
-        var utf8 = Encoding.UTF8.GetBytes(value);
+        // Sized then filled, rather than GetBytes(char[]): the span overload never materialises
+        // an intermediate array holding the credential.
+        var utf8 = new byte[Encoding.UTF8.GetByteCount(value)];
+        Encoding.UTF8.GetBytes(value, utf8);
+
         var needed = LengthPrefixBytes + utf8.Length;
         var total = ((needed + Boundary - 1) / Boundary) * Boundary;
 

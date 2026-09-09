@@ -67,6 +67,31 @@ internal static class CommandTree
     }
 
     /// <summary>
+    /// Where a credential arrives from when there is no console to type it into.
+    /// </summary>
+    /// <remarks>
+    /// The GUI's only way to hand a password to an elevated child: <c>Verb = "runas"</c> requires
+    /// <c>UseShellExecute = true</c>, which forbids redirecting standard input. The pipe's NAME is
+    /// what appears here, and it is not a credential - what protects the value is the server's
+    /// ACL and its check that the process connecting is the one it launched. There is deliberately
+    /// no <c>--value</c>, and there never will be.
+    /// </remarks>
+    private static readonly Option<string?> FromPipe =
+        new("--from-pipe") { Description = "Read the value from this named pipe instead of standard input. Used by the GUI, which cannot redirect an elevated child's stdin." };
+
+    /// <summary>Picks the pipe when one was named, and the console otherwise.</summary>
+    /// <remarks>
+    /// Internal so a test can assert the option is wired to something. Every other test of the
+    /// pipe drives PipeInputSource directly, so all of them would pass with --from-pipe reduced
+    /// to a flag nothing reads - and the GUI, whose only channel this is, would fall back to a
+    /// console that is not there.
+    /// </remarks>
+    internal static IInputSource Input(System.CommandLine.ParseResult parse, IInputSource console) =>
+        parse.GetValue(FromPipe) is { Length: > 0 } pipe
+            ? new PipeInputSource(pipe, PipeInputSource.DefaultTimeout)
+            : console;
+
+    /// <summary>
     /// Reads a duration written as <c>01:00:00</c>, <c>45m</c> or <c>2h</c>.
     /// </summary>
     /// <remarks>
@@ -263,9 +288,30 @@ internal static class CommandTree
             CommandContext.From(parse), parse.GetValue(only),
             parse.GetValue(GlobalOptions.ConfigDir)?.FullName));
 
+        var setSecretProvider = new Argument<string>("provider")
+        {
+            Description = "The provider to give a credential to, as notify show names it: email.relay.",
+        };
+        var setSecretField = new Argument<string>("field")
+        {
+            Description = "Which credential: password, token, user_key or url.",
+        };
+
+        var setSecret = new Command("set-secret",
+            "Store a provider's credential and point the configuration at it, in one step.")
+        {
+            setSecretProvider, setSecretField, FromPipe,
+        };
+        GlobalOptions.AddTo(setSecret);
+        setSecret.SetAction(parse => SecretCommand.SetForProvider(
+            CommandContext.From(parse), Input(parse, new ConsoleInputSource()),
+            SecretPlatform.ForThisMachine(),
+            parse.GetRequiredValue(setSecretProvider), parse.GetRequiredValue(setSecretField),
+            parse.GetValue(GlobalOptions.ConfigDir)?.FullName));
+
         return new Command("notify", "Inspect how failures are reported, and to whom.")
         {
-            show, status, test, reset,
+            show, status, test, setSecret, reset,
         };
     }
 
@@ -292,10 +338,10 @@ internal static class CommandTree
                         + "your shell cannot pipe cleanly - a non-ASCII password, most often.",
         };
 
-        var set = new Command("set", "Store a secret, reading its value from standard input.") { name, fromFile };
+        var set = new Command("set", "Store a secret, reading its value from standard input.") { name, fromFile, FromPipe };
         GlobalOptions.AddTo(set);
         set.SetAction(parse => SecretCommand.Set(
-            CommandContext.From(parse), input, platform,
+            CommandContext.From(parse), Input(parse, input), platform,
             parse.GetRequiredValue(name), parse.GetValue(fromFile),
             parse.GetValue(GlobalOptions.ConfigDir)?.FullName));
 

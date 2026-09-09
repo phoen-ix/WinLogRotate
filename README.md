@@ -142,6 +142,7 @@ WinForms doesn't run on Server Core and that's where IIS usually lives.
 | `doctor` | Every path, permission and schedule at once |
 | `notify show` / `status` | What is configured to report failures, and what it last decided |
 | `notify test` / `reset` | Send a real test message; clear a suppressed channel |
+| `notify set-secret` | Store a provider's credential and point the config at it, in one step |
 | `secret set` / `list` / `remove` / `test` | The encrypted credential store |
 | `update check` | Whether a newer release exists |
 
@@ -190,6 +191,11 @@ something changed**, over `smtp:`, `http:`, `pushover:` or `eventlog:` — with 
 encrypted store rather than in the config file, a wall-clock budget so alerting can never delay a
 rotation, and a breaker so one dead webhook cannot silence the rest. `winlogrotate notify test`
 proves a channel works before you need it. See [notifications](docs/notifications.md).
+
+The GUI's Notifications page shows all of that and can store a credential — over a private named
+pipe, because elevating a child process on Windows makes redirecting its standard input
+impossible, and a password has no business on a command line that `Win32_Process` exposes and 4688
+audit events record verbatim.
 
 > **Hooks need a per-machine install.** They run commands, and that is only safe from a directory
 > an ordinary account cannot write. A per-user install keeps its configuration in
@@ -286,7 +292,9 @@ from elevation rather than from the install.
 ### What has not
 
 - **The GUI has never rendered.** No window, no theme, no dialog. The runner is Server and every
-  install is silent, so the installer's own wizard pages have never been drawn either.
+  install is silent, so the installer's own wizard pages have never been drawn either. That now
+  includes the Notifications page and the credential dialog; the pipe *behind* that dialog is
+  covered on the Windows leg, but nothing has ever clicked the button that uses it.
 - **Nothing unelevated.** The runner is an administrator throughout, so the read-only banner, the
   "needs administrator" refusals and the UAC child-process elevation are untested.
 - **No locked files.** The smoke test rotates files nothing holds open, so `LockProbe`,
@@ -304,7 +312,7 @@ from elevation rather than from the install.
 
 ### What is thoroughly tested, everywhere
 
-636 tests, and the platform-neutral half is where the subtle bugs live:
+695 tests, and the platform-neutral half is where the subtle bugs live:
 
 - logrotate's scheduling rules, including that `--force` does **not** override `notifempty`,
   `minsize` or `minage` — one test per gate
@@ -316,6 +324,9 @@ from elevation rather than from the install.
 - the TOML round-trip, and that generated imports parse back through our own binder
 - the gzip output, cross-checked against GNU `gzip`: `gzip -t` passes and `gunzip -N` restores
   the original name and timestamp
+- that changing one value in a config file changes exactly one line and every comment survives —
+  the property the whole TOML decision rests on, and which nothing asserted until there was an
+  API able to change a value at all
 - notification delivery: retries, the wall-clock budget and the breaker, all driven by a fake
   clock against fake transports, so no test sleeps and none opens a socket — plus the rule that a
   message counts as reported only when every channel that was tried accepted it

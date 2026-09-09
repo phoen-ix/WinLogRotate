@@ -304,8 +304,8 @@ public static class ConfigLoader
                             $"The {field} for '{provider.Name}' is written in this file, which every "
                             + "local user on this machine can read.",
                             reference.Line, reference.Column,
-                            remedy: $"winlogrotate secret set {Suggest(provider.Name, field)}   "
-                                  + $"then set {field} = \"@secret:{Suggest(provider.Name, field)}\"");
+                            remedy: $"winlogrotate secret set {SuggestSecretName(provider.Name, field)}   "
+                                  + $"then set {field} = \"@secret:{SuggestSecretName(provider.Name, field)}\"");
                         break;
 
                     case SecretSource.Store when secrets?.Exists(reference.Key!) == false:
@@ -326,7 +326,15 @@ public static class ConfigLoader
     }
 
     /// <summary>A secret name somebody would plausibly have chosen, for the remedy text.</summary>
-    private static string Suggest(string provider, string field)
+    /// <summary>
+    /// A secret name somebody would plausibly have chosen, for the remedy text.
+    /// </summary>
+    /// <remarks>
+    /// Public because <c>notify set-secret</c> derives the same name when it stores the value for
+    /// real. The remedy that tells an operator what to type and the command that does it for them
+    /// must not disagree about what the secret is called.
+    /// </remarks>
+    public static string SuggestSecretName(string provider, string field)
     {
         var stem = provider.Replace('.', '-');
         return field is "password" or "url" ? stem : $"{stem}-{field.Replace('_', '-')}";

@@ -1,7 +1,9 @@
 using WinLogRotate.Cli.Output;
 using WinLogRotate.Contracts;
 using WinLogRotate.Core;
+using WinLogRotate.Core.Configuration;
 using WinLogRotate.Core.Journaling;
+using WinLogRotate.Core.Notify;
 using WinLogRotate.Core.Secrets;
 
 namespace WinLogRotate.Cli.Commands;
@@ -56,7 +58,12 @@ internal static class SecretCommand
                 Severity = Severity.Error,
                 Code = DiagnosticCode.ConfigInvalid,
                 Message = error ?? "No value was given.",
-                Remedy = "Pipe it in: 'value' | winlogrotate secret set " + name,
+                // Not "'value' | winlogrotate secret set": that puts the credential on the
+                // shell's own command line, which Win32_Process exposes and 4688 records - the
+                // exact reason there is no --value. Run it and type at the prompt, or use a file
+                // you then delete.
+                Remedy = $"Run 'winlogrotate secret set {name}' and type the value when asked, "
+                       + "or pass --from-file.",
             });
             return ctx.Output.Complete<SecretResult>("secret set", ExitCode.Errors, null);
         }
@@ -94,6 +101,247 @@ internal static class SecretCommand
             Names = [name],
             EntropyRehardened = rehardened,
         });
+    }
+
+    /// <summary>
+    /// Stores a provider's credential and rewrites the configuration to reference it.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// This is the <c>LR9006</c> remedy as one command. That warning currently tells an operator
+    /// to run <c>secret set NAME</c> and <i>then</i> edit their config to say
+    /// <c>@secret:NAME</c>; the second step is the one people forget, and forgetting it leaves
+    /// the password sitting in the file exactly as before while the warning stops looking urgent.
+    /// The name is derived by <see cref="ConfigLoader.SuggestSecretName"/> - the same helper that
+    /// writes that remedy - so the advice and the automation cannot disagree.
+    /// </para>
+    /// <para>
+    /// <b>The value is stored before the configuration is rewritten, and the order matters.</b>
+    /// A failed rewrite leaves a stored secret nothing references, which is inert. The other way
+    /// round leaves a configuration referencing a secret that does not exist, which is
+    /// <c>LR9005</c> and a provider that has silently stopped authenticating.
+    /// </para>
+    /// </remarks>
+    public static int SetForProvider(
+        CommandContext ctx, IInputSource input, ISecretPlatform platform,
+        string provider, string field, string? configDir)
+    {
+        const string Verb = "notify set-secret";
+
+        if (Refuse(ctx, platform, Verb, needsElevation: true) is { } refusal)
+        {
+            return refusal;
+        }
+
+        var paths = InstallPaths.Resolve(configDir);
+
+        if (!File.Exists(paths.ConfigFile))
+        {
+            return Fail(ctx, Verb, DiagnosticCode.ConfigUnreadable,
+                $"There is no configuration at {paths.ConfigFile}.", paths.ConfigFile);
+        }
+
+        TomlFile file;
+
+        try
+        {
+            file = TomlFile.Load(paths.ConfigFile);
+        }
+        catch (Exception e) when (e is IOException or UnauthorizedAccessException)
+        {
+            // A configuration open in an editor, or on a share that went away. A stack trace
+            // helps nobody, and nothing has been stored yet.
+            return Fail(ctx, Verb, DiagnosticCode.ConfigUnreadable,
+                $"{paths.ConfigFile} could not be read: {e.Message}", paths.ConfigFile);
+        }
+
+        if (file.HasErrors)
+        {
+            // Never write to a file we could not read. A rewrite driven by a partial parse is how
+            // a typo becomes data loss.
+            return Fail(ctx, Verb, DiagnosticCode.ConfigInvalid,
+                $"{paths.ConfigFile} does not parse, so it will not be edited.", paths.ConfigFile,
+                "Run 'winlogrotate config check' and fix it first.");
+        }
+
+        var bag = new DiagnosticBag();
+        var providers = ConfigBinder.BindProviders(file, bag);
+
+        // Surfaced rather than discarded. Binding a provider table can produce warnings - a
+        // credential in the clear, an array-of-tables spelling - and reporting success on a
+        // configuration we have just complained about is how those go unread.
+        foreach (var d in bag.Items)
+        {
+            ctx.Output.Diagnostic(new CliDiagnostic
+            {
+                Severity = d.Severity,
+                Code = d.Code,
+                Message = d.Message,
+                Path = d.File,
+                Line = d.Line == 0 ? null : d.Line,
+                Column = d.Column == 0 ? null : d.Column,
+                Remedy = d.Remedy,
+            });
+        }
+
+        var target = providers.FirstOrDefault(
+            p => string.Equals(p.Name, provider, StringComparison.OrdinalIgnoreCase));
+
+        if (target is null)
+        {
+            return Fail(ctx, Verb, DiagnosticCode.NotifyMisconfigured,
+                $"There is no [notify.{provider}] provider.", paths.ConfigFile,
+                providers.Count == 0
+                    ? "Define one first, e.g. [notify.email.relay]."
+                    : $"Defined providers: {string.Join(", ", providers.Select(p => p.Name))}.");
+        }
+
+        if (FieldFor(target.Kind, field) is not { } key)
+        {
+            return Fail(ctx, Verb, DiagnosticCode.NotifyMisconfigured,
+                $"A {target.Kind.ToString().ToLowerInvariant()} provider has no '{field}'.",
+                paths.ConfigFile,
+                $"Try: {string.Join(", ", FieldsFor(target.Kind))}.");
+        }
+
+        var name = ConfigLoader.SuggestSecretName(target.Name, key);
+
+        if (InvalidName(ctx, Verb, name) is { } bad)
+        {
+            return bad;
+        }
+
+        if (!input.TryReadSecret($"Value for '{name}'", out var value, out var error))
+        {
+            return Fail(ctx, Verb, DiagnosticCode.ConfigInvalid,
+                error ?? "No value was given.", null,
+                $"Run 'winlogrotate notify set-secret {provider} {field}' and type the value "
+                + "when asked. Do not put it on a command line.");
+        }
+
+        var protector = platform.CreateProtector(provision: true);
+        if (protector is null)
+        {
+            return NoProtector(ctx, Verb);
+        }
+
+        var store = SecretStore.Load(
+            paths.SecretsFile, protector, platform.EntropyId, platform.MachineFingerprint);
+
+        if (Unusable(ctx, Verb, store) is { } unusable)
+        {
+            return unusable;
+        }
+
+        var owner = paths.Scope == InstallScope.PerUser ? platform.CurrentUserSid : null;
+
+        store.Set(name, value, WhoAmI(), TimeProvider.System)
+             .Save(TimeProvider.System, harden: temp => platform.Harden(temp, owner));
+
+        Journal(paths, name, "set");
+
+        // Only now the config. The temporary file TomlFile.Save writes is a sibling of
+        // config.toml, so it inherits the configuration directory's descriptor exactly as the
+        // original did - there is nothing extra to harden here.
+        // Split once: NotifyProvider.Name is "kind.name", and the name half may itself contain a
+        // dot if it was quoted in the header. Concatenating into a dotted string and splitting it
+        // again turns [notify.email."my.relay"] into a four-part path that matches no table - so
+        // the secret would be stored and the configuration silently never updated.
+        var kind = target.Name.Split('.', 2);
+
+        if (!TomlEditor.TrySet(file, ["notify", .. kind], key, $"@secret:{name}", out _, out var detail))
+        {
+            return Stored(ctx, Verb, paths, name, DiagnosticCode.NotifyMisconfigured,
+                detail ?? "The configuration could not be updated.", key);
+        }
+
+        try
+        {
+            file.Save();
+        }
+        catch (Exception e) when (e is IOException or UnauthorizedAccessException)
+        {
+            return Stored(ctx, Verb, paths, name, DiagnosticCode.ConfigUnreadable,
+                $"{paths.ConfigFile} could not be written: {e.Message}", key);
+        }
+
+        var rehardened = ReportEntropy(ctx, platform);
+        ctx.Output.Line($"Stored '{name}' and set {key} = \"@secret:{name}\" on [notify.{target.Name}].");
+
+        return ctx.Output.Complete(Verb, ExitCode.Ok, new SecretResult
+        {
+            Verb = "set-secret",
+            Path = paths.SecretsFile,
+            Names = [name],
+            EntropyRehardened = rehardened,
+        });
+    }
+
+    /// <summary>The TOML key a field names, or null if this kind has no such credential.</summary>
+    /// <remarks>
+    /// Checked against the kind rather than accepted generally: a <c>token</c> on an email
+    /// provider is a typo, and binding it would produce a key the binder ignores and a secret
+    /// nothing reads.
+    /// </remarks>
+    private static string? FieldFor(NotifyProviderKind kind, string field)
+    {
+        var normalised = field.Trim().ToLowerInvariant().Replace('-', '_');
+        return FieldsFor(kind).Contains(normalised, StringComparer.Ordinal) ? normalised : null;
+    }
+
+    private static string[] FieldsFor(NotifyProviderKind kind) => kind switch
+    {
+        NotifyProviderKind.Email => ["password"],
+        NotifyProviderKind.Pushover => ["token", "user_key"],
+        _ => ["url"],
+    };
+
+    /// <summary>
+    /// Failed, but the secret IS stored - which the caller has to be able to tell.
+    /// </summary>
+    /// <remarks>
+    /// Everything after the store succeeds is a half-completion, and reporting it the same way as
+    /// "nothing happened" is what makes a caller - the GUI most of all - offer to try again when
+    /// the credential is already safely in the store. The payload names it, so <c>--json</c> can
+    /// see it, and the remedy is the one manual step that remains.
+    /// </remarks>
+    private static int Stored(
+        CommandContext ctx, string verb, InstallPaths paths, string name, string code,
+        string message, string key)
+    {
+        ctx.Output.Diagnostic(new CliDiagnostic
+        {
+            Severity = Severity.Error,
+            Code = code,
+            Message = message,
+            Path = paths.ConfigFile,
+            Remedy = $"'{name}' IS stored - do not enter it again. Set "
+                   + $"{key} = \"@secret:{name}\" by hand to start using it.",
+        });
+
+        return ctx.Output.Complete(verb, ExitCode.Errors, new SecretResult
+        {
+            Verb = "set-secret",
+            Path = paths.SecretsFile,
+            Names = [name],
+        });
+    }
+
+    /// <summary>One diagnostic and an error exit, which this verb does in eight places.</summary>
+    private static int Fail(
+        CommandContext ctx, string verb, string code, string message,
+        string? path = null, string? remedy = null)
+    {
+        ctx.Output.Diagnostic(new CliDiagnostic
+        {
+            Severity = Severity.Error,
+            Code = code,
+            Message = message,
+            Path = path,
+            Remedy = remedy,
+        });
+
+        return ctx.Output.Complete<SecretResult>(verb, ExitCode.Errors, null);
     }
 
     public static int List(CommandContext ctx, ISecretPlatform platform, string? configDir)

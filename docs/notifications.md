@@ -166,6 +166,26 @@ longer ones without telling you.
 
 ## Credentials
 
+The quickest way to store one, once the provider exists:
+
+```
+winlogrotate notify set-secret email.relay password
+```
+
+It reads the value from standard input (never from an argument — see below), stores it encrypted,
+and rewrites the configuration to say `password = "@secret:email-relay"` in the same step. That is
+the `LR9006` remedy as one command: doing it in two is how the second half gets forgotten, leaving
+the password in the file with a warning that has stopped looking urgent.
+
+It edits **one line**. Every comment, blank line and indent in `config.toml` survives, which is the
+whole reason this product's configuration is TOML rather than YAML or JSON.
+
+It will not create a provider — `[notify.email.relay]` has to exist first — and it refuses a field
+the provider kind does not have, so a `token` on an email provider is an error rather than a key
+nothing reads.
+
+### The four ways to name one
+
 Four ways to name one. The indirection matters more than the encryption behind it: a configuration
 file saying `password = "@secret:relay"` is safe to paste into a support ticket, commit to a
 deployment repository, or screenshot - which is how credentials actually escape.
@@ -244,13 +264,35 @@ Only `4xx`-class rejections and connection failures are treated differently: `40
 and `404` are never retried, because repeating a wrong request is a slower way to be wrong and,
 against a rate-limited endpoint, is how a misconfiguration becomes a lockout.
 
+## From the GUI
+
+The **Notifications** page shows what is configured, sends a test, clears a suppressed channel,
+and stores a credential.
+
+That last one is the only thing the GUI does that the command line cannot do more easily, and it
+takes a detour to do it. Storing a secret needs administrator rights, and elevating a child
+process on Windows requires `runas`, which makes redirecting that child's standard input
+impossible. So the GUI opens a private named pipe, launches the elevated helper, and hands the
+value over that — never as an argument, which every local administrator can read out of
+`Win32_Process` and which Windows writes verbatim into 4688 audit events, and never through a
+temporary file, which would be the plaintext on disk that the encrypted store exists to avoid.
+
+The pipe is created before the helper starts, under a random name it claims exclusively, readable
+only by you and by administrators, and the value is written only after the helper's process
+identity has been checked. **If any of that fails, nothing is stored** and the page gives you the
+`notify set-secret` command to run yourself. There is deliberately no second-best channel.
+
+One caveat worth knowing: the GUI is the least-tested part of this product, and its window has
+never been rendered by CI. The command line does everything it does.
+
 ## Checking it works
 
 ```
-winlogrotate notify show     # what is configured, and what is missing
-winlogrotate notify test     # send a real message to every channel, now
-winlogrotate notify status   # what was last decided, and what is suppressed
-winlogrotate notify reset    # clear a suppressed channel
+winlogrotate notify show                          # what is configured, and what is missing
+winlogrotate notify test                          # send a real message to every channel, now
+winlogrotate notify status                        # what was last decided, and what is suppressed
+winlogrotate notify set-secret <provider> <field> # store a credential and point the config at it
+winlogrotate notify reset                         # clear a suppressed channel
 ```
 
 `notify test` **records nothing** - no history, no breaker counters, no state - so running it can

@@ -467,7 +467,7 @@ public static class ConfigBinder
     /// the same table, and neither survives a string split on '.'. Walking the key nodes is what
     /// makes those behave the same as the ordinary spelling.
     /// </remarks>
-    private static string[] KeyParts(TableSyntaxBase table)
+    internal static string[] KeyParts(TableSyntaxBase table)
     {
         var key = table.Name;
         if (key is null)
@@ -484,7 +484,7 @@ public static class ConfigBinder
         return [.. parts];
     }
 
-    private static string Unquote(string? text)
+    internal static string Unquote(string? text)
     {
         var value = text ?? string.Empty;
         return value.Length >= 2 && (value[0] == '"' || value[0] == '\'') && value[^1] == value[0]

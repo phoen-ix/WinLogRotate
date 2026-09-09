@@ -233,7 +233,6 @@ public sealed record NotifyShowResult
     public required IReadOnlyList<NotifyProviderDto> Providers { get; init; }
 }
 
-/// <summary>What was last reported about one job.</summary>
 /// <summary>One channel's answer to <c>notify test</c>.</summary>
 public sealed record NotifyTestChannelDto
 {
@@ -267,6 +266,7 @@ public sealed record NotifyTestResult
     public required IReadOnlyList<NotifyTestChannelDto> Channels { get; init; }
 }
 
+/// <summary>What was last reported about one job.</summary>
 public sealed record NotifyJobStatusDto
 {
     public required string Job { get; init; }

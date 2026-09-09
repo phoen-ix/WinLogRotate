@@ -12,7 +12,6 @@ public enum CliFailure
     NotFound,
     UacDeclined,
     Timeout,
-    Crashed,
 }
 
 /// <summary>What one invocation produced.</summary>
@@ -33,7 +32,6 @@ public sealed record CliResult
         CliFailure.NotFound => "winlogrotate.exe could not be found.",
         CliFailure.UacDeclined => "Elevation was cancelled. Nothing was changed.",
         CliFailure.Timeout => "The operation took too long and was stopped.",
-        CliFailure.Crashed => "The operation ended unexpectedly.",
         _ => ExitCode switch
         {
             Core.ExitCode.Ok => "Completed.",
@@ -162,14 +160,28 @@ public sealed class CliRunner(string executablePath)
     /// tools feel broken.
     /// </para>
     /// <para>
-    /// So the child writes newline-delimited JSON to a file in a directory only this user and
-    /// administrators can read, and we tail it. The event pipeline downstream is then identical
-    /// for elevated and unelevated runs.
+    /// So the child writes newline-delimited JSON to a file under the user's own temporary
+    /// directory - inheriting that directory's permissions, which this does not set itself - and
+    /// we tail it. The event pipeline downstream is then identical for elevated and unelevated
+    /// runs. Nothing sensitive goes through it; a credential travels by pipe precisely because
+    /// this channel is a file.
+    /// </para>
+    /// </remarks>
+    /// <param name="onStarted">
+    /// Called on a thread-pool thread with the elevated child's process id, as soon as it exists.
+    /// </param>
+    /// <remarks>
+    /// <para>
+    /// <paramref name="onStarted"/> is how a credential reaches the child: the caller uses the id
+    /// to prove which process may open its pipe. It runs on the pool rather than inline because
+    /// it blocks until the child connects, and inline it would block whichever thread called this
+    /// - which is the UI thread, for as long as the child takes to start.
     /// </para>
     /// </remarks>
     public async Task<CliResult> RunElevatedAsync(
         IReadOnlyList<string> arguments,
         Action<string>? onLine = null,
+        Action<int>? onStarted = null,
         CancellationToken cancellationToken = default)
     {
         var workDirectory = Path.Combine(
@@ -203,8 +215,14 @@ public sealed class CliRunner(string executablePath)
             }
 
             var tail = TailAsync(eventFile, onLine, process, cancellationToken);
+
+            var started = onStarted is null
+                ? Task.CompletedTask
+                : Task.Run(() => onStarted(process.Id), cancellationToken);
+
             await process.WaitForExitAsync(cancellationToken).ConfigureAwait(false);
             await tail.ConfigureAwait(false);
+            await started.ConfigureAwait(false);
 
             return new CliResult
             {
@@ -217,6 +235,13 @@ public sealed class CliRunner(string executablePath)
         {
             // The user answered No to the UAC prompt. Not an error, and never a stack trace.
             return Failed(CliFailure.UacDeclined);
+        }
+        catch (Win32Exception e) when (e.NativeErrorCode == 2)
+        {
+            // ERROR_FILE_NOT_FOUND, as RunAsync already handles. Without this a GUI installed
+            // beside a deleted winlogrotate.exe throws out of an async void handler, which ends
+            // the process instead of showing the one dialog that explains it.
+            return Failed(CliFailure.NotFound);
         }
         catch (OperationCanceledException)
         {
