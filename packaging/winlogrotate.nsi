@@ -219,16 +219,29 @@ Function CloseGui
   Pop $0
 FunctionEnd
 
-; Is a .NET 10 Desktop Runtime present? Asks the host where it lives rather than assuming a
-; path, and reads the 64-bit view explicitly so WOW64 redirection cannot hide it.
+; Is a .NET 10 Desktop Runtime present?
+;
+; Asks the host where it lives rather than assuming a path - and reads the 32-BIT view, which
+; is where .NET records it. That is not a workaround for WOW64; it is the documented contract.
+; dotnet/designs, install-locations.md: "this registry key is redirected ... so it's important
+; that both installers and the host access only the 32-bit view of the registry", and the host
+; itself opens it with KEY_WOW64_32KEY unconditionally
+; (dotnet/runtime, hostmisc/pal.windows.cpp: "The registry search occurs in the 32-bit registry
+; in all cases").
+;
+; This previously read the 64-bit view, where the key is specified never to appear, so the read
+; returned empty on every machine and the $PROGRAMFILES64 fallback below did all the work. That
+; is fine until somebody installs .NET somewhere else - which is precisely the case the registry
+; lookup exists to handle, and precisely when it silently did not.
 !ifndef FULL_ONLY
 Function DotnetPresent
   Push $0
   Push $1
   Push $2
+  Push $3
   StrCpy $3 "0"
 
-  SetRegView 64
+  SetRegView 32
   ReadRegStr $0 HKLM "SOFTWARE\dotnet\Setup\InstalledVersions\x64" "InstallLocation"
   SetRegView default
   ${If} $0 == ""
@@ -241,10 +254,15 @@ Function DotnetPresent
     StrCpy $3 "1"
   ${EndIf}
 
+  DetailPrint "Desktop Runtime 10 under $0: $2"
+
+  ; Restore every register and leave the answer on the stack. $3 used to be written without
+  ; ever being pushed, which silently corrupted whatever the caller was holding in it.
+  StrCpy $0 $3
+  Pop $3
   Pop $2
   Pop $1
-  Pop $0
-  Push $3
+  Exch $0
 FunctionEnd
 
 Function EnsureDotnet
@@ -274,25 +292,49 @@ Download and install it now?$\n$\n\
   ; Resolve winget through where.exe, both fully qualified. A bare name would be resolved
   ; through PATH by an elevated process, so a planted winget.exe in a writable directory
   ; would run as administrator.
-  nsExec::ExecToStack '"$SYSDIR\where.exe" winget.exe'
+  ;
+  ; /OEM because where.exe writes console-codepage output: without it a profile path containing
+  ; non-ASCII characters comes back mangled, and the path we would then execute is not the path
+  ; where.exe found.
+  nsExec::ExecToStack /OEM '"$SYSDIR\where.exe" winget.exe'
   Pop $0
   Pop $1
   ${If} $0 != 0
+    ; Expected on most machines, and worth saying so rather than looking like a defect. winget
+    ; ships as the App Installer MSIX: it first appears in Windows images at 11 22H2, lives
+    ; under Program Files\WindowsApps behind a per-user execution alias, and is absent from
+    ; Windows Server and from every Windows 10 image.
+    DetailPrint "winget was not found on PATH (where.exe exit $0); the runtime cannot be installed automatically."
     Goto manual
   ${EndIf}
+
+  ; WordFind returns the literal string "2" when the input contains no delimiter at all, which
+  ; would then be executed as the program name. where.exe always CRLF-terminates, so this is a
+  ; belt against a future caller rather than a live bug - but executing "2" is a poor failure.
   ${WordFind} "$1" "$\r$\n" "+1{" $1
+  ${If} $1 == "2"
+  ${OrIf} $1 == ""
+    DetailPrint "Could not parse where.exe output for winget."
+    Goto manual
+  ${EndIf}
+  DetailPrint "winget: $1"
 
   DetailPrint "Installing the .NET 10 Desktop Runtime..."
   nsExec::ExecToLog '"$1" install --id Microsoft.DotNet.DesktopRuntime.10 -e --silent \
 --accept-package-agreements --accept-source-agreements'
   Pop $0
 
-  ; Re-verify: winget reports success in cases where the runtime does not actually land.
+  DetailPrint "winget exited $0."
+
+  ; Re-verify: winget reports success in cases where the runtime does not actually land, and
+  ; the only answer that means anything is whether the runtime is now on disk.
   Call DotnetPresent
   Pop $0
   ${If} $0 == "1"
+    DetailPrint "The .NET 10 Desktop Runtime is now installed."
     Goto done
   ${EndIf}
+  DetailPrint "winget ran but the Desktop Runtime is still not present."
 
   manual:
     ; /SD IDNO: an unattended run must never block, and must never open a browser.
