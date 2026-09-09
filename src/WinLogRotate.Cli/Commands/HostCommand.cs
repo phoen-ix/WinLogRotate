@@ -279,6 +279,14 @@ internal static class HostCommand
 
             var security = new System.Security.AccessControl.DirectorySecurity();
             security.SetSecurityDescriptorSddlForm(Sddl.ConfigDirectory);
+
+            // Severing inheritance is stated twice on purpose. The D:P in the SDDL says it, but
+            // whether that survives the managed persist path is not something to take on trust:
+            // if it does not, the directory silently keeps its parent's entries - which for
+            // ProgramData means CREATOR OWNER, materialised as Full Control for whoever ran the
+            // installer. Saying it through the API as well costs one line and cannot be lost.
+            security.SetAccessRuleProtection(isProtected: true, preserveInheritance: false);
+
             new DirectoryInfo(directory).SetAccessControl(security);
         }
     }

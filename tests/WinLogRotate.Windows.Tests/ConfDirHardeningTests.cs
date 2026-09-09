@@ -67,10 +67,26 @@ public sealed class ConfDirHardeningTests : IDisposable
 
         var confd = _root.CreateSubdirectory("conf.d");
 
-        ConfDirGuard.Verify(confd.FullName).HooksAllowed.ShouldBeFalse(
+        var finding = ConfDirGuard.Verify(confd.FullName);
+
+        finding.HooksAllowed.ShouldBeFalse(
             "a directory created under ProgramData inherits CREATOR OWNER, which materialises "
-            + "as Full Control for the creating account - whose SID is not BUILTIN\\Administrators");
+            + $"as Full Control for the creating account. Found {Explain(finding)}");
     }
+
+    /// <summary>Applies the shipped descriptor exactly as HostCommand.ApplyAcl does.</summary>
+    private static void Harden(DirectoryInfo dir)
+    {
+        var security = new DirectorySecurity();
+        security.SetSecurityDescriptorSddlForm(Sddl.ConfigDirectory);
+        security.SetAccessRuleProtection(isProtected: true, preserveInheritance: false);
+        dir.SetAccessControl(security);
+    }
+
+    /// <summary>The verdict, plus the entries that produced it - so a failure here says which
+    /// principal holds what, rather than only that something is wrong.</summary>
+    private static string Explain(AclFinding f) =>
+        $"{f.Verdict}: {string.Join(" | ", f.OffendingAces)} -- {f.Explanation}";
 
     [Fact]
     public void HardeningOnlyTheRootDoesNotSaveTheChild()
@@ -81,11 +97,10 @@ public sealed class ConfDirHardeningTests : IDisposable
         MakeItLookLikeProgramData(_root);
         var confd = _root.CreateSubdirectory("conf.d");
 
-        var rootSecurity = new DirectorySecurity();
-        rootSecurity.SetSecurityDescriptorSddlForm(Sddl.ConfigDirectory);
-        _root.SetAccessControl(rootSecurity);
+        Harden(_root);
 
-        ConfDirGuard.Verify(_root.FullName).Verdict.ShouldBe(AclVerdict.Hardened);
+        var rootFinding = ConfDirGuard.Verify(_root.FullName);
+        rootFinding.Verdict.ShouldBe(AclVerdict.Hardened, Explain(rootFinding));
 
         // No assertion on the child's verdict here: whether propagation reaches it is exactly
         // the platform behaviour that cannot be relied upon, and pinning it either way would
@@ -101,14 +116,16 @@ public sealed class ConfDirHardeningTests : IDisposable
         MakeItLookLikeProgramData(_root);
         var confd = _root.CreateSubdirectory("conf.d");
 
-        var security = new DirectorySecurity();
-        security.SetSecurityDescriptorSddlForm(Sddl.ConfigDirectory);
-        confd.SetAccessControl(security);
+        Harden(confd);
 
         var finding = ConfDirGuard.Verify(confd.FullName);
 
-        finding.Verdict.ShouldBe(AclVerdict.Hardened);
+        finding.Verdict.ShouldBe(AclVerdict.Hardened, Explain(finding));
         finding.HooksAllowed.ShouldBeTrue();
+
+        // The load-bearing half, asserted directly: without the protected flag a correct DACL
+        // re-inherits ProgramData's entries the moment anyone edits them.
+        confd.GetAccessControl().AreAccessRulesProtected.ShouldBeTrue();
     }
 
     [Fact]
@@ -119,9 +136,7 @@ public sealed class ConfDirHardeningTests : IDisposable
         // Users read is deliberate - the unelevated read-only GUI is a shipped feature - so a
         // test that just asserted "Users absent" would be wrong about the design.
         var dir = _root.CreateSubdirectory("conf.d");
-        var security = new DirectorySecurity();
-        security.SetSecurityDescriptorSddlForm(Sddl.ConfigDirectory);
-        dir.SetAccessControl(security);
+        Harden(dir);
 
         var users = new SecurityIdentifier(WellKnownSidType.BuiltinUsersSid, null).Value;
         var rules = dir.GetAccessControl()

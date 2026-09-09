@@ -122,6 +122,26 @@ function Assert-Sddl {
         }
     }
 
+    # Checking a list of well-known SIDs is not enough, and a shipped release proved it. When a
+    # directory is created under ProgramData, its inherit-only CREATOR OWNER entry materialises
+    # as an explicit Full Control ACE for whoever created it - an ordinary account SID, matching
+    # none of the patterns above, so the check passed while the run host refused every hook.
+    #
+    # We own this descriptor completely, so the right assertion is that nothing else is in it.
+    $allowed = @(
+        'S-1-5-18',      # LocalSystem
+        'S-1-5-32-544',  # Administrators
+        'S-1-5-32-545'   # Users, read and execute only, so the unelevated GUI works
+    )
+    foreach ($rule in (Get-Acl $Path).GetAccessRules($true, $true, [System.Security.Principal.SecurityIdentifier])) {
+        if ($rule.AccessControlType -ne 'Allow') { continue }
+        $sid = $rule.IdentityReference.Value
+        if ($allowed -notcontains $sid) {
+            $who = try { $rule.IdentityReference.Translate([System.Security.Principal.NTAccount]).Value } catch { $sid }
+            throw "$Path grants $($rule.FileSystemRights) to $who ($sid), which is not one of SYSTEM, Administrators or Users. Actual: $actual"
+        }
+    }
+
     Write-Host "  ACL ok: $actual"
 }
 

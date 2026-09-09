@@ -45,13 +45,6 @@ public sealed record AclFinding
 [SupportedOSPlatform("windows")]
 public static class ConfDirGuard
 {
-    /// <summary>Rights that amount to being able to change what we execute.</summary>
-    private const FileSystemRights Writeish =
-        FileSystemRights.WriteData | FileSystemRights.AppendData |
-        FileSystemRights.WriteExtendedAttributes | FileSystemRights.WriteAttributes |
-        FileSystemRights.Delete | FileSystemRights.ChangePermissions |
-        FileSystemRights.TakeOwnership | FileSystemRights.FullControl;
-
     public static AclFinding Verify(string directory, string? runAccountSid = null)
     {
         if (!Directory.Exists(directory))
@@ -105,7 +98,7 @@ public static class ConfDirGuard
                 continue;
             }
 
-            if ((rule.FileSystemRights & Writeish) == 0)
+            if (!AclMask.GrantsWrite((int)rule.FileSystemRights))
             {
                 continue;
             }
