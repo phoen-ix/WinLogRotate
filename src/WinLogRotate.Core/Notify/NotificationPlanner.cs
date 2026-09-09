@@ -149,7 +149,13 @@ public static class NotificationPlanner
             case NotifyOutcome.Failing when !failing:
                 // A raised threshold is not the same news as a fixed problem, and saying
                 // "recovered" when the failure is still there would be a lie about the world.
-                return string.Equals(prior.NotifiedThreshold, settings.Threshold.ToString(), StringComparison.Ordinal)
+                //
+                // A null recorded threshold means nobody was ever told - a job recorded as a
+                // baseline. That is "nothing to compare", not "the threshold changed": reading
+                // it as changed made every baselined job report RESOLVED when it recovered,
+                // telling the operator they had raised a threshold they never touched.
+                return prior.NotifiedThreshold is null
+                    || string.Equals(prior.NotifiedThreshold, settings.Threshold.ToString(), StringComparison.Ordinal)
                     ? new Verdict(Decision.Send, NotifyReason.Recovered, null)
                     : new Verdict(Decision.Send, NotifyReason.Resolved, null);
 

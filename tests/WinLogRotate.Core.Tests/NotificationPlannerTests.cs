@@ -158,6 +158,24 @@ public sealed class NotificationPlannerTests : IDisposable
         message.Reason.ShouldBe(NotifyReason.Resolved);
     }
 
+    [Fact]
+    public void AJobBaselinedWhileFailingReportsRecoveredNotResolved()
+    {
+        // A baseline records the outcome but tells nobody, so there is no recorded threshold.
+        // Reading that absence as "the threshold changed" made every such job report RESOLVED
+        // when it recovered - telling the operator they had raised a threshold they never
+        // touched. Only visible by baselining, failing, then fixing it.
+        var state = State();
+        foreach (var (job, next) in Plan([Bad()], state).Baseline)
+        {
+            state.SetJob(job, next);
+        }
+
+        var message = Plan([], state, at: _now.AddDays(1)).Messages.ShouldHaveSingleItem();
+
+        message.Reason.ShouldBe(NotifyReason.Recovered);
+    }
+
     // ---- the reminder ------------------------------------------------------------------------
 
     [Fact]
