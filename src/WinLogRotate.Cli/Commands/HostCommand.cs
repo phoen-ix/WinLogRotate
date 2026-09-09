@@ -156,11 +156,9 @@ internal static class HostCommand
             return ctx.Output.Complete<HostResult>("host repair", ExitCode.Errors, null);
         }
 
-        Directory.CreateDirectory(paths.ConfigDirectory);
-
         try
         {
-            ApplyAcl(paths.Root);
+            ApplyAcl(paths);
             ctx.Output.Line($"Secured {paths.Root}: SYSTEM and Administrators only, inheritance severed.");
         }
         catch (Exception e) when (e is UnauthorizedAccessException or IOException)
@@ -252,13 +250,37 @@ internal static class HostCommand
         return ctx.Output.Complete<HostResult>("host path", ExitCode.Ok, null);
     }
 
+    /// <summary>
+    /// Applies the hardened descriptor to the data root and to every directory under it that
+    /// we create.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// Each directory is set explicitly rather than relying on the root's inheritable ACEs
+    /// propagating downward. Propagation is not enough here, and the reason is ProgramData's
+    /// <c>CREATOR OWNER:(OI)(CI)(IO)(F)</c> entry: when a subdirectory is created beneath it,
+    /// that entry materialises as a Full Control ACE for whoever created it - the elevated
+    /// account running the installer. That account's own SID is not
+    /// <c>BUILTIN\Administrators</c>, so <see cref="ConfDirGuard"/> correctly reads it as a
+    /// non-administrator write grant and refuses every hook.
+    /// </para>
+    /// <para>
+    /// It cost a shipped release to learn this. The installer hardened the root, the smoke test
+    /// asserted the root, and conf.d - the only directory whose permissions actually matter,
+    /// because it is the one holding files the run host executes - was never checked by either.
+    /// </para>
+    /// </remarks>
     [SupportedOSPlatform("windows")]
-    private static void ApplyAcl(string directory)
+    private static void ApplyAcl(InstallPaths paths)
     {
-        var info = new DirectoryInfo(directory);
-        var security = new System.Security.AccessControl.DirectorySecurity();
-        security.SetSecurityDescriptorSddlForm(Sddl.ConfigDirectory);
-        info.SetAccessControl(security);
+        foreach (var directory in new[] { paths.Root, paths.ConfigDirectory, paths.JournalDirectory })
+        {
+            Directory.CreateDirectory(directory);
+
+            var security = new System.Security.AccessControl.DirectorySecurity();
+            security.SetSecurityDescriptorSddlForm(Sddl.ConfigDirectory);
+            new DirectoryInfo(directory).SetAccessControl(security);
+        }
     }
 
     private static HostResult Describe(RunHostKind kind, InstallPaths paths) => new()

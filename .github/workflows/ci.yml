@@ -231,11 +231,26 @@ jobs:
           if (-not (Test-Path "$env:DATA_DIR\config.toml")) { throw 'No seeded config.toml.' }
           if (-not (Test-Path "$env:DATA_DIR\conf.d")) { throw 'No conf.d directory.' }
 
+      # conf.d is asserted as well as the root, and it is the one that matters: the run host
+      # executes what it finds in conf.d, the root merely contains it. Checking only the root
+      # is what let a release ship in which the root looked perfect and conf.d was writable by
+      # the account that ran the installer, courtesy of ProgramData's inherit-only
+      # CREATOR OWNER entry.
       - name: 'Leg A: the configuration directory is actually locked down'
         shell: pwsh
         run: |
           . .github/scripts/installer-smoke-helpers.ps1
           Assert-Sddl -Path $env:DATA_DIR
+          Assert-Sddl -Path "$env:DATA_DIR\conf.d"
+          Assert-Sddl -Path "$env:DATA_DIR\journal"
+
+          # The end the ACL exists for, asserted directly rather than inferred from an SDDL
+          # comparison on whichever directory somebody happened to think of.
+          $entry = Get-UninstallEntry -Scope machine
+          $doctor = & (Join-Path $entry.InstallLocation 'winlogrotate.exe') doctor --json | ConvertFrom-Json
+          if (-not $doctor.result.hooksAllowed) {
+            throw 'doctor reports hooks are refused after a clean per-machine install, which is the whole point of the ACL.'
+          }
 
       - name: 'Leg A: Event Log source and PATH'
         shell: pwsh
@@ -344,7 +359,12 @@ jobs:
             'paths = ["C:/smoke/definitely-not-here/*.log"]'
           )
           Set-Content -Path "$env:DATA_DIR\conf.d\eventlog-probe.toml" -Value $job
+          # This run is MEANT to fail: a failing job is how a Warning is produced, and exit 1
+          # is the correct answer. pwsh propagates $LASTEXITCODE, so it has to be cleared or
+          # the step fails for precisely the condition the test was arranging.
           & $exe run | Out-Host
+          if ($LASTEXITCODE -ne 1) { throw "expected the probe run to exit 1, got $LASTEXITCODE" }
+          $global:LASTEXITCODE = 0
           Remove-Item "$env:DATA_DIR\conf.d\eventlog-probe.toml"
 
           # The Event Log is written asynchronously, so this needs a poll rather than a read.
@@ -367,6 +387,9 @@ jobs:
             }
             if ($e.Id -lt 1 -or $e.Id -gt 1000) {
               throw "Event ID $($e.Id) is outside the 1..1000 range EventCreate.exe can render."
+            }
+            if ($e.Id -eq 190) {
+              throw ('Event 190 (LR9001) after a clean per-machine install: ' + $e.Message)
             }
           }
 
