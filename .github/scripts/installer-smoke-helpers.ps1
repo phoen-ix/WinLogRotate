@@ -290,6 +290,19 @@ function Assert-TaskHardening {
     if ($s.ExecutionTimeLimit -ne 'PT1H') { throw "ExecutionTimeLimit is '$($s.ExecutionTimeLimit)', expected PT1H (the default is PT72H)." }
     if ($s.MultipleInstances -ne 'IgnoreNew') { throw "MultipleInstances is '$($s.MultipleInstances)', expected IgnoreNew." }
 
+    # The deadline the task passes to the run must be the deadline the task actually enforces.
+    # Both come from one property, and a unit test pins that they agree in the generated XML -
+    # this is the same assertion against a task Windows really registered, which is the only
+    # place a schtasks quirk could have mangled the argument string.
+    $arguments = @($task.Actions)[0].Arguments
+    if ($arguments -notmatch '--run-deadline\s+(\S+)') {
+        throw "The registered task passes no --run-deadline, so the notification phase cannot stop short of being killed. Arguments: $arguments"
+    }
+    $deadline = [TimeSpan]::Parse($Matches[1])
+    if ($deadline -ne [System.Xml.XmlConvert]::ToTimeSpan($s.ExecutionTimeLimit)) {
+        throw "--run-deadline is $deadline but ExecutionTimeLimit is $($s.ExecutionTimeLimit); they must denote the same span."
+    }
+
     if ($ExpectSystem) {
         $user = $task.Principal.UserId
         if ($user -notmatch 'SYSTEM|S-1-5-18') { throw "The task runs as '$user', expected SYSTEM." }

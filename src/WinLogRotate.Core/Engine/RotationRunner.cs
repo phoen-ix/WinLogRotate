@@ -28,6 +28,26 @@ public sealed record RunOptions
     /// page whoever is on call.
     /// </remarks>
     public bool Notify { get; init; } = true;
+
+    /// <summary>
+    /// How long the whole invocation has before its host kills it, or null when nothing will.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// Passed by the registered scheduled task as <c>--run-deadline</c>, generated from the same
+    /// value that writes the task's <c>ExecutionTimeLimit</c> element. It exists so the
+    /// notification phase can stop short rather than let a fifty-nine-minute rotation plus a
+    /// thirty-second notification phase reach the one-hour limit: Task Scheduler reports that
+    /// termination as <c>0x41306</c>, which is indistinguishable from an operator pressing Stop,
+    /// so a rotation that actually succeeded leaves evidence that says it was killed.
+    /// </para>
+    /// <para>
+    /// Null for a hand-run rotation, which is never truncated - nothing is going to kill it, and
+    /// inventing a deadline would make the interactive case behave differently from the scheduled
+    /// one for no benefit.
+    /// </para>
+    /// </remarks>
+    public TimeSpan? RunDeadline { get; init; }
 }
 
 /// <summary>What a whole run did.</summary>

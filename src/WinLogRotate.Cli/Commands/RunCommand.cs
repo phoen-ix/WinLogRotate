@@ -16,6 +16,11 @@ internal static class RunCommand
         CommandContext ctx, RunOptions options, string? configDir, string? stateOverride,
         RunLockOptions? locking = null)
     {
+        // Stamped before anything else, including the pause check. The notification phase reserves
+        // time against the host's limit, and what it needs to know is how much of that limit the
+        // rotation has already spent - so the clock has to start where the process did.
+        var started = TimeProvider.System.GetUtcNow();
+
         var paths = InstallPaths.Resolve(configDir);
         var guard = new PathGuard(new GuardOptions { Elevated = Privilege.IsElevated() });
 
@@ -91,7 +96,7 @@ internal static class RunCommand
             // configuration is so broken that nothing rotated" is the single night an operator
             // most wants to hear about, and returning here without a notification would make it
             // the one night that says nothing at all.
-            NotifyPhase.Run(ctx, paths, config, report: null, options);
+            NotifyPhase.Run(ctx, paths, config, report: null, options, started);
 
             ctx.Output.Line("winlogrotate: the configuration has errors; nothing was attempted.");
             return ctx.Output.Complete<RunResult>("run", ExitCode.ConfigInvalid, null);
@@ -184,7 +189,7 @@ internal static class RunCommand
 
         // After the journal is closed and after state.Save, so a notification can never delay or
         // fail the thing it is reporting on.
-        NotifyPhase.Run(ctx, paths, config, report, options);
+        NotifyPhase.Run(ctx, paths, config, report, options, started);
 
         var result = new RunResult
         {

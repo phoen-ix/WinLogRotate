@@ -122,9 +122,11 @@ Var HostNone
 ; ---------------------------------------------------------------------------------------
 !define MULTIUSER_INSTALLMODEPAGE_TEXT_TOP \
   "Choose whether to install WinLogRotate for everyone on this machine or only for you.$\r$\n$\r$\n\
-Rotation, compression, retention and scheduling work the same either way. Hooks - postrotate \
-commands and service control - need the all-users install, because they run programs and that \
-is only safe from a directory an ordinary account cannot write."
+Rotation, compression, retention, scheduling and reporting failures by email or webhook work the \
+same either way. Hooks - postrotate commands and service control - need the all-users install, \
+because they run programs and that is only safe from a directory an ordinary account cannot \
+write. Reporting to the Windows Event Log needs it too, because registering an event source \
+needs administrator."
 !define MULTIUSER_INSTALLMODEPAGE_TEXT_ALLUSERS \
   "Anyone who uses this computer (recommended - runs as SYSTEM, hooks available)"
 !define MULTIUSER_INSTALLMODEPAGE_TEXT_CURRENTUSER \
@@ -493,6 +495,14 @@ Section "-Core" SEC_CORE
     FileWrite $0 "retain   = 30        # days$\r$\n"
     FileWrite $0 'compress = "zip"     # zip | gzip | none$\r$\n'
     FileWrite $0 'maxsize  = "50M"     # roll mid-day past this$\r$\n'
+    FileWrite $0 "$\r$\n"
+    FileWrite $0 "# Who finds out when rotation stops working. Commented out because a target$\r$\n"
+    FileWrite $0 "# nobody chose is a target nobody reads - but eventlog: needs no credential,$\r$\n"
+    FileWrite $0 "# no network and nothing to break, so it is the one to start with. Email,$\r$\n"
+    FileWrite $0 "# webhooks and Pushover are in docs/notifications.md.$\r$\n"
+    FileWrite $0 "#$\r$\n"
+    FileWrite $0 "# [notify]$\r$\n"
+    FileWrite $0 '# to = ["eventlog:"]$\r$\n'
     FileClose $0
   ${EndIf}
 

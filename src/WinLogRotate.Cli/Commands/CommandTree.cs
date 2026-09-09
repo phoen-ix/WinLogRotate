@@ -66,6 +66,23 @@ internal static class CommandTree
         return ctx.Output.Complete<EmptyResult>("", ExitCode.Ok, null);
     }
 
+    /// <summary>
+    /// Reads a duration written as <c>01:00:00</c>, <c>45m</c> or <c>2h</c>.
+    /// </summary>
+    /// <remarks>
+    /// The same grammar the configuration file uses, through the same parser, because an operator
+    /// who has written <c>remind_after = "7d"</c> will write <c>--run-deadline 45m</c>. An
+    /// unparseable value yields null, which means "no deadline" - the safe direction: a mistyped
+    /// flag must not silently shorten the phase to nothing, and the run verb has no business
+    /// failing over a notification hint.
+    /// </remarks>
+    private static TimeSpan? Duration(string? text) =>
+        !string.IsNullOrWhiteSpace(text)
+        && Core.Configuration.ConfigBinder.TryParseDuration(text, out var value)
+        && value > TimeSpan.Zero
+            ? value
+            : null;
+
     // ---- rotation ---------------------------------------------------------------------
 
     private static readonly Option<bool> DryRun =
@@ -99,6 +116,18 @@ internal static class CommandTree
     private static readonly Option<bool> NoNotify =
         new("--no-notify") { Description = "Do not report this run's outcome to any notification target." };
 
+    /// <summary>
+    /// How long this whole invocation has, so the notification phase can stop short of the kill.
+    /// </summary>
+    /// <remarks>
+    /// Passed by the registered task, generated from the same value that writes its
+    /// <c>ExecutionTimeLimit</c>. Absent - which is every hand-run rotation - there is no clamp at
+    /// all, because nothing is going to kill an interactive run and truncating it would make the
+    /// interactive case behave differently from the scheduled one for no benefit.
+    /// </remarks>
+    private static readonly Option<string?> RunDeadline =
+        new("--run-deadline") { Description = "How long this run has before its host kills it, e.g. 01:00:00 or 45m. Only the notification phase uses it, to stop short rather than be terminated mid-send." };
+
     private static readonly Option<int> LockHeldExit =
         new("--lock-held-exit") { Description = "Exit code to use when another run holds the lock. The registered scheduled task passes 0, because Task Scheduler renders 3 as 0x3 and an admin reads that as a failure.", DefaultValueFactory = _ => ExitCode.LockHeld };
 
@@ -107,7 +136,7 @@ internal static class CommandTree
         var run = new Command("run", "Rotate everything that is due.")
         {
             DryRun, Force, Catchup, JobFilter, StateFile,
-            SkipStateLock, WaitForStateLock, LockHeldExit, NoNotify,
+            SkipStateLock, WaitForStateLock, LockHeldExit, NoNotify, RunDeadline,
         };
         GlobalOptions.AddTo(run);
         run.SetAction(parse => RunCommand.Run(
@@ -119,6 +148,7 @@ internal static class CommandTree
                 Catchup = parse.GetValue(Catchup),
                 OnlyJob = parse.GetValue(JobFilter),
                 Notify = !parse.GetValue(NoNotify),
+                RunDeadline = Duration(parse.GetValue(RunDeadline)),
             },
             parse.GetValue(GlobalOptions.ConfigDir)?.FullName,
             parse.GetValue(StateFile)?.FullName,
@@ -201,7 +231,7 @@ internal static class CommandTree
     /// </remarks>
     private static Command BuildNotify()
     {
-        var show = new Command("show", "Print the notification configuration, and say plainly what is not yet implemented.");
+        var show = new Command("show", "Print the notification configuration: targets, providers, proxy and certificate pinning.");
         GlobalOptions.AddTo(show);
         show.SetAction(parse => NotifyCommand.Show(
             CommandContext.From(parse), parse.GetValue(GlobalOptions.ConfigDir)?.FullName));
@@ -222,9 +252,20 @@ internal static class CommandTree
             CommandContext.From(parse), parse.GetValue(channel),
             parse.GetValue(GlobalOptions.ConfigDir)?.FullName));
 
+        var only = new Argument<string?>("target")
+        {
+            Description = "Only channels whose name contains this. Omit for all of them.",
+            Arity = ArgumentArity.ZeroOrOne,
+        };
+        var test = new Command("test", "Send a real test message to every configured channel. Records nothing.") { only };
+        GlobalOptions.AddTo(test);
+        test.SetAction(parse => NotifyTestCommand.Run(
+            CommandContext.From(parse), parse.GetValue(only),
+            parse.GetValue(GlobalOptions.ConfigDir)?.FullName));
+
         return new Command("notify", "Inspect how failures are reported, and to whom.")
         {
-            show, status, reset,
+            show, status, test, reset,
         };
     }
 

@@ -108,6 +108,26 @@ public sealed record DoctorResult
     public string? AclFix { get; init; }
     public required string RunHost { get; init; }
     public required string RunHostDetail { get; init; }
+
+    /// <summary>What notifications are configured to do. Reported without doing any of it.</summary>
+    public required NotifyDoctorDto Notify { get; init; }
+}
+
+/// <summary>
+/// The notification facts <c>doctor</c> can state without touching the network.
+/// </summary>
+/// <remarks>
+/// Deliberately counts rather than names. Target strings are credentials - a webhook URL's entropy
+/// is in its path - and this payload is polled by the GUI and pasted into support tickets.
+/// </remarks>
+public sealed record NotifyDoctorDto
+{
+    public required bool Enabled { get; init; }
+    public required int Targets { get; init; }
+    public string? Proxy { get; init; }
+    public required bool CertificatePinned { get; init; }
+    public required int StoredCredentials { get; init; }
+    public required int SuppressedChannels { get; init; }
 }
 
 /// <summary>
@@ -203,14 +223,50 @@ public sealed record NotifyShowResult
     /// <summary>False when nothing could be sent even if something went wrong.</summary>
     public required bool WouldSend { get; init; }
 
-    /// <summary>True until delivery lands. Said plainly rather than implied.</summary>
-    public required bool DeliveryImplemented { get; init; }
+    /// <summary>What the outbound connections will use, in words.</summary>
+    public required string Proxy { get; init; }
+
+    /// <summary>The certificate every channel must present, or null for the machine's trust store.</summary>
+    public string? CertificatePin { get; init; }
 
     public required IReadOnlyList<NotifyTargetDto> Targets { get; init; }
     public required IReadOnlyList<NotifyProviderDto> Providers { get; init; }
 }
 
 /// <summary>What was last reported about one job.</summary>
+/// <summary>One channel's answer to <c>notify test</c>.</summary>
+public sealed record NotifyTestChannelDto
+{
+    public required string Channel { get; init; }
+    public required string Display { get; init; }
+    public required bool Ok { get; init; }
+    public required long Milliseconds { get; init; }
+
+    /// <summary>HTTP status, where the transport had one.</summary>
+    public int? Status { get; init; }
+
+    /// <summary>Already redacted.</summary>
+    public string? Error { get; init; }
+
+    /// <summary>True when a real run would skip this channel because its breaker is open.</summary>
+    public required bool WouldBeSkipped { get; init; }
+}
+
+/// <summary>
+/// Payload of <c>winlogrotate notify test</c>.
+/// </summary>
+/// <remarks>
+/// There is deliberately no overall pass/fail flag and the verb always exits 0. A caller that
+/// wants one reads <see cref="Failed"/>; encoding it in the exit code would make a webhook outage
+/// look like a rotation failure to whatever ran the command.
+/// </remarks>
+public sealed record NotifyTestResult
+{
+    public required int Sent { get; init; }
+    public required int Failed { get; init; }
+    public required IReadOnlyList<NotifyTestChannelDto> Channels { get; init; }
+}
+
 public sealed record NotifyJobStatusDto
 {
     public required string Job { get; init; }

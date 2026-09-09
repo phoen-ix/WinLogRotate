@@ -56,15 +56,57 @@ public sealed record HostInstallOptions
     public TimeSpan TimeOfDay { get; init; } = TimeSpan.FromHours(3);
 
     /// <summary>
+    /// How long the host lets one run take before killing it.
+    /// </summary>
+    /// <remarks>
+    /// The single source of truth for two things that must agree: the task's
+    /// <c>ExecutionTimeLimit</c> element, and the <c>--run-deadline</c> argument the task passes
+    /// to the run it starts. If they disagree, the notification phase reserves time against a
+    /// limit that is not the real one - which is worse than not reserving at all, because it
+    /// looks handled. <c>TheRegisteredTaskAndItsDeadlineFlagAgree</c> reads both out of the
+    /// generated XML and asserts they denote the same span.
+    /// </remarks>
+    public TimeSpan ExecutionTimeLimit { get; init; } = TimeSpan.FromHours(1);
+
+    /// <summary>
     /// Arguments the registered host runs with.
     /// </summary>
     /// <remarks>
+    /// <para>
     /// <c>--lock-held-exit 0</c> is deliberate. Exit 3 means another run holds the gate, which
     /// is a normal outcome - but Task Scheduler renders it as 0x3 in the Last Run Result column
     /// and an administrator skimming that column reads it as a failure. The cost is that 0x0 no
     /// longer proves work happened, which is exactly why <c>host status</c>, the GUI and the
     /// Event Log all read the journal instead.
+    /// </para>
+    /// <para>
+    /// <c>--run-deadline</c> tells the run how long it has, so the notification phase can stop
+    /// short of the kill rather than be terminated inside it. An existing installation keeps the
+    /// command line it was registered with until <c>winlogrotate host repair</c> re-registers the
+    /// task; without the flag there is simply no clamp, which is the pre-milestone-10 behaviour.
+    /// </para>
     /// </remarks>
     public string Arguments =>
-        $"run --config-dir \"{ConfigDirectory}\" --lock-held-exit 0";
+        $"run --config-dir \"{ConfigDirectory}\" --lock-held-exit 0 "
+        + $"--run-deadline {ExecutionTimeLimit.ToString("c", System.Globalization.CultureInfo.InvariantCulture)}";
+
+    /// <summary>
+    /// The task definition these options describe.
+    /// </summary>
+    /// <remarks>
+    /// The one mapping, used by both the registrar and <c>host export-task</c>. They used to build
+    /// a <see cref="TaskXmlBuilder.TaskDefinition"/> each, and the exporter reached
+    /// <see cref="Arguments"/> by constructing a throwaway copy of this record with an empty
+    /// executable path - so a field added to one and not the other produced an exported task that
+    /// differed from the registered one in exactly the way nobody would think to check.
+    /// </remarks>
+    public TaskDefinition ToTaskDefinition() => new()
+    {
+        ExecutablePath = ExecutablePath,
+        Arguments = Arguments,
+        Account = Account,
+        Frequency = Frequency,
+        TimeOfDay = TimeOfDay,
+        ExecutionTimeLimit = ExecutionTimeLimit,
+    };
 }

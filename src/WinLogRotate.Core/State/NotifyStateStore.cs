@@ -139,6 +139,21 @@ public sealed class NotifyStateStore
         {
             _document.Jobs.Remove(job);
         }
+
+        // Channels too, from milestone 10 onwards. Nothing wrote them before delivery existed, so
+        // it never mattered; now a target that is renamed, retired or typo'd once leaves a row
+        // behind for ever, and notify status would grow a permanent list of destinations that no
+        // longer exist. Keyed on the last attempt rather than on the configuration, so a channel
+        // dropped for a fortnight and put back keeps its breaker history.
+        var forgotten = _document.Channels
+            .Where(kv => kv.Value.LastAttempt is { } attempt && now - attempt > keepFor)
+            .Select(kv => kv.Key)
+            .ToArray();
+
+        foreach (var channel in forgotten)
+        {
+            _document.Channels.Remove(channel);
+        }
     }
 
     public void Save(TimeProvider clock)

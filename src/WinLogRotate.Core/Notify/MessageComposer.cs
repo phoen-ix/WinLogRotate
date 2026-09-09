@@ -15,10 +15,23 @@ namespace WinLogRotate.Core.Notify;
 public static class MessageComposer
 {
     /// <summary>What each destination will accept. Anything longer is silently discarded there.</summary>
+    /// <remarks>
+    /// Only Pushover and the Event Log are applied automatically, because only those two are
+    /// identified by their scheme. A webhook could be pointed at anything, so Discord and ntfy are
+    /// reachable through a provider's <c>max_message</c> key - these constants are what the
+    /// documentation quotes for it.
+    /// </remarks>
     public const int PushoverLimit = 1024;
     public const int DiscordLimit = 2000;
     public const int NtfyLimit = 4096;
     public const int EventLogLimit = 31_839;
+
+    /// <summary>For destinations that impose no limit worth enforcing: SMTP, a plain webhook.</summary>
+    /// <remarks>
+    /// Silently truncating an operator's diagnostic is a real cost, so it is paid only where the
+    /// destination would otherwise discard the whole message.
+    /// </remarks>
+    public const int NoLimit = int.MaxValue;
 
     public static string Subject(NotifyReason reason, string job, IReadOnlyList<DigestLine> lines, RunSummary run)
     {
@@ -49,11 +62,15 @@ public static class MessageComposer
     /// destination renders the same message and only the tail differs. Building differently per
     /// destination is how two channels end up disagreeing about what happened.
     /// </remarks>
+    /// <param name="now">
+    /// Supplied rather than read, so the same plan renders to the same bytes in a test. Only the
+    /// trailing "go and look" command uses it.
+    /// </param>
     public static string Render(PlannedNotification message, RunSummary run, int limit,
-        IReadOnlyList<string>? redact = null)
+        DateTimeOffset now, IReadOnlyList<string>? redact = null)
     {
         var head = Head(message, run);
-        var tail = $"winlogrotate journal --since {DateTimeOffset.UtcNow:yyyy-MM-dd}";
+        var tail = $"winlogrotate journal --since {now:yyyy-MM-dd}";
 
         var body = new List<string>();
         foreach (var line in message.Lines)

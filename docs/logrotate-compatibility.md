@@ -52,13 +52,26 @@ can double-click in Explorer on any Windows version. The audience decided it. Se
 `compresstype = "gzip"` per job where the consuming ecosystem expects it - Splunk and Elastic
 file inputs auto-decompress `.gz` and generally not `.zip`.
 
+### `mail` reports the run, not the log
+
+Upstream's `mail` / `mailfirst` / `maillast` post you the rotated log file itself, per job. We do
+not, and the difference is deliberate rather than a gap: a nightly attachment of every log that
+rotated is a mailbox nobody reads, and on a Windows file server it is also a compliance problem
+nobody asked for.
+
+**Instead:** the `[notify]` table reports *what a whole run did* to whoever is on call - once, per
+run, and only when something changed. It delivers over SMTP, webhooks, Pushover and the Windows
+Event Log. See [notifications](notifications.md).
+
+If you genuinely want the file, a `command:` hook is the honest way to say so, and it lands with
+the configuration-directory check that running code from a config file requires.
+
 ## Not implementable on Windows
 
 | Directive | Why, and what to use instead |
 |---|---|
 | `su user group` | Windows has no `setuid`. `LogonUser` needs a password; the service-logon path needs `SE_TCB_NAME` and yields a token that cannot open files. Parsed, warned about, ignored. **Instead:** run the whole tool under the identity you want, via the scheduled task's principal or a gMSA. |
 | `create mode owner group` | There are no mode bits. A POSIX mode is approximated as a DACL and marked protected, which is honest but lossy. **Instead:** `createsddl` and `createowner`. |
-| `mail` / `mailfirst` / `maillast` | Not implemented, and it would be the wrong shape anyway: upstream mails you the rotated log itself, per job. **Instead:** the `[notify]` table, which reports what a whole run did to whoever is on call - see [diagnostics](notifications.md). Configuration, validation and change detection are in place today; delivery is not, and `winlogrotate notify show` says so rather than pretending. |
 | `shred` | Not implemented; no `sdelete` dependency is taken. |
 | `compresscmd` / `uncompresscmd` | Windows ships no `gzip.exe`. Compression is in-process. A config naming `/bin/gzip` is translated with a warning. |
 

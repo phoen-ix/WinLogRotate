@@ -175,7 +175,7 @@ public sealed class NotifyOptOutTests : IDisposable
 
         Cli.Commands.NotifyPhase.Run(
             ctx, InstallPaths.Resolve(_dir.FullName), config, report: null,
-            new Engine.RunOptions());
+            new Engine.RunOptions(), DateTimeOffset.UnixEpoch);
 
         sink.Lines.ShouldContain(l => l.Contains("[quiet]: notify = false", StringComparison.Ordinal));
         sink.Lines.ShouldNotContain(l => l.Contains("would send", StringComparison.Ordinal));
@@ -200,7 +200,8 @@ public sealed class NotifyOptOutTests : IDisposable
         var parse = Cli.Commands.CommandTree.Build().Parse(["run"]);
         Cli.Commands.NotifyPhase.Run(
             new Cli.Commands.CommandContext(sink, parse),
-            InstallPaths.Resolve(_dir.FullName), config, report: null, new Engine.RunOptions());
+            InstallPaths.Resolve(_dir.FullName), config, report: null, new Engine.RunOptions(),
+            DateTimeOffset.UnixEpoch);
 
         sink.Lines.ShouldNotContain(l => l.Contains("would send", StringComparison.Ordinal));
         sink.Lines.ShouldContain(l =>

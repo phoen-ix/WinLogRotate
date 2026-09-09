@@ -60,6 +60,26 @@ public static class NotificationPlanner
             jobs.Add(line.Job);
         }
 
+        // The run scope is ALWAYS considered, even when this run found nothing wrong with it.
+        //
+        // Every other job earns its place by being observed; the run scope has nothing to observe
+        // it, so before this it entered the loop only when it already had a finding - and its
+        // recorded outcome therefore stayed Unknown for ever on a healthy machine. Two things
+        // followed, and both are bad in the same direction:
+        //
+        //   - The FIRST run-scoped finding on any machine - a world-writable conf.d, a
+        //     configuration that will not parse, an unreadable secret store - was recorded as a
+        //     first-run baseline and not sent. It surfaced only when remind_after elapsed, which
+        //     is seven days late for the 9xxx band.
+        //   - Its recovery was never reported at all: with the finding gone there are no
+        //     run-scoped diagnostics, so nothing put the scope back in the set to notice it had
+        //     gone green.
+        //
+        // A clean run now records it Healthy, which is what makes the next genuine finding a new
+        // failure rather than a baseline. A machine that is already broken on the first run is
+        // still baselined and still silent - that property lives in Decide, not here.
+        jobs.Add(NotifyStateDocument.RunScope);
+
         var messages = new List<PlannedNotification>();
         var suppressed = new List<string>();
         var baseline = new List<(string, JobNotifyState)>();

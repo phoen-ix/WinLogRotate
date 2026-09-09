@@ -2,6 +2,11 @@ using System.Runtime.InteropServices;
 using WinLogRotate.Cli.Output;
 using WinLogRotate.Contracts;
 using WinLogRotate.Core;
+using WinLogRotate.Core.Configuration;
+using WinLogRotate.Core.Notify;
+using WinLogRotate.Core.Safety;
+using WinLogRotate.Core.Secrets;
+using WinLogRotate.Core.State;
 using WinLogRotate.Hosting;
 using WinLogRotate.Hosting.Hosts;
 using WinLogRotate.Hosting.Security;
@@ -113,7 +118,12 @@ internal static class DoctorCommand
                     Remedy = "Run 'winlogrotate host use task' (needs administrator).",
                 });
             }
+
+            // Every section but the last ends with one, and Run host is no longer the last.
+            ctx.Output.Line("");
         }
+
+        var network = Network(ctx, paths);
 
         var result = new DoctorResult
         {
@@ -128,9 +138,67 @@ internal static class DoctorCommand
             AclFix = aclFix,
             RunHost = hostKind.ToString(),
             RunHostDetail = hostDetail,
+            Notify = network,
         };
 
         return ctx.Output.Complete("doctor", ExitCode.Ok, result);
+    }
+
+    /// <summary>
+    /// What notifications are configured to do, without doing any of it.
+    /// </summary>
+    /// <remarks>
+    /// <b>Nothing here opens a socket, resolves a name or reads the secret store.</b> The GUI runs
+    /// <c>doctor --json</c> on every tab change, so a probe placed here would connect to the
+    /// operator's relay several times a minute - and a diagnostic that generates the traffic it is
+    /// meant to explain is worse than none. <c>notify test</c> is the live check, and this section
+    /// says so.
+    /// </remarks>
+    private static NotifyDoctorDto Network(CommandContext ctx, InstallPaths paths)
+    {
+        var config = ConfigLoader.Load(
+            paths, new PathGuard(new GuardOptions()), quarantineBadFiles: false);
+
+        var settings = config.Notify;
+        var state = NotifyStateStore.Load(paths.NotifyStateFile);
+
+        var suppressed = state.Channels
+            .Count(kv => BreakerPolicy.Verdict(kv.Value, settings) == BreakerVerdict.Open);
+
+        var stored = config.NotifyProviders
+            .SelectMany(p => p.Credentials())
+            .Count(c => c.Reference.Source == SecretSource.Store);
+
+        ctx.Output.Line("Notifications");
+        ctx.Output.Line($"  reporting     {(settings.WouldSend ? "on" : "off")}"
+            + (settings.WouldSend ? $", {settings.To.Count} target(s)" : " - nothing would be sent"));
+        ctx.Output.Line($"  proxy         {(string.IsNullOrWhiteSpace(settings.Proxy) ? "machine default" : settings.Proxy)}");
+        ctx.Output.Line($"  tls           {(settings.ServerCertThumbprint is { Length: > 0 } ? "pinned" : "machine certificate store")}");
+        ctx.Output.Line($"  stored creds  {stored}");
+        ctx.Output.Line($"  suppressed    {suppressed}");
+        ctx.Output.Line("  live check    winlogrotate notify test");
+
+        if (suppressed > 0)
+        {
+            ctx.Output.Diagnostic(new CliDiagnostic
+            {
+                Severity = Severity.Warning,
+                Code = DiagnosticCode.NotifyCircuitOpen,
+                Message = $"{suppressed} notification channel(s) are suppressed after repeated failures.",
+                Remedy = "See 'winlogrotate notify status'. Fix the destination, then "
+                       + "'winlogrotate notify test' - or 'winlogrotate notify reset' to clear the counter.",
+            });
+        }
+
+        return new NotifyDoctorDto
+        {
+            Enabled = settings.WouldSend,
+            Targets = settings.To.Count,
+            Proxy = string.IsNullOrWhiteSpace(settings.Proxy) ? null : settings.Proxy,
+            CertificatePinned = settings.ServerCertThumbprint is { Length: > 0 },
+            StoredCredentials = stored,
+            SuppressedChannels = suppressed,
+        };
     }
 
     private static string Exists(bool present) => present ? "" : "  (missing)";

@@ -57,7 +57,7 @@ public static class DiagnosticCode
     public const string NotifyStateUnreadable = "LR5004";
 
     /// <summary>The notification phase was cut short, or skipped, to protect the run's
-    /// deadline. See the remark on 0x41306 in docs/notifications.md.</summary>
+    /// deadline. See the remark on 0x41306 in docs/diagnostics.md.</summary>
     public const string NotifyBudgetClamped = "LR5005";
 
     // 9xxx - security. Never suppressed, never merely warned about.

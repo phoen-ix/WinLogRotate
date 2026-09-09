@@ -18,16 +18,16 @@ internal static class ExportTaskCommand
     {
         var paths = InstallPaths.Resolve(configDir);
 
-        var xml = TaskXmlBuilder.Build(new TaskDefinition
+        // The same mapping the registrar uses, so an exported task is the task that would be
+        // registered. This used to build its own TaskDefinition and reach Arguments through a
+        // throwaway HostInstallOptions with an empty executable path, which meant the two could
+        // drift in exactly the way nobody would think to check.
+        var xml = TaskXmlBuilder.Build(new HostInstallOptions
         {
             ExecutablePath = Environment.ProcessPath ?? @"C:\Program Files\WinLogRotate\winlogrotate.exe",
-            Arguments = new HostInstallOptions
-            {
-                ExecutablePath = "",
-                ConfigDirectory = paths.Root,
-            }.Arguments,
+            ConfigDirectory = paths.Root,
             Account = RunAccount.System,
-        });
+        }.ToTaskDefinition());
 
         ctx.Output.Line(xml);
         return ctx.Output.Complete("host export-task", ExitCode.Ok, new ExportTaskResult { Xml = xml });

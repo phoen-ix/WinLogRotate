@@ -66,6 +66,87 @@ public sealed class NotificationPlannerTests : IDisposable
             Run(jobs ?? ["iis"]) with { MutedJobs = muted }, diagnostics,
             Settings(), state, at ?? _now);
 
+    // ---- the run scope ----------------------------------------------------------------------
+
+    /// <summary>
+    /// A clean run records the run scope healthy, even though there is nothing to report.
+    /// </summary>
+    /// <remarks>
+    /// Every other job earns its place by being observed. Nothing observes the run scope, so
+    /// before this it entered the loop only when it already had a finding - which meant its
+    /// recorded outcome stayed Unknown for ever on a healthy machine, and the two tests below
+    /// were both broken.
+    /// </remarks>
+    [Fact]
+    public void ACleanRunRecordsTheRunScopeAsHealthy()
+    {
+        var state = State();
+
+        Plan([], state).Baseline.ShouldContain(b => b.Job == NotifyStateDocument.RunScope);
+    }
+
+    /// <summary>
+    /// The FIRST configuration or security finding on a machine is reported that night.
+    /// </summary>
+    /// <remarks>
+    /// It used to be recorded as a first-run baseline and not sent, surfacing only when
+    /// remind_after elapsed - seven days late by default, for the band that carries "your
+    /// configuration directory is writable by every local user".
+    /// </remarks>
+    [Fact]
+    public void TheFirstRunScopedFindingIsSentRatherThanBaselined()
+    {
+        var state = State();
+
+        // One healthy run, as any working machine has before something breaks.
+        foreach (var (job, next) in Plan([], state).Baseline)
+        {
+            state.SetJob(job, next);
+        }
+
+        var insecure = Bad(job: null!, code: DiagnosticCode.ConfigDirectoryInsecure,
+            severity: Severity.Critical, path: @"C:\ProgramData\WinLogRotate\conf.d", native: 0);
+
+        var message = Plan([insecure], state, at: _now.AddDays(1))
+            .Messages.ShouldHaveSingleItem();
+
+        message.Job.ShouldBe(NotifyStateDocument.RunScope);
+        message.Reason.ShouldBe(NotifyReason.NewFailure);
+    }
+
+    /// <summary>
+    /// And its recovery is reported too, which needs the scope present when it has no findings.
+    /// </summary>
+    /// <remarks>
+    /// This is the sharper half of the same bug: with the finding gone there are no run-scoped
+    /// diagnostics at all, so nothing put the scope back into the set to notice it had gone
+    /// green. "I fixed the ACL and never got the all-clear" is indistinguishable from "the
+    /// alerting is broken".
+    /// </remarks>
+    [Fact]
+    public void ARunScopedFindingThatIsFixedReportsItsRecovery()
+    {
+        var state = State();
+        state.SetJob(NotifyStateDocument.RunScope, Failing(_now.AddDays(-2), "whatever"));
+
+        var message = Plan([], state).Messages.ShouldHaveSingleItem();
+
+        message.Job.ShouldBe(NotifyStateDocument.RunScope);
+        message.Reason.ShouldBe(NotifyReason.Recovered);
+    }
+
+    /// <summary>A machine already broken on its first run is still baselined and still silent.</summary>
+    [Fact]
+    public void AMachineBrokenOnTheVeryFirstRunIsStillQuiet()
+    {
+        // The property lives in Decide, not in the job set, and always evaluating the run scope
+        // must not have moved it.
+        var insecure = Bad(job: null!, code: DiagnosticCode.ConfigDirectoryInsecure,
+            severity: Severity.Critical, path: @"C:\conf.d", native: 0);
+
+        Plan([insecure], State()).Messages.ShouldBeEmpty();
+    }
+
     // ---- the truth table -------------------------------------------------------------------
 
     [Fact]
@@ -536,8 +617,10 @@ public sealed class NotificationPlannerTests : IDisposable
         var before = Failing(_now.AddDays(-5), "abc");
         state.SetJob("iis", before);
 
+        // Named rather than "the single item": the run scope is always recorded too, and this
+        // test is about what muting does to the job.
         var recorded = PlanMuting([Bad()], state, muted: ["iis"], at: _now)
-            .Baseline.ShouldHaveSingleItem();
+            .Baseline.Single(b => b.Job == "iis");
 
         recorded.State.Outcome.ShouldBe(before.Outcome);
         recorded.State.Fingerprint.ShouldBe(before.Fingerprint);
@@ -550,7 +633,10 @@ public sealed class NotificationPlannerTests : IDisposable
     public void MutingAJobWithNoHistoryWritesNothing()
     {
         // Otherwise a machine in opt-in mode with 200 jobs grows 200 useless entries per run.
-        PlanMuting([Bad()], State(), muted: ["iis"]).Baseline.ShouldBeEmpty();
+        // The run scope is exempt and always recorded - that is what makes the first genuine
+        // configuration finding a new failure rather than a baseline.
+        PlanMuting([Bad()], State(), muted: ["iis"]).Baseline
+            .ShouldNotContain(b => b.Job == "iis");
     }
 
     [Fact]

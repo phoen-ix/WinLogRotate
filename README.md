@@ -88,8 +88,13 @@ server. Only the GUI needs the .NET runtime, and only in the `-min` builds.
 | [`WinLogRotate-min.zip`](../../releases/latest) | 4.2 MB | Only for the GUI |
 | [`WinLogRotate.zip`](../../releases/latest) | 45.7 MB | **No** |
 
-Inside a portable zip: `winlogrotate.exe` (9.2 MB, native, zero dependencies) and
-`winlogrotate-gui.exe` (0.8 MB). `SHA256SUMS.txt` covers every download.
+Inside a portable zip: `winlogrotate.exe` (native, zero dependencies) and `winlogrotate-gui.exe`.
+`SHA256SUMS.txt` covers every download.
+
+> **Sizes above are from the 0.0.5 release and are a guide, not a promise** — the release page has
+> the actual bytes. The CLI grew about 1.3 MB in 0.3.0 when notification delivery landed, so every
+> figure here shifts by roughly that. They were wrong before anyone noticed because nothing
+> recorded the real number; CI now writes it to each run's summary.
 
 Installing per-machine puts config in `C:\ProgramData\WinLogRotate\`, registers a scheduled
 task that runs as SYSTEM, and **locks that directory down to SYSTEM and Administrators**. That
@@ -137,6 +142,9 @@ WinForms doesn't run on Server Core and that's where IIS usually lives.
 | `scan` | Find producers that roll but never delete |
 | `journal` | Everything compressed, moved or deleted, and why |
 | `doctor` | Every path, permission and schedule at once |
+| `notify show` / `status` | What is configured to report failures, and what it last decided |
+| `notify test` / `reset` | Send a real test message; clear a suppressed channel |
+| `secret set` / `list` / `remove` / `test` | The encrypted credential store |
 | `update check` | Whether a newer release exists |
 
 </details>
@@ -179,12 +187,20 @@ destroy comments on write.
 named event, plus `http:`, `command:` and raw scripts. Every hook has a timeout, and hooks are
 refused outright if the config directory isn't locked down.
 
+The same target grammar reports failures. `[notify]` sends **one message per run, only when
+something changed**, over `smtp:`, `http:`, `pushover:` or `eventlog:` — with credentials in an
+encrypted store rather than in the config file, a wall-clock budget so alerting can never delay a
+rotation, and a breaker so one dead webhook cannot silence the rest. `winlogrotate notify test`
+proves a channel works before you need it. See [notifications](docs/notifications.md).
+
 > **Hooks need a per-machine install.** They run commands, and that is only safe from a directory
 > an ordinary account cannot write. A per-user install keeps its configuration in
 > `%APPDATA%\WinLogRotate\`, which its owner can necessarily write — so hooks are refused there,
 > permanently and by design. Nothing is wrong with such an install and there is nothing to repair;
 > `winlogrotate doctor` says so rather than reporting it as a fault. Everything else — rotation,
-> compression, retention, scheduling — works exactly the same either way.
+> compression, retention, scheduling, and reporting failures by email or webhook — works exactly
+> the same either way. The one further exception is `eventlog:`, which needs a source only an
+> administrator can register.
 
 Coming from Linux? `winlogrotate import \\srv\etc\logrotate.d\nginx` converts it. One way, and
 nothing is guessed: `kill -USR1` becomes `service:paramchange:nginx`, but anything that can't be
@@ -222,7 +238,7 @@ the live IIS log never is.
 
 There is deliberately no separate application log file. Diagnostics go to stdout for whoever
 ran the command and to the Windows Event Log at Warning and above (see
-[diagnostics](docs/notifications.md) for the event-ID table); the record of what was
+[diagnostics](docs/diagnostics.md) for the event-ID table); the record of what was
 *done* is the journal. A third half-used sink would be one more thing to rotate and one more
 place to look.
 
@@ -282,10 +298,15 @@ from elevation rather than from the install.
   unexercised.
 - **English locale, no domain, no UNC paths, no IIS installed.**
 - **The Windows Service host is not implemented.** `host use service` says so and refuses.
+- **No notification has ever been delivered on Windows by CI.** The senders and their whole
+  decision layer are exercised on the Linux leg against local listeners and fakes, but no runner
+  has yet sent real mail, reached a real webhook or written an `eventlog:` digest. `command:`,
+  `service:` and `event:` targets are not delivered at all — they run code, and land with the
+  configuration-directory check that makes that safe.
 
 ### What is thoroughly tested, everywhere
 
-289 tests, and the platform-neutral half is where the subtle bugs live:
+636 tests, and the platform-neutral half is where the subtle bugs live:
 
 - logrotate's scheduling rules, including that `--force` does **not** override `notifempty`,
   `minsize` or `minage` — one test per gate
@@ -297,6 +318,10 @@ from elevation rather than from the install.
 - the TOML round-trip, and that generated imports parse back through our own binder
 - the gzip output, cross-checked against GNU `gzip`: `gzip -t` passes and `gunzip -N` restores
   the original name and timestamp
+- notification delivery: retries, the wall-clock budget and the breaker, all driven by a fake
+  clock against fake transports, so no test sleeps and none opens a socket — plus the rule that a
+  message counts as reported only when every channel that was tried accepted it
+- that a templated webhook body cannot be broken out of by a log file called `a"b.log`
 
 Use `--dry-run` first, and prefer a machine you don't mind breaking.
 

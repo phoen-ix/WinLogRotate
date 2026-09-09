@@ -35,6 +35,12 @@ public sealed record InstallPaths
     public string JournalDirectory => Path.Combine(Root, "journal");
     public string RunDirectory => Path.Combine(Root, "run");
 
+    /// <summary>Notification history: what has been reported, and to which channels.</summary>
+    public string NotifyStateFile => Path.Combine(Root, "notify.json");
+
+    /// <summary>The encrypted secret store. Created by <c>secret set</c>, never by the installer.</summary>
+    public string SecretsFile => Path.Combine(Root, "secrets.dat");
+
     // There is deliberately no LogFile. Diagnostics go to stdout for whoever ran the command
     // and to the Windows Event Log at Warning and above; the record of what was actually done
     // to files is the journal, which is queryable and bounded. A third half-used sink would be

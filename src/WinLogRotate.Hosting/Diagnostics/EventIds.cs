@@ -11,7 +11,7 @@ namespace WinLogRotate.Hosting.Diagnostics;
 /// documented event ID, and a table that changes between versions is worse than no table at
 /// all: it silently stops matching, and the alert that was configured to page someone simply
 /// never fires again. Same discipline as <see cref="DiagnosticCode"/> itself, for the same
-/// reason. The published copy is in <c>docs/notifications.md</c>.
+/// reason. The published copy is in <c>docs/diagnostics.md</c>.
 /// </para>
 /// <para>
 /// <strong>Every ID must be between 1 and 1000.</strong> That is not a style choice. The
@@ -38,6 +38,18 @@ public static class EventIds
     public const int RunCompletedQuiet = 100;
     public const int RunCompletedWithChanges = 101;
     public const int RunCompletedWithFailures = 110;
+
+    /// <summary>
+    /// A notification digest delivered to an <c>eventlog:</c> target.
+    /// </summary>
+    /// <remarks>
+    /// Deliberately distinct from the 150-154 diagnostics, which report on the notification
+    /// machinery itself. This one carries the message an operator asked to be told, so an alert
+    /// rule can name it without also firing on "a webhook could not be reached". It has no
+    /// <see cref="DiagnosticCode"/> for the same reason the run outcomes above have none: nothing
+    /// went wrong.
+    /// </remarks>
+    public const int NotificationDigest = 155;
 
     public static int For(string code) => code switch
     {

@@ -110,6 +110,18 @@ public sealed record NotifyProvider
     public string ContentType { get; init; } = "application/json";
     public string? Body { get; init; }
 
+    /// <summary>
+    /// Characters this endpoint will accept, or null for no limit.
+    /// </summary>
+    /// <remarks>
+    /// Needed because a webhook can point anywhere, and the destinations that matter disagree:
+    /// Discord discards anything over <see cref="MessageComposer.DiscordLimit"/> characters and
+    /// ntfy over <see cref="MessageComposer.NtfyLimit"/> - <b>silently</b>, so an unset limit does
+    /// not fail loudly, it simply never arrives. Unlimited by default because truncating an
+    /// operator's diagnostic is a real cost and most endpoints do not need it.
+    /// </remarks>
+    public int? MaxMessage { get; init; }
+
     // ---- shared --------------------------------------------------------------------------
 
     /// <summary>The SMTP password, or any other single credential this provider needs.</summary>

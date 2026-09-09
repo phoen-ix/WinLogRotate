@@ -53,6 +53,87 @@ public class TaskXmlBuilderTests
     public void ThereIsARealTimeLimit() =>
         Setting(Build(), "ExecutionTimeLimit").ShouldBe("PT1H");
 
+    /// <summary>
+    /// The task's time limit and the deadline it passes to the run must denote the same span.
+    /// </summary>
+    /// <remarks>
+    /// The notification phase reserves time against <c>--run-deadline</c> so it can stop short of
+    /// being killed. If the flag and the XML element disagree, it reserves against a limit that is
+    /// not the real one - which is worse than not reserving at all, because the run looks handled
+    /// and is still terminated at <c>0x41306</c>, indistinguishable from an operator pressing Stop.
+    /// Both come from <c>HostInstallOptions.ExecutionTimeLimit</c>; this reads them back out of the
+    /// generated XML so that stops being an assumption.
+    /// </remarks>
+    [Theory]
+    [InlineData(1)]
+    [InlineData(4)]
+    public void TheRegisteredTaskAndItsDeadlineFlagAgree(int hours)
+    {
+        var options = new HostInstallOptions
+        {
+            ExecutablePath = @"C:\Program Files\WinLogRotate\winlogrotate.exe",
+            ConfigDirectory = @"C:\ProgramData\WinLogRotate",
+            ExecutionTimeLimit = TimeSpan.FromHours(hours),
+        };
+
+        var doc = Build(options.ToTaskDefinition());
+
+        var limit = System.Xml.XmlConvert.ToTimeSpan(Setting(doc, "ExecutionTimeLimit"));
+
+        var arguments = doc.Root!.Element(Ns + "Actions")!
+            .Element(Ns + "Exec")!.Element(Ns + "Arguments")!.Value;
+
+        var flag = arguments.Split("--run-deadline ", StringSplitOptions.None)[1].Split(' ')[0];
+
+        TimeSpan.Parse(flag, System.Globalization.CultureInfo.InvariantCulture).ShouldBe(limit);
+        limit.ShouldBe(TimeSpan.FromHours(hours));
+    }
+
+    /// <summary>
+    /// <c>host export-task</c> must produce the task <c>host use task</c> would register.
+    /// </summary>
+    /// <remarks>
+    /// The exporter used to build its own TaskDefinition and reach the argument string through a
+    /// throwaway HostInstallOptions with an empty executable path, so a field added to one and not
+    /// the other produced an exported task that differed from the registered one in exactly the
+    /// way nobody would think to check. There is one mapping now, and this says so.
+    /// </remarks>
+    [Fact]
+    public void ExportingATaskAndRegisteringOneUseTheSameMapping()
+    {
+        var options = new HostInstallOptions
+        {
+            ExecutablePath = @"C:\Program Files\WinLogRotate\winlogrotate.exe",
+            ConfigDirectory = @"C:\ProgramData\WinLogRotate",
+        };
+
+        var definition = options.ToTaskDefinition();
+
+        definition.Arguments.ShouldBe(options.Arguments);
+        definition.ExecutionTimeLimit.ShouldBe(options.ExecutionTimeLimit);
+        definition.ExecutablePath.ShouldBe(options.ExecutablePath);
+    }
+
+    /// <summary>
+    /// An existing installation keeps its old command line until <c>host repair</c> runs.
+    /// </summary>
+    /// <remarks>
+    /// So the flag has to be optional, and its absence has to mean "no clamp" rather than "no
+    /// time" - otherwise upgrading would silence notifications on every machine until somebody
+    /// re-registered the task.
+    /// </remarks>
+    [Fact]
+    public void AnAbsentDeadlineMeansNoClampRatherThanNoTime()
+    {
+        var (allowed, clamped) = WinLogRotate.Core.Notify.Delivery.NotifyBudget.For(
+            TimeSpan.FromSeconds(30), deadline: null,
+            new DateTimeOffset(2026, 9, 9, 3, 0, 0, TimeSpan.Zero),
+            new DateTimeOffset(2026, 9, 9, 3, 59, 0, TimeSpan.Zero));
+
+        allowed.ShouldBe(TimeSpan.FromSeconds(30));
+        clamped.ShouldBeFalse();
+    }
+
     /// <summary>A free second line of defence behind the Global\ mutex.</summary>
     [Fact]
     public void OverlappingRunsAreRefusedByTheSchedulerToo() =>

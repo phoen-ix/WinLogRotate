@@ -95,6 +95,16 @@ jobs:
       # convenient JsonSerializer.Deserialize<T>. The floor catches a publish that silently
       # produced a framework-dependent apphost stub instead of a native image, which looks
       # like a wonderful size win right up until it fails on a machine with no runtime.
+      #
+      # The ceiling was 12 MB until milestone 10 added notification delivery, which cost a
+      # measured +1.30 MB (8.88 -> 10.18 MB, published linux-x64 on the same machine, at
+      # 8c64847 and at the merge). System.Net.Mail is the only new framework assembly;
+      # HttpClient and System.Text.Json were already in the image. Raised once, with the
+      # number, rather than reflexively after it went red - a canary nobody re-sets on purpose
+      # is decoration, and one raised the moment it fires is worse.
+      #
+      # The size is written to the run summary because it never used to be recorded anywhere,
+      # which is how the figure in README.md drifted for five releases without anyone noticing.
       - name: Size gate
         shell: pwsh
         run: |
@@ -102,8 +112,10 @@ jobs:
           if (-not (Test-Path $exe)) { throw "the AOT publish produced no $exe" }
           $mb = (Get-Item $exe).Length / 1MB
           "winlogrotate.exe = {0:N2} MB" -f $mb
+          "``winlogrotate.exe`` = **{0:N2} MB** (floor 2, ceiling 13)" -f $mb |
+            Out-File -Append $env:GITHUB_STEP_SUMMARY
           if ($mb -lt 2)  { throw ("{0:N2} MB is below the floor - this looks like an apphost stub, not a native image" -f $mb) }
-          if ($mb -gt 12) { throw ("{0:N2} MB is above the ceiling - something pulled in reflection" -f $mb) }
+          if ($mb -gt 13) { throw ("{0:N2} MB is above the ceiling - something pulled in reflection" -f $mb) }
 
       # Turns "zero dependencies" from a claim in the README into an assertion. A native
       # image may import from OS DLLs and nothing else; an hostfxr/hostpolicy import means
@@ -384,7 +396,7 @@ jobs:
             if ($e.Message -like '*The description for Event ID*') {
               throw ("Event ID $($e.Id) does not render. EventCreate.exe's message table covers " +
                      '1..1000 with a single insertion string and no categories - see ' +
-                     'docs/notifications.md. An alert rule on an event that renders like this ' +
+                     'docs/diagnostics.md. An alert rule on an event that renders like this ' +
                      'is worse than no event at all.')
             }
             if ($e.Id -lt 1 -or $e.Id -gt 1000) {

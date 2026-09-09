@@ -69,7 +69,7 @@ internal static class SecretCommand
         }
 
         var store = SecretStore.Load(
-            SecretsPath(paths), protector, platform.EntropyId, platform.MachineFingerprint);
+            paths.SecretsFile, protector, platform.EntropyId, platform.MachineFingerprint);
 
         if (Unusable(ctx, "secret set", store) is { } unusable)
         {
@@ -84,13 +84,13 @@ internal static class SecretCommand
         Journal(paths, name, "set");
 
         var rehardened = ReportEntropy(ctx, platform);
-        ctx.Output.Line($"Stored '{name}' in {SecretsPath(paths)}.");
+        ctx.Output.Line($"Stored '{name}' in {paths.SecretsFile}.");
         ctx.Output.Line($"Reference it from a job or provider as: @secret:{name}");
 
         return ctx.Output.Complete("secret set", ExitCode.Ok, new SecretResult
         {
             Verb = "set",
-            Path = SecretsPath(paths),
+            Path = paths.SecretsFile,
             Names = [name],
             EntropyRehardened = rehardened,
         });
@@ -104,7 +104,7 @@ internal static class SecretCommand
         }
 
         var paths = InstallPaths.Resolve(configDir);
-        var path = SecretsPath(paths);
+        var path = paths.SecretsFile;
 
         // provision: false - listing must never mint a key, and a reader has no business
         // holding write access to the one that protects everything already stored.
@@ -173,7 +173,7 @@ internal static class SecretCommand
         var paths = InstallPaths.Resolve(configDir);
         var protector = platform.CreateProtector(provision: false);
         var store = SecretStore.Load(
-            SecretsPath(paths), protector, platform.EntropyId, platform.MachineFingerprint);
+            paths.SecretsFile, protector, platform.EntropyId, platform.MachineFingerprint);
 
         if (!store.Contains(name))
         {
@@ -182,7 +182,7 @@ internal static class SecretCommand
                 Severity = Severity.Warning,
                 Code = DiagnosticCode.SecretMissing,
                 Message = $"There is no secret called '{name}'.",
-                Path = SecretsPath(paths),
+                Path = paths.SecretsFile,
                 Remedy = "Run 'winlogrotate secret list' to see what is stored.",
             });
             return ctx.Output.Complete<SecretResult>("secret remove", ExitCode.Errors, null);
@@ -197,7 +197,7 @@ internal static class SecretCommand
         return ctx.Output.Complete("secret remove", ExitCode.Ok, new SecretResult
         {
             Verb = "remove",
-            Path = SecretsPath(paths),
+            Path = paths.SecretsFile,
             Names = [name],
         });
     }
@@ -212,7 +212,7 @@ internal static class SecretCommand
         var paths = InstallPaths.Resolve(configDir);
         var protector = platform.CreateProtector(provision: false);
         var store = SecretStore.Load(
-            SecretsPath(paths), protector, platform.EntropyId, platform.MachineFingerprint);
+            paths.SecretsFile, protector, platform.EntropyId, platform.MachineFingerprint);
 
         if (!store.TryGet(name, out var value, out var error))
         {
@@ -229,7 +229,7 @@ internal static class SecretCommand
                     ? DiagnosticCode.SecretMissing
                     : DiagnosticCode.SecretStoreUnreadable,
                 Message = error ?? $"'{name}' could not be read.",
-                Path = SecretsPath(paths),
+                Path = paths.SecretsFile,
             });
             return ctx.Output.Complete<SecretResult>("secret test", ExitCode.Errors, null);
         }
@@ -242,7 +242,7 @@ internal static class SecretCommand
         return ctx.Output.Complete("secret test", ExitCode.Ok, new SecretResult
         {
             Verb = "test",
-            Path = SecretsPath(paths),
+            Path = paths.SecretsFile,
             Names = [name],
             Length = value.Length,
         });
@@ -280,7 +280,7 @@ internal static class SecretCommand
         }
 
         var store = SecretStore.Load(
-            SecretsPath(paths), protector, platform.EntropyId, platform.MachineFingerprint);
+            paths.SecretsFile, protector, platform.EntropyId, platform.MachineFingerprint);
 
         if (Unusable(ctx, "secret import", store) is { } unusable)
         {
@@ -337,21 +337,18 @@ internal static class SecretCommand
         }
 
         var rehardened = ReportEntropy(ctx, platform);
-        ctx.Output.Line($"Imported {names.Count} secret(s) into {SecretsPath(paths)}.");
+        ctx.Output.Line($"Imported {names.Count} secret(s) into {paths.SecretsFile}.");
 
         return ctx.Output.Complete("secret import", ExitCode.Ok, new SecretResult
         {
             Verb = "import",
-            Path = SecretsPath(paths),
+            Path = paths.SecretsFile,
             Names = names,
             EntropyRehardened = rehardened,
         });
     }
 
     // ---------------------------------------------------------------------------------------
-
-    private static string SecretsPath(InstallPaths paths) =>
-        Path.Combine(paths.Root, "secrets.dat");
 
     private static string? WhoAmI()
     {

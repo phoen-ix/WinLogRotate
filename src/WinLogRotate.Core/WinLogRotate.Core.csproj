@@ -40,7 +40,6 @@
     <InternalsVisibleTo Include="WinLogRotate.Windows.Tests" />
     <InternalsVisibleTo Include="WinLogRotate.Snapshot.Tests" />
     <InternalsVisibleTo Include="WinLogRotate.Hosting" />
-    <InternalsVisibleTo Include="WinLogRotate.Cli" />
   </ItemGroup>
 
 </Project>

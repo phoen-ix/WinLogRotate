@@ -1,131 +1,289 @@
-# Diagnostics and the Windows Event Log
+# Notifications
 
-WinLogRotate has no application log file of its own. There are three channels, and each exists
-for a different reader:
+Rotation is unattended, so the interesting question is not "did it work" but "who finds out when
+it stops". The `[notify]` table answers that. It reports **what a whole run did**, once per run,
+to whoever is on call - over email, a webhook, Pushover, or the Windows Event Log.
 
-| Channel | Reader |
-|---|---|
-| **stdout / stderr** | whoever typed the command |
-| **Windows Event Log** | whoever is monitoring the machine |
-| **the journal** (`winlogrotate journal`) | whoever is asking what happened to a specific file |
+This is not logrotate's `mail`. Upstream posts you the rotated log file itself, per job; we report
+the run. See [logrotate compatibility](logrotate-compatibility.md#mail-reports-the-run-not-the-log)
+for why.
 
-A fourth, half-used sink would be one more thing to rotate and one more place to look.
+## The shortest thing that works
 
-## What reaches the Event Log
-
-Everything at **Warning and above**, written to `Application` under the source `WinLogRotate`.
-Informational progress does not: a system log is not where progress belongs.
-
-The source is registered by the installer, because creating one requires administrator rights
-and the unelevated CLI would otherwise fail on its first write. **A per-user install registers
-nothing**, deliberately — on such a machine nothing is written and nothing is reported as
-broken. `winlogrotate doctor` tells you which state you are in.
-
-### The `--json` exception
-
-Invocations that pass `--json` or `--json-stream` write **nothing** to the Event Log. The caller
-is reading the output itself, and the caller is usually the GUI — which polls `doctor --json`
-from several pages on every refresh. On a machine with a loosened configuration directory that
-is a `Critical` diagnostic, so mirroring it would write an event every time somebody clicked a
-tab. That is exactly how an administrator concludes a source is noise and filters it away,
-taking the one event that mattered with it.
-
-The scheduled task runs `run --config-dir ... --lock-held-exit 0` with no `--json`, so the run
-that actually needs a record still gets one.
-
-Pass `--no-event-log` to suppress it explicitly.
-
-### Volume
-
-At most **50 events per invocation**, after which a single further event says so and the rest
-are dropped. A job whose directory has become unreachable can otherwise produce a diagnostic per
-file. The full record is always in the journal.
-
-## Event IDs
-
-**This table is a contract.** IDs are append-only and are never renumbered or reused: an alert
-rule names an ID, and nothing tells its author when that ID silently stops being produced. A
-unit test asserts that every `DiagnosticCode` maps to exactly one ID here, that no two share
-one, and that all of them fall in the range below.
-
-> **Why 1–1000.** The installer registers
-> `EventMessageFile = %SystemRoot%\System32\EventCreate.exe`, whose message table defines that
-> range with a single insertion string per entry. An ID outside it renders in Event Viewer as
-> *"The description for Event ID N … cannot be found"*. For the same reason every event carries
-> exactly one insertion string holding the whole message, and the category is always 0.
-
-The **Type** column is the type these events normally carry. It is derived from the severity of
-the diagnostic at the time, and a few codes legitimately appear at more than one - a refused path
-is an Error from the configuration validator and from the runtime guard, but an override of the
-same guard is a Warning. The **ID** never varies, which is what an alert rule should match on.
-
-| ID | Type | Condition | Code |
-|---:|---|---|---|
-| 100 | Information | Run completed, nothing was due | — |
-| 101 | Information | Run completed with changes | — |
-| 110 | Error | Run completed with failures | — |
-| 111 | Error | Administrator rights are required | `LR1001` |
-| 112 | Error | The configuration could not be read | `LR1002` |
-| 113 | Error | The configuration is invalid; nothing was attempted | `LR1003` |
-| 114 | Warning | No jobs are configured | `LR1004` |
-| 115 | Error | The verb needs a platform this is not | `LR1005` |
-| 120 | Warning | A job was skipped | `LR2001` |
-| 121 | Warning | A log file was missing | `LR2002` |
-| 122 | Warning | A log file was empty | `LR2003` |
-| 123 | Warning | Not due yet | `LR2004` |
-| 124 | Warning | First run: a baseline was recorded | `LR2005` |
-| 130 | Error | A rotation failed | `LR3001` |
-| 131 | Error | The file was locked by another process | `LR3002` |
-| 132 | Warning | The configured lock strategy was unavailable | `LR3003` |
-| 133 | Warning | A previous run abandoned the rotation mutex | `LR3101` |
-| 134 | Error | NUL-fill detected; `copytruncate` quarantined for that path | `LR3102` |
-| 140 | Warning | No run host is registered | `LR4001` |
-| 150 | Warning | A notification target is unparseable or missing its credential | `LR5001` |
-| 151 | Warning | A notification channel could not be reached | `LR5002` |
-| 152 | Warning | A notification channel is suppressed after repeated failures | `LR5003` |
-| 153 | Warning | The notification state could not be read; change detection starts over | `LR5004` |
-| 154 | Warning | The notification phase was cut short to protect the run's deadline | `LR5005` |
-| 141 | Warning | The registered run host has drifted from its definition | `LR4002` |
-| 142 | Error | Registering the run host failed | `LR4003` |
-| 190 | Error | The configuration directory is writable by a non-administrator | `LR9001` |
-| 191 | Error | A dangerous path was refused | `LR9002` |
-| 192 | Error | A hook was refused | `LR9003` |
-| 193 | Error | A reparse point was refused | `LR9004` |
-| 194 | Error | A configuration names a secret that is not stored | `LR9005` |
-| 195 | Warning | A credential is written in a world-readable configuration file | `LR9006` |
-| 196 | Error | The secret store, or the key protecting it, is unsafe or was repaired | `LR9007` |
-| 999 | Warning | Unclassified, or the per-invocation event cap was reached | — |
-
-`Severity.Critical` is written as an Error event: the registered `TypesSupported` is 7, which is
-Error, Warning and Information, and there is no fourth type. The distinction survives in the
-event ID and in the message text.
-
-## Reading them
-
-```powershell
-# Everything this product has written
-Get-WinEvent -FilterHashtable @{ LogName = 'Application'; ProviderName = 'WinLogRotate' }
-
-# Just the security band
-Get-WinEvent -FilterHashtable @{ LogName='Application'; ProviderName='WinLogRotate'; Id=190..193 }
-
-# Did last night's run fail?
-Get-WinEvent -FilterHashtable @{
-    LogName='Application'; ProviderName='WinLogRotate'; Id=110; StartTime=(Get-Date).AddDays(-1)
-}
+```toml
+[notify]
+to = ["eventlog:"]
 ```
 
-If a message reads *"The description for Event ID … cannot be found"*, the event source is
-registered but its `EventMessageFile` value is missing or wrong. Reinstall, or run
-`winlogrotate host repair`.
+No credential, no network, nothing to break. Failures land in the Application log under event ID
+**155**, and any monitoring already watching that log picks them up. Every other target is a
+refinement of this one.
 
-## Why not `LastTaskResult`?
+## What decides whether anything is sent
 
-Because it cannot be trusted to mean what it appears to mean. The registered task passes
-`--lock-held-exit 0`, so a run that did nothing because another run held the gate reports
-success — which is correct, but means `0x0` does not prove work happened. Worse,
-`ExecutionTimeLimit` terminating a task reports `0x41306`, which is indistinguishable from an
-operator pressing **Stop**.
+Three questions, in order. `winlogrotate notify show` prints the answers, and
+`winlogrotate notify status` prints what it decided last time.
 
-`host status`, the GUI and this log all read the journal instead. That is an invariant, because
-reading `LastTaskResult` is the tempting shortcut.
+| | Setting | Default |
+|---|---|---|
+| Is it worth reporting? | `threshold` | `warning` and above |
+| Is it new? | `on` | `change` |
+| Has it been quiet too long? | `remind_after` | `7d` |
+
+`on = "change"` is the one that makes this usable. A job that fails every night for a month
+produces one message, then a reminder each week - not thirty. Set `on = "every"` if you have an
+aggregator that wants the raw stream, and `on = "never"` to keep the configuration while turning
+delivery off.
+
+Three things are worth knowing because they surprise people:
+
+- **The first run says nothing.** Outcomes are recorded and nothing is sent, so installing this on
+  a machine that is already broken does not produce a wall of alerts about problems that predate
+  the install. That is how a source gets muted in week one.
+- **Recoveries are reported too.** A job going green closes the message already in the inbox.
+- **A job can opt out** with `notify = false`, for the flaky NAS share nobody will fix. It silences
+  that job's *rotation* failures, not its configuration problems - those are run-scoped.
+
+## Targets
+
+`to` takes a list. Each entry is either a **provider name** - a `[notify.KIND.NAME]` table
+elsewhere in the file - or an **inline target**, written as `scheme:destination`.
+
+| Scheme | Example | Needs |
+|---|---|---|
+| `eventlog:` | `eventlog:` | Windows, and a per-machine install |
+| `http:` / `https:` | `https://hooks.example.com/services/T/B/xxxx` | nothing |
+| `smtp:` | `smtp:ops@example.com` | a `[notify.email.*]` provider for the relay |
+| `pushover:` | `pushover:uQiRzp6twxx` | a `[notify.pushover.*]` provider for the token |
+
+`command:`, `service:` and `event:` parse today and **are not delivered by this build**. They run
+code on this machine, so they land together with the configuration-directory check that makes that
+safe. A target naming one produces `LR5001` every run rather than silence - a hook that quietly
+does nothing is indistinguishable from a hook that ran.
+
+## Webhooks
+
+The general-purpose target. Slack, Teams, Discord and ntfy are all one of these.
+
+```toml
+[notify]
+to = ["webhook.slack"]
+
+[notify.webhook.slack]
+url  = "@secret:slack-hook"
+body = '{"text": "{subject}\n\n{body}"}'
+```
+
+The URL is stored as a credential, not written in the file, because **a webhook URL *is* the
+credential** - its entropy is in its path, and anyone holding it can post. `winlogrotate notify
+show` prints `secret:slack-hook`, never the value.
+
+`body` is a template. These placeholders are substituted:
+
+`{subject}` `{body}` `{severity}` `{job}` `{machine}` `{reason}` `{run}` `{fingerprint}`
+
+Every substituted value is escaped for the declared `content_type` before it is placed, so a log
+file called `a"b.log` cannot end a JSON string early or add fields. The template supplies the
+quotes; you do not escape anything yourself. Omit `body` entirely and the whole set is posted as a
+flat JSON object instead.
+
+| Key | Default | Notes |
+|---|---|---|
+| `url` | — | required; use `@secret:NAME` |
+| `method` | `POST` | |
+| `content_type` | `application/json` | decides the escaping: JSON, form, XML, or none |
+| `body` | unset | unset means a flat JSON object of every field |
+| `max_message` | unlimited | see below |
+
+**`max_message` matters for Discord and ntfy**, which discard anything longer *silently* - so an
+unset limit does not fail loudly, the message simply never arrives. Discord accepts 2000
+characters, ntfy 4096. Truncation drops whole lines from the end and always keeps the head and the
+"go and look" footer.
+
+## Email
+
+```toml
+[notify]
+to = ["email.relay"]
+
+[notify.email.relay]
+host = "smtp.internal.example"
+port = 25
+from = "winlogrotate@example.com"
+to   = ["ops@example.com"]
+```
+
+That is the common case on a Windows estate: an internal relay that authorises by IP and needs no
+credential at all.
+
+| Key | Default | Notes |
+|---|---|---|
+| `host` / `port` | — / `25` | |
+| `auth` | `none` | `none`, `integrated`, `login` |
+| `tls` | `opportunistic` | `none`, `opportunistic`, `required` |
+| `delivery` | `network` | or `pickup` |
+| `pickup_directory` | — | required for `delivery = "pickup"` |
+| `from` / `to` | — | `to` combines with the address in an `smtp:` target |
+| `username` / `password` | — | `password` should be `@secret:NAME` |
+| `subject_prefix` | — | prepended, for inbox rules |
+
+**Prefer the options that store nothing.** `delivery = "pickup"` drops a file into an IIS SMTP or
+Exchange pickup directory: no credential, no network call, and therefore no timeout that can delay
+a rotation. `auth = "integrated"` presents the machine account (`DOMAIN\HOST$`) on a domain-joined
+relay. `winlogrotate notify show` marks providers that need nothing stored.
+
+### TLS
+
+`opportunistic` attempts STARTTLS and, if the relay does not offer it, sends in the clear **and
+says so** with an `LR5001` naming the host. A downgrade nobody is told about is not opportunistic
+encryption, it is an unencrypted connection with a reassuring setting next to it. Use
+`tls = "required"` to refuse instead.
+
+### Microsoft 365 has a deadline
+
+`auth = "login"` against `smtp.office365.com` **stops working at the end of December 2026**, when
+Microsoft disables basic authentication for SMTP. The .NET SMTP client has no OAuth2 and cannot be
+made to work with it, so this is not something a future release fixes.
+
+Nothing else is affected - internal relays, IP-authorised relays, pickup directories and
+`integrated` never used basic auth. If your only mail path is Microsoft 365 with a password, use a
+webhook, or relay through a local server that holds the credential itself.
+
+## Pushover
+
+```toml
+[notify]
+to = ["pushover.oncall"]
+
+[notify.pushover.oncall]
+token    = "@secret:pushover-token"
+user_key = "@secret:pushover-user"
+priority = 1
+```
+
+Messages are truncated to Pushover's 1024-character limit before sending, because Pushover discards
+longer ones without telling you.
+
+## Credentials
+
+Four ways to name one. The indirection matters more than the encryption behind it: a configuration
+file saying `password = "@secret:relay"` is safe to paste into a support ticket, commit to a
+deployment repository, or screenshot - which is how credentials actually escape.
+
+| Written as | Read from | |
+|---|---|---|
+| `@secret:NAME` | the encrypted store | **preferred**; `winlogrotate secret set NAME` |
+| `@env:NAME` | the environment | for containers and CI |
+| `anything else` | the file itself | warns every run (`LR9006`) |
+| `@command:...` | a vault, by running it | **not delivered by this build** - refused, not ignored |
+
+The store is DPAPI machine-scope with per-install entropy, readable only by SYSTEM and
+Administrators, and it does not survive being copied to another machine - by design. `@@` escapes a
+literal that really does start with `@`.
+
+**A credential that cannot be resolved drops the whole target**, with an `LR5001` naming the field
+and the reason. It is never attempted anonymously: a relay that accepts unauthenticated mail would
+let the send succeed, and you would believe authentication was working until the day it tightened.
+
+**Uninstalling keeps the store.** `secrets.dat` survives an uninstall unless `/PURGEDATA` is passed,
+so an in-place upgrade does not lose your passwords - and so a decommissioned machine still has them
+on disk. Pass `/PURGEDATA`, or delete the data directory, when you retire one.
+
+## Proxies and certificate pinning
+
+```toml
+[notify]
+proxy    = "http://proxy.example.com:3128"
+no_proxy = ["internal.example.com"]
+server_cert_thumbprint = "9F:86:D0:81:88:4C:7D:65..."
+```
+
+`proxy = "none"` forces direct connections; unset uses the machine's own configuration. Entries in
+`no_proxy` match the host and its subdomains. Single-label hosts and hosts in this machine's own
+domain bypass the proxy without being listed, as they do everywhere else.
+
+`server_cert_thumbprint` is a SHA-256 of the certificate you expect, in any punctuation. When set,
+**only** that certificate is accepted - which is what lets an internal CA or a self-signed relay
+work without disabling verification. It applies to HTTPS, Pushover and SMTP alike.
+
+**There is deliberately no `insecure` option**, and there will not be one. Such a flag is set once
+during an incident and never unset. Pinning is the supported answer to "my relay's certificate does
+not validate".
+
+## Failure, and what it costs you
+
+Delivery never changes a run's exit code. The rotation already happened, and monitoring keyed on
+exit codes must not learn about a webhook outage.
+
+**A message counts as reported only when every channel that was attempted accepted it.** With
+`to = ["eventlog:", "email.relay"]`, an Event Log write succeeding does not mean anyone was told -
+so a mail outage does not silently mark the incident as old news and leave you never emailed.
+
+That would deadlock on a permanently broken channel, so the breaker resolves it: after
+`breaker_after` failed runs (5 by default) a channel is suppressed for a cooldown that doubles each
+time, and a **suppressed channel no longer blocks**. In practice one broken destination costs about
+five duplicate alerts on the healthy ones, then everything converges. `notify status` shows which
+channels are suppressed; `notify reset` clears one.
+
+| Setting | Default | |
+|---|---|---|
+| `budget` | `30s` | wall clock for the **whole** phase, not per target |
+| `retries` | `2` | per channel, spent out of that same budget |
+| `breaker_after` | `5` | failed runs before a channel is suppressed |
+| `breaker_cooldown` | `5` | runs suppressed, doubling each time |
+| `redact` | `[]` | strings masked out of every message |
+
+The budget is shared evenly between channels, so one unreachable relay cannot spend it all and
+leave the working channels unattempted. It is also clamped by the run's own deadline: the scheduled
+task allows one hour, and a rotation that has used 59 of them gets a notification phase short
+enough to finish first. Being killed at the limit reports `0x41306`, which is indistinguishable
+from an operator pressing **Stop** - so the run's only machine-readable outcome would say it was
+terminated when in fact it succeeded. `LR5005` reports the clamp, and nothing is recorded as sent.
+
+Only `4xx`-class rejections and connection failures are treated differently: `400`, `401`, `403`
+and `404` are never retried, because repeating a wrong request is a slower way to be wrong and,
+against a rate-limited endpoint, is how a misconfiguration becomes a lockout.
+
+## Checking it works
+
+```
+winlogrotate notify show     # what is configured, and what is missing
+winlogrotate notify test     # send a real message to every channel, now
+winlogrotate notify status   # what was last decided, and what is suppressed
+winlogrotate notify reset    # clear a suppressed channel
+```
+
+`notify test` **records nothing** - no history, no breaker counters, no state - so running it can
+never change what tonight's run decides. It also ignores an open breaker and says so, because the
+command you reach for to check whether a channel is fixed must not be the one that refuses to look.
+
+`winlogrotate doctor` reports the same facts without opening a socket, which is why it is safe to
+poll.
+
+## Per-machine and per-user installs
+
+Everything above works on both. The exceptions:
+
+- **`eventlog:` needs a per-machine install.** Registering an Event Log source needs administrator,
+  and a per-user install deliberately registers nothing. The target reports this rather than failing
+  quietly.
+- **Hooks that run code need one too**, for the same reason they always have: a configuration
+  directory its owner can write is a configuration directory that can run programs as SYSTEM.
+
+Nothing about email, webhooks or Pushover is restricted - a per-user install can report perfectly
+well. But a per-user configuration directory is writable by its owner, so a credential written in
+the file rather than stored (`LR9006`) is readable by that account too.
+
+## Diagnostic codes
+
+| Code | Event | Means |
+|---|---:|---|
+| `LR5001` | 150 | A target is unparseable, unsupported, or its credential could not be read |
+| `LR5002` | 151 | A channel could not be reached. Never an error |
+| `LR5003` | 152 | A channel is suppressed after repeated failures |
+| `LR5004` | 153 | Notification history was unreadable; change detection restarts |
+| `LR5005` | 154 | The phase was cut short to protect the run's deadline |
+| — | 155 | **The digest itself**, delivered to an `eventlog:` target |
+
+Alert on **155**. The rest report on the notification machinery; 155 carries the thing you asked to
+be told. Full table in [diagnostics](diagnostics.md).

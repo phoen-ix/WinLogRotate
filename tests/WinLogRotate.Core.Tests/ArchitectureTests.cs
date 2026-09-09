@@ -124,6 +124,16 @@ public partial class ArchitectureTests
             "SecretsTests.cs",
             "SecretCommandTests.cs",
             "NotifyBindingTests.cs",
+
+            // The three transports that authenticate, added deliberately in milestone 10. Each
+            // reveals exactly one thing at the moment it needs it: the webhook URL (whose entropy
+            // is in its path, which is why it is a credential at all), the Pushover application
+            // token and user key, and the SMTP password. Nothing else in the delivery path calls
+            // Reveal - the dispatcher, the composer and the channel resolver all pass SecretString
+            // around unopened, which is what keeps this list to three.
+            "HttpNotifySender.cs",
+            "PushoverNotifySender.cs",
+            "SmtpNotifySender.cs",
         ];
 
         // Assembled rather than written out, so that this file - which scans every file under

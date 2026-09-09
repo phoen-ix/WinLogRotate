@@ -19,14 +19,7 @@ public sealed class TaskRunHost : IRunHost
 
     public void Install(HostInstallOptions options)
     {
-        var xml = TaskXmlBuilder.Build(new TaskDefinition
-        {
-            ExecutablePath = options.ExecutablePath,
-            Arguments = options.Arguments,
-            Account = options.Account,
-            Frequency = options.Frequency,
-            TimeOfDay = options.TimeOfDay,
-        });
+        var xml = TaskXmlBuilder.Build(options.ToTaskDefinition());
 
         // Task Scheduler requires UTF-16 for a task XML file; UTF-8 is rejected with an
         // unhelpfully generic error.

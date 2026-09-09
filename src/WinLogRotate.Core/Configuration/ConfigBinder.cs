@@ -224,6 +224,7 @@ public static class ConfigBinder
                 Method = GetString(table, "method", file, d) ?? "POST",
                 ContentType = GetString(table, "content_type", file, d) ?? "application/json",
                 Body = GetString(table, "body", file, d),
+                MaxMessage = GetInt(table, "max_message", file, d),
             },
         };
     }
@@ -645,7 +646,12 @@ public static class ConfigBinder
     private static int Clamp(int value, int min, int max) => Math.Clamp(value, min, max);
 
     /// <summary>Parses "7d", "30m", "45s", "2h" or a TimeSpan.</summary>
-    internal static bool TryParseDuration(string text, out TimeSpan value)
+    /// <remarks>
+    /// Public because the CLI parses <c>--run-deadline</c> with it. An operator who has written
+    /// <c>remind_after = "7d"</c> in the configuration will write <c>--run-deadline 45m</c> on the
+    /// command line, and two grammars for one concept is how a flag silently means something else.
+    /// </remarks>
+    public static bool TryParseDuration(string text, out TimeSpan value)
     {
         value = default;
         var trimmed = text.Trim();

@@ -5,12 +5,14 @@ using WinLogRotate.Core.Configuration;
 using WinLogRotate.Core.Engine;
 using WinLogRotate.Core.Journaling;
 using WinLogRotate.Core.Notify;
+using WinLogRotate.Core.Notify.Delivery;
+using WinLogRotate.Core.Secrets;
 using WinLogRotate.Core.State;
 
 namespace WinLogRotate.Cli.Commands;
 
 /// <summary>
-/// The notification phase of a run: decide, record, and (from milestone 10) deliver.
+/// The notification phase of a run: decide, deliver, record.
 /// </summary>
 /// <remarks>
 /// <para>
@@ -21,16 +23,23 @@ namespace WinLogRotate.Cli.Commands;
 /// silent for it.
 /// </para>
 /// <para>
-/// Nothing is sent in milestone 8. The planner's decisions are proven before there is any way to
-/// page somebody with a bug in them.
+/// The order here is load-bearing. Diagnostics are snapshotted before anything is sent, so a
+/// delivery failure can never become part of the next run's idea of what was wrong; the dry-run
+/// guard sits above delivery rather than below it; and state is advanced only for the messages the
+/// dispatcher reports as delivered - see <see cref="HookDispatcher"/> for what that means and why
+/// "at least one channel" is not it.
 /// </para>
 /// </remarks>
 internal static class NotifyPhase
 {
     /// <param name="report">Null when the run never started.</param>
+    /// <param name="started">
+    /// When the invocation began, for the deadline clamp. The phase's own clock reading would be
+    /// useless: what matters is how much of the host's limit the rotation already spent.
+    /// </param>
     public static void Run(
         CommandContext ctx, InstallPaths paths, LoadedConfig config,
-        RunReport? report, RunOptions options)
+        RunReport? report, RunOptions options, DateTimeOffset started)
     {
         if (!options.Notify)
         {
@@ -43,7 +52,7 @@ internal static class NotifyPhase
             return;
         }
 
-        var statePath = Path.Combine(paths.Root, "notify.json");
+        var statePath = paths.NotifyStateFile;
         var state = NotifyStateStore.Load(statePath);
 
         if (state.Warning is { } warning)
@@ -87,7 +96,8 @@ internal static class NotifyPhase
             ],
         };
 
-        var plan = NotificationPlanner.PlanFor(summary, seen, settings, state, TimeProvider.System.GetUtcNow());
+        var now = TimeProvider.System.GetUtcNow();
+        var plan = NotificationPlanner.PlanFor(summary, seen, settings, state, now);
 
         if (ctx.Output.Verbose)
         {
@@ -97,40 +107,31 @@ internal static class NotifyPhase
             }
         }
 
-        foreach (var message in plan.Messages)
+        // Above delivery, not below it. A dry run must describe what it would send without
+        // sending it, and without moving a breaker counter.
+        if (options.DryRun)
         {
-            // Milestone 8 has no senders. The plan is journalled and described, and the state is
-            // deliberately NOT advanced - see below.
-            ctx.Output.Event(new CliEvent
+            foreach (var message in plan.Messages)
             {
-                Ts = string.Empty,
-                Run = summary.RunId,
-                Operation = Op.Hook,
-                Phase = Phase.Plan,
-                Job = message.Job == NotifyStateDocument.RunScope ? null : message.Job,
-                Src = "notify",
-                Reason = message.Subject,
-            });
+                ctx.Output.Event(PlanEvent(summary, message));
 
-            if (ctx.Output.Verbose)
-            {
-                ctx.Output.Line($"notify: would send - {message.Subject}");
+                if (ctx.Output.Verbose)
+                {
+                    ctx.Output.Line($"notify: would send - {message.Subject}");
+                }
             }
+
+            return;
         }
 
-        // Baselines are recorded; messages are not. The rule is that the notified side of state
-        // advances only when something was actually delivered, and in this milestone nothing
-        // ever is. Recording "we have seen this failure" without having told anybody would make
-        // the next run treat a live incident as old news - silence compounding into permanent
-        // silence, which is the worst thing this feature could do.
+        Deliver(ctx, paths, config, summary, plan, settings, state, options, started, now);
+
+        // Job state to record even though nothing was sent - the first run, where outcomes are
+        // noted so the next genuine change notifies and installing monitoring does not produce a
+        // wall of alerts about problems that were already there.
         foreach (var (job, next) in plan.Baseline)
         {
             state.SetJob(job, next);
-        }
-
-        if (options.DryRun)
-        {
-            return;
         }
 
         try
@@ -149,4 +150,111 @@ internal static class NotifyPhase
             });
         }
     }
+
+    private static void Deliver(
+        CommandContext ctx, InstallPaths paths, LoadedConfig config, RunSummary summary,
+        NotificationPlan plan, NotifySettings settings, NotifyStateStore state,
+        RunOptions options, DateTimeOffset started, DateTimeOffset now)
+    {
+        if (plan.Messages.Count == 0)
+        {
+            return;
+        }
+
+        var (allowed, clamped) = NotifyBudget.For(settings.Budget, options.RunDeadline, started, now);
+
+        if (clamped)
+        {
+            ctx.Output.Diagnostic(new CliDiagnostic
+            {
+                Severity = Severity.Warning,
+                Code = DiagnosticCode.NotifyBudgetClamped,
+                Message = allowed <= TimeSpan.Zero
+                    ? "The rotation used the whole time the scheduled task allows, so nothing was notified."
+                    : $"The notification phase was cut to {allowed.TotalSeconds:0}s to stay inside the "
+                    + "scheduled task's time limit.",
+                Remedy = "Nothing was recorded as reported, so the next run says it again. Raise the "
+                       + "task's ExecutionTimeLimit, or find out why the rotation itself is slow.",
+            });
+        }
+
+        if (allowed <= TimeSpan.Zero)
+        {
+            // Deliberately not advancing anything: nobody was told, so nothing is old news.
+            return;
+        }
+
+        using var senders = Senders.Build(settings);
+
+        var resolved = ChannelResolver.Resolve(
+            settings, config.NotifyProviders,
+            new SecretResolver(Senders.Platform(), paths.SecretsFile),
+            senders.Table);
+
+        foreach (var diagnostic in resolved.Diagnostics)
+        {
+            ctx.Output.Diagnostic(diagnostic);
+        }
+
+        if (resolved.Channels.Count == 0)
+        {
+            return;
+        }
+
+        var delivery = HookDispatcher.Dispatch(
+            plan, summary, resolved.Channels, settings, state, senders.Table,
+            new DispatchOptions
+            {
+                Clock = TimeProvider.System,
+                Wait = Thread.Sleep,
+                Budget = allowed,
+            });
+
+        foreach (var diagnostic in delivery.Diagnostics)
+        {
+            ctx.Output.Diagnostic(diagnostic);
+        }
+
+        foreach (var channel in delivery.Channels)
+        {
+            ctx.Output.Event(new CliEvent
+            {
+                Ts = string.Empty,
+                Run = summary.RunId,
+                Operation = Op.Hook,
+                Phase = Phase.Apply,
+                Src = "notify",
+                Dst = channel.Display,
+                Result = channel.Skipped ? OpResult.Skipped
+                    : channel.Failed > 0 ? OpResult.Failed : OpResult.Ok,
+                Reason = channel.Error,
+            });
+
+            if (ctx.Output.Verbose)
+            {
+                ctx.Output.Line(channel.Skipped
+                    ? $"notify: {channel.Display} skipped - suppressed after repeated failures"
+                    : $"notify: {channel.Display} - {channel.Sent} sent, {channel.Failed} failed");
+            }
+        }
+
+        // The rule this whole feature turns on: only messages every attempted channel accepted.
+        // Recording the rest as reported would make the next run treat a live incident as old
+        // news, which is silence compounding into permanent silence.
+        foreach (var message in delivery.Delivered)
+        {
+            state.SetJob(message.Job, message.NextState);
+        }
+    }
+
+    private static CliEvent PlanEvent(RunSummary summary, PlannedNotification message) => new()
+    {
+        Ts = string.Empty,
+        Run = summary.RunId,
+        Operation = Op.Hook,
+        Phase = Phase.Plan,
+        Job = message.Job == NotifyStateDocument.RunScope ? null : message.Job,
+        Src = "notify",
+        Reason = message.Subject,
+    };
 }

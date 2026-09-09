@@ -38,7 +38,7 @@ public sealed class EventIdsTests
             .ToArray();
 
         unmapped.ShouldBeEmpty(
-            "every DiagnosticCode needs a row in EventIds.For and in docs/notifications.md");
+            "every DiagnosticCode needs a row in EventIds.For and in docs/diagnostics.md");
     }
 
     [Fact]

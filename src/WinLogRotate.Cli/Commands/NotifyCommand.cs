@@ -3,6 +3,7 @@ using WinLogRotate.Contracts;
 using WinLogRotate.Core;
 using WinLogRotate.Core.Configuration;
 using WinLogRotate.Core.Notify;
+using WinLogRotate.Core.Notify.Delivery;
 using WinLogRotate.Core.Safety;
 using WinLogRotate.Core.Secrets;
 using WinLogRotate.Core.State;
@@ -19,9 +20,6 @@ namespace WinLogRotate.Cli.Commands;
 /// </remarks>
 internal static class NotifyCommand
 {
-    /// <summary>Delivery lands in a later milestone. Said plainly rather than implied.</summary>
-    private const bool DeliveryImplemented = false;
-
     public static int Show(CommandContext ctx, string? configDir)
     {
         var paths = InstallPaths.Resolve(configDir);
@@ -77,6 +75,10 @@ internal static class NotifyCommand
         ctx.Output.Line($"threshold  {settings.Threshold.ToString().ToLowerInvariant()} and above");
         ctx.Output.Line($"remind     {(settings.RemindAfter <= TimeSpan.Zero ? "never" : settings.RemindAfter.ToString())}");
         ctx.Output.Line($"budget     {settings.Budget}, {settings.Retries} retr{(settings.Retries == 1 ? "y" : "ies")}");
+        ctx.Output.Line($"proxy      {ProxyLine(settings)}");
+        ctx.Output.Line($"tls        {(settings.ServerCertThumbprint is { Length: > 0 } pin
+            ? $"pinned to {TlsPinning.Normalise(pin)}"
+            : "the machine's certificate store decides")}");
         ctx.Output.Line(string.Empty);
 
         if (targets.Count == 0)
@@ -101,12 +103,8 @@ internal static class NotifyCommand
             }
         }
 
-        if (!DeliveryImplemented)
-        {
-            ctx.Output.Line(string.Empty);
-            ctx.Output.Line("Delivery is not implemented in this build: the configuration above is");
-            ctx.Output.Line("validated and change detection runs, but nothing is sent anywhere yet.");
-        }
+        ctx.Output.Line(string.Empty);
+        ctx.Output.Line("Nothing above proves a target works. Run 'winlogrotate notify test' to send.");
 
         return ctx.Output.Complete("notify show", ExitCode.Ok, new NotifyShowResult
         {
@@ -117,16 +115,37 @@ internal static class NotifyCommand
             Budget = settings.Budget.ToString(),
             Retries = settings.Retries,
             WouldSend = settings.WouldSend,
-            DeliveryImplemented = DeliveryImplemented,
+            Proxy = ProxyLine(settings),
+            CertificatePin = settings.ServerCertThumbprint is { Length: > 0 } thumb
+                ? TlsPinning.Normalise(thumb)
+                : null,
             Targets = targets,
             Providers = providers,
         });
     }
 
+    /// <summary>What the outbound connections will actually do, in one line.</summary>
+    private static string ProxyLine(NotifySettings settings)
+    {
+        if (string.IsNullOrWhiteSpace(settings.Proxy))
+        {
+            return "whatever the machine is configured to use";
+        }
+
+        if (settings.Proxy.Equals(ProxyPolicy.None, StringComparison.OrdinalIgnoreCase))
+        {
+            return "none - connections go direct";
+        }
+
+        return settings.NoProxy.Count == 0
+            ? settings.Proxy
+            : $"{settings.Proxy}, except {string.Join(", ", settings.NoProxy)}";
+    }
+
     public static int Status(CommandContext ctx, string? configDir)
     {
         var paths = InstallPaths.Resolve(configDir);
-        var path = Path.Combine(paths.Root, "notify.json");
+        var path = paths.NotifyStateFile;
         var state = NotifyStateStore.Load(path);
         var settings = ConfigLoader.Load(paths, new PathGuard(new GuardOptions()), quarantineBadFiles: false).Notify;
 
@@ -207,7 +226,7 @@ internal static class NotifyCommand
     public static int Reset(CommandContext ctx, string? channel, string? configDir)
     {
         var paths = InstallPaths.Resolve(configDir);
-        var path = Path.Combine(paths.Root, "notify.json");
+        var path = paths.NotifyStateFile;
         var state = NotifyStateStore.Load(path);
 
         var targets = channel is null
@@ -268,7 +287,14 @@ internal static class NotifyCommand
         NotifyProviderKind.Email when p.Delivery == SmtpDelivery.PickupDirectory =>
             p.PickupDirectory ?? "(no pickup directory)",
         NotifyProviderKind.Email => $"{p.Host}:{p.Port} auth={p.Auth.ToString().ToLowerInvariant()}",
-        NotifyProviderKind.Webhook => p.Url.HasValue ? "(url in the secret store)" : "(no url)",
-        _ => "pushover",
+        // What it does, not where it points: a webhook URL's entropy is in its path, so it is a
+        // credential and belongs in the column beside it, which already prints Describe(). This
+        // column used to claim "(url in the secret store)" for a URL written in the file in the
+        // clear - exactly backwards for the one line an operator would check.
+        NotifyProviderKind.Webhook => p.Url.HasValue
+            ? $"{p.Method.ToUpperInvariant()} {p.ContentType}"
+            : "(no url)",
+
+        _ => PushoverNotifySender.Endpoint,
     };
 }
