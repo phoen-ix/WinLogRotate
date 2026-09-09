@@ -366,6 +366,10 @@ jobs:
 
           # First run baselines rather than rotating - the property that stops a fresh install
           # rotating every log on the machine at once - so --catchup is what actually rotates.
+          if (Test-Path "C:\smoke\rot\svc.log.1") {
+            throw 'The first run rotated instead of baselining, so a fresh install would rotate every log at once.'
+          }
+
           & $exe run --catchup --verbose | Out-Host
 
           if (-not (Test-Path "C:\smoke\rot\svc.log.1")) {

@@ -110,7 +110,14 @@ public sealed class RotationRunnerTests : IDisposable
 
         var plan = Plan(state, new RunOptions { Force = true }, reported);
 
-        plan.Operations.ShouldBeEmpty();
+        // Skipped, not dropped. The first real rotation on a CI runner reported
+        // "0 file(s) matched" for a directory that plainly had one, because a baselined file was
+        // removed from the plan entirely - so a dry run said nothing whatsoever about the file it
+        // had quietly set aside.
+        plan.MatchedFiles.ShouldBe(1);
+        plan.Operations.ShouldHaveSingleItem().Action.ShouldBe(PlannedAction.Skip);
+        plan.Operations[0].Reason.ShouldContain("first time");
+
         reported.ShouldHaveSingleItem().Code.ShouldBe(DiagnosticCode.FirstRunBaseline);
 
         // And the clock is started, so tomorrow it is due like anything else.

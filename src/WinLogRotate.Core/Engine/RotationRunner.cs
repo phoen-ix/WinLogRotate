@@ -278,21 +278,27 @@ public sealed class RotationRunner(
                     Path = file.Path,
                     Remedy = "Pass --catchup to rotate a log the first time it is seen instead.",
                 });
-
-                continue;
             }
 
+            // Kept in the plan even when it is being baselined, rather than dropped. JobPlan
+            // documents MatchedFiles as what the job matched "whether or not it plans to act on
+            // them", and dropping it made a dry run report "0 file(s) matched" for a directory
+            // that plainly had one - while saying nothing at all about the file it had silently
+            // set aside. PlannedAction.Skip exists precisely so that "why was this file not
+            // touched?" has an answer.
             consider.Add(file);
 
-            // Synthesised rather than evaluated for the --catchup case: the baseline above has
-            // just set the clock to now, so asking the criteria would correctly answer "rotated a
-            // moment ago, not due" and --catchup would silently do nothing.
+            // Synthesised rather than evaluated in both first-sighting cases: the baseline above
+            // has just set the clock to now, so asking the criteria would answer "rotated a moment
+            // ago" - which is true, and useless, and would make --catchup silently do nothing.
             due[file.Path] = first
                 ? new DueVerdict
                 {
-                    Due = true,
+                    Due = options.Catchup,
                     Reason = DueReason.FirstSighting,
-                    Explanation = "--catchup: rotating on the first sighting rather than baselining",
+                    Explanation = options.Catchup
+                        ? "--catchup: rotating on the first sighting rather than baselining"
+                        : "first time this log has been seen; its clock starts now",
                 }
                 : RotationCriteria.Evaluate(
                     job, state.Get(file.Path)?.LastRotated, now, file.Length, file.LastWriteUtc,
