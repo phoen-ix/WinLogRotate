@@ -312,6 +312,27 @@ function Assert-TaskHardening {
     Write-Host "  task hardening ok (as $($task.Principal.UserId))"
 }
 
+function Get-JsonProperty {
+    <#
+        .SYNOPSIS
+        Reads a property that may be absent, without tripping StrictMode.
+
+        .DESCRIPTION
+        The CLI's envelope is serialised with DefaultIgnoreCondition = WhenWritingNull, so every
+        nullable member - CliEvent.Strategy, CliEvent.Src, PathState.LastTruncatedFrom,
+        ProbeResultDto.Suggested - is simply absent rather than null when it has no value. Under
+        Set-StrictMode -Version Latest, reading an absent property is a terminating error, so a
+        journal line for an operation that has no strategy would blow up an assertion about a
+        different line entirely.
+    #>
+    param($Object, [Parameter(Mandatory)][string] $Name)
+
+    if ($null -eq $Object) { return $null }
+    $property = $Object.PSObject.Properties[$Name]
+    if ($null -eq $property) { return $null }
+    return $property.Value
+}
+
 function Invoke-WithHeldHandle {
     <#
         .SYNOPSIS
@@ -344,11 +365,11 @@ function Invoke-WithHeldHandle {
     # so the second holder set ready, fell straight through its already-signalled release, and
     # disposed its handle while the probe was still measuring. Everything after the first case
     # would then be measured against an unlocked file, which looks exactly like the product
-    # working. Reset as well as renaming, because a crashed earlier run can leave a name behind.
-    if ($null -eq $script:HeldHandleSeq) { $script:HeldHandleSeq = 0 }
-    $script:HeldHandleSeq++
-    $readyName   = "Global\WinLogRotate.Smoke.HolderReady.$script:HeldHandleSeq"
-    $releaseName = "Global\WinLogRotate.Smoke.HolderRelease.$script:HeldHandleSeq"
+    # working. A GUID rather than a counter: this file runs under Set-StrictMode -Version Latest,
+    # where reading a not-yet-set variable is an error, and a fresh name needs no state at all.
+    $id = [guid]::NewGuid().ToString('N')
+    $readyName   = "Global\WinLogRotate.Smoke.HolderReady.$id"
+    $releaseName = "Global\WinLogRotate.Smoke.HolderRelease.$id"
 
     # Created here, opened there: a child that had to create them could race ahead of us.
     $ready   = New-Object System.Threading.EventWaitHandle($false, 'ManualReset', $readyName)

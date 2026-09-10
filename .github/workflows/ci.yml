@@ -459,8 +459,9 @@ jobs:
               if ($p.result.unlocked) {
                 throw 'The probe called the file unlocked while a handle was demonstrably open on it.'
               }
-              if ($p.result.suggested -ne $c.Suggested) {
-                throw "suggested is '$($p.result.suggested)', expected '$($c.Suggested)'."
+              $suggested = Get-JsonProperty $p.result 'suggested'
+              if ($suggested -ne $c.Suggested) {
+                throw "suggested is '$suggested', expected '$($c.Suggested)'."
               }
               # 32 is ERROR_SHARING_VIOLATION - the single most important error code here.
               if ($c.Verdict -ne 'Rename' -and $p.result.blockingError -ne 32) {
@@ -520,8 +521,8 @@ jobs:
             # The journal is the only place the chosen strategy is visible, and it is visible only
             # because PlanExecutor.Emit populates CliEvent.Strategy at all now.
             $applied = @((& $exe journal --job $c.Name --json | ConvertFrom-Json).result.entries |
-                         Where-Object { $_.phase -eq 'apply' -and $_.src -eq $log })
-            if (@($applied | Where-Object { $_.strategy -eq $c.Strategy }).Count -eq 0) {
+                         Where-Object { $_.phase -eq 'apply' -and (Get-JsonProperty $_ 'src') -eq $log })
+            if (@($applied | Where-Object { (Get-JsonProperty $_ 'strategy') -eq $c.Strategy }).Count -eq 0) {
               throw ("[$($c.Name)] the journal does not record strategy '$($c.Strategy)'. " +
                      'A rotation whose strategy is unrecorded cannot be audited afterwards.')
             }
@@ -570,8 +571,11 @@ jobs:
             # computed on every truncation and thrown away every time.
             $s1 = (Get-Content $state -Raw | ConvertFrom-Json).paths.PSObject.Properties |
                   Where-Object { $_.Value.path -ieq $log } | Select-Object -First 1
-            if ($s1.Value.lastTruncatedFrom -ne $size) {
-              throw "state records lastTruncatedFrom = $($s1.Value.lastTruncatedFrom), expected $size."
+            if ($null -eq $s1) { throw "The state file has no entry for '$log' after a rotation." }
+            $recorded = Get-JsonProperty $s1.Value 'lastTruncatedFrom'
+            if ($recorded -ne $size) {
+              throw ("state records lastTruncatedFrom = '$recorded', expected $size - so " +
+                     'RecordTruncation reached nothing and the detector has no baseline.')
             }
 
             # THE FAILURE. The rotation just emptied this file; a true append handle would resume
@@ -596,6 +600,7 @@ jobs:
 
           $s2 = (Get-Content $state -Raw | ConvertFrom-Json).paths.PSObject.Properties |
                 Where-Object { $_.Value.path -ieq $log } | Select-Object -First 1
+          if ($null -eq $s2) { throw "The state file has no entry for '$log'." }
           if ($s2.Value.nulFill -ne 'Confirmed') {
             throw "state records nulFill = '$($s2.Value.nulFill)', expected 'Confirmed'."
           }
@@ -605,8 +610,8 @@ jobs:
           $global:LASTEXITCODE = 0
 
           $applied = @((& $exe journal --job nulfill --json | ConvertFrom-Json).result.entries |
-                       Where-Object { $_.phase -eq 'apply' -and $_.src -ieq $log })
-          if (@($applied | Where-Object { $_.strategy -eq 'copytruncate' }).Count -gt 1) {
+                       Where-Object { $_.phase -eq 'apply' -and (Get-JsonProperty $_ 'src') -ieq $log })
+          if (@($applied | Where-Object { (Get-JsonProperty $_ 'strategy') -eq 'copytruncate' }).Count -gt 1) {
             throw 'copytruncate ran again on a path with a confirmed NUL-fill.'
           }
           '  detected, reported and quarantined'
