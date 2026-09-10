@@ -424,9 +424,11 @@ public sealed class NotifySenderTests : IDisposable
     [Fact]
     public void AtCommandIsRefusedNotIgnored()
     {
-        // Running a program named in a configuration file to fetch a password needs the same
-        // hardened directory as a command: hook, and lands with it. A reference that silently
-        // resolved to nothing would look like a broken relay instead of an unbuilt feature.
+        // Refused permanently, and not for want of the configuration-directory gate - that
+        // exists now. The grammar is the problem: the reference IS the whole command line, so the
+        // vault's own credentials would sit in a config file the docs call safe to paste into a
+        // support ticket. A reference that silently resolved to nothing would look like a broken
+        // relay instead of a refusal.
         var resolved = Resolver().Resolve(SecretRef.Parse("@command:vault read -field=pw kv/smtp"));
 
         resolved.Ok.ShouldBeFalse();
@@ -477,17 +479,46 @@ public sealed class NotifySenderTests : IDisposable
     }
 
     [Fact]
-    public void ASchemeThisBuildDoesNotDeliverIsReportedRatherThanIgnored()
+    public void AHookSchemeInNotifyIsReportedRatherThanIgnored()
     {
-        // command:, service: and event: parse today and land with the configuration-directory
-        // gate they need. Silence would be indistinguishable from a hook that ran.
+        // command:, service: and event: are hooks, not notification targets, and permanently so.
+        // Silence would be indistinguishable from a target that worked.
         var resolved = ChannelResolver.Resolve(
             NotifySettings.Default with { To = [@"command:C:\tools\page.exe"] },
             [], Resolver(), Table(HookScheme.Http));
 
         resolved.Channels.ShouldBeEmpty();
+
+        var refusal = resolved.Diagnostics.ShouldHaveSingleItem();
+        refusal.Message.ShouldContain("command:");
+
+        // And it says where the scheme does belong, rather than promising a later build. The
+        // remedy used to read "targets that run code on this machine land with the
+        // configuration-directory check they require" - that check landed in milestone 13, so the
+        // sentence became a promise of something that is not coming.
+        refusal.Remedy.ShouldNotBeNull().ShouldContain("postrotate");
+        refusal.Remedy.ShouldNotContain("land");
+    }
+
+    /// <summary>
+    /// A scheme that carries no message says so, rather than being lumped in with command:.
+    /// </summary>
+    /// <remarks>
+    /// The permanent rule, and the mirror of the one HookPlan applies in the other direction:
+    /// service: acts, and a target reports. command: is refused too but for a different reason - a
+    /// program could carry a message - so the two must not share a sentence.
+    /// </remarks>
+    [Theory]
+    [InlineData("service:paramchange:W3SVC")]
+    [InlineData(@"event:Global\AppReload")]
+    public void ASchemeThatCarriesNoMessageSaysThatIsWhy(string target)
+    {
+        var resolved = ChannelResolver.Resolve(
+            NotifySettings.Default with { To = [target] },
+            [], Resolver(), Table(HookScheme.Http));
+
         resolved.Diagnostics.ShouldHaveSingleItem()
-            .Message.ShouldContain("command:");
+            .Remedy.ShouldNotBeNull().ShouldContain("carry nothing");
     }
 
     [Fact]

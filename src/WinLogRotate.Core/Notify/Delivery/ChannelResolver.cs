@@ -187,7 +187,7 @@ public static class ChannelResolver
         };
     }
 
-    /// <summary>Reports a scheme this build parses but does not deliver, rather than ignoring it.</summary>
+    /// <summary>Reports a scheme that parses but is not a notification target, rather than ignoring it.</summary>
     private static bool Refused(
         HookScheme scheme, string display, SenderTable senders, List<CliDiagnostic> diagnostics)
     {
@@ -204,20 +204,54 @@ public static class ChannelResolver
             Code = DiagnosticCode.NotifyMisconfigured,
             Message = senders.WhyNot(scheme) is { } why
                 ? $"'{display}' names {name}:, which {why}."
-                : $"'{display}' names {name}:, which this build does not deliver.",
+                : $"'{display}' names {name}:, which is a hook rather than a notification target.",
             Remedy = senders.WhyNot(scheme) is not null
 
                 // Nothing to fix: the target is correct, this machine simply cannot serve it.
                 // Suggesting alternatives here would be advice to change a working configuration.
                 ? null
-                : HookSchemes.NeedsHardenedConfDir(scheme)
-                    ? "Targets that run code on this machine land with the configuration-directory "
-                    + "check they require. Use http:, smtp:, pushover: or eventlog: in the meantime."
-                    : "Use http:, smtp:, pushover: or eventlog:.",
+                : Instead(scheme),
         });
 
         return true;
     }
+
+    /// <summary>
+    /// Where a scheme that runs code belongs instead, and why it is not a target.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// These used to say the scheme would "land with the configuration-directory check they
+    /// require". That check landed - job hooks run, gated by it - so the sentence became a promise
+    /// of a build that is not coming, which is worse than saying no. The rule is permanent and it
+    /// is the mirror of the one <c>HookPlan</c> applies in the other direction: a hook that
+    /// reports is refused there, a target that acts is refused here.
+    /// </para>
+    /// <para>
+    /// <c>command:</c> is refused for a different and more specific reason. A program could carry a
+    /// message, so the rule alone does not exclude it - what excludes it is that
+    /// <see cref="HookDispatcher"/> gives each channel an even share of the phase's time budget,
+    /// and starting a process costs enough of a 30-second budget split three ways that messages
+    /// would be dropped. That is not hypothetical: it is the defect
+    /// <see cref="ChannelOutcome.Unattempted"/> was added to make visible.
+    /// </para>
+    /// </remarks>
+    private static string Instead(HookScheme scheme) => scheme switch
+    {
+        HookScheme.Service or HookScheme.Event =>
+            $"{HookSchemes.Name(scheme)}: acts on this machine, and a notification target has to "
+            + "carry a message - a service control code and a kernel event carry nothing. Put it in "
+            + "a job's prerotate or postrotate instead (docs/hooks.md), and report with http:, "
+            + "smtp:, pushover: or eventlog:.",
+
+        HookScheme.Command =>
+            "command: runs a program, and each notification channel gets only an even share of the "
+            + "phase's time budget - a process start would spend enough of it to drop messages. Put "
+            + "it in a job's prerotate or postrotate instead (docs/hooks.md), and report with http:, "
+            + "smtp:, pushover: or eventlog:.",
+
+        _ => "Use http:, smtp:, pushover: or eventlog:.",
+    };
 
     /// <summary>
     /// What the destination will accept.

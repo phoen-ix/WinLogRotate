@@ -63,8 +63,9 @@ nobody asked for.
 run, and only when something changed. It delivers over SMTP, webhooks, Pushover and the Windows
 Event Log. See [notifications](notifications.md).
 
-If you genuinely want the file, a `command:` hook is the honest way to say so, and it lands with
-the configuration-directory check that running code from a config file requires.
+If you genuinely want the file, a `command:` hook is the honest way to say so — see
+[hooks](hooks.md). It runs behind the configuration-directory check that executing anything named
+in a config file requires, which in practice means a per-machine install.
 
 ## Not implementable on Windows
 

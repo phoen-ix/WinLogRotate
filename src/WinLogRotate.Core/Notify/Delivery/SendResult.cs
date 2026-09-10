@@ -88,12 +88,12 @@ public interface INotifySender
     SendResult Send(ResolvedChannel channel, NotifyMessage message, TimeSpan timeout);
 }
 
-/// <summary>The sender for a scheme this build does not deliver.</summary>
+/// <summary>The sender for a scheme that is not a notification target.</summary>
 /// <remarks>
-/// Shipping code, not scaffolding. <c>command:</c>, <c>service:</c> and <c>event:</c> parse today
-/// and land with the configuration-directory gate they need; until then a target naming one gets a
-/// refusal every run rather than silence, because a hook that quietly does nothing is
-/// indistinguishable from a hook that ran.
+/// Shipping code, not scaffolding. <c>command:</c>, <c>service:</c> and <c>event:</c> parse - they
+/// are hooks, and they run as hooks - but they are not notification targets and will not become
+/// them. A <c>[notify]</c> entry naming one therefore gets a refusal every run rather than silence,
+/// because a target that quietly does nothing is indistinguishable from one that worked.
 /// </remarks>
 public sealed class UndeliveredScheme(string why) : INotifySender
 {

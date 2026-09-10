@@ -56,11 +56,22 @@ elsewhere in the file - or an **inline target**, written as `scheme:destination`
 | `smtp:` | `smtp:ops@example.com` | a `[notify.email.*]` provider for the relay |
 | `pushover:` | `pushover:uQiRzp6twxx` | a `[notify.pushover.*]` provider for the token |
 
-`command:`, `service:` and `event:` parse today and **are not delivered by this build as
-notification targets**. As *job* hooks they run - see [hooks](hooks.md) - and the
-configuration-directory check they needed now exists; what is still undecided is how a run's digest
-should reach a program, which a service control code and a kernel event cannot carry at all. A
-`[notify]` target naming one produces `LR5001` every run rather than silence: a target that quietly
+`command:`, `service:` and `event:` are **hooks, not notification targets**, and that is permanent.
+They run — see [hooks](hooks.md) — as a job's `prerotate` and `postrotate`, behind the
+configuration-directory gate.
+
+The rule is the mirror of the one hooks apply in the other direction, where `http:` in a
+`postrotate` is refused with *"`http:` reports, and a hook runs something"*:
+
+> **`service:` acts, and a target reports.**
+
+A service control code and a kernel event carry nothing, so there is no message for them to deliver.
+`command:` is excluded for a different and more specific reason: a program *could* carry a message,
+but each channel gets only an even share of the phase's time budget, and starting a process spends
+enough of it to drop messages — the failure `LR5005` was extended to report. If you want a program
+run when a rotation happens, that is what `postrotate` is for.
+
+A `[notify]` entry naming one produces `LR5001` every run rather than silence: a target that quietly
 does nothing is indistinguishable from one that worked.
 
 ## Webhooks
@@ -197,7 +208,13 @@ deployment repository, or screenshot - which is how credentials actually escape.
 | `@secret:NAME` | the encrypted store | **preferred**; `winlogrotate secret set NAME` |
 | `@env:NAME` | the environment | for containers and CI |
 | `anything else` | the file itself | warns every run (`LR9006`) |
-| `@command:...` | a vault, by running it | **not delivered by this build** - refused, not ignored |
+| `@command:...` | a vault, by running it | **not supported** - refused, not ignored |
+
+`@command:` is refused permanently, and not for want of the configuration-directory gate — that
+exists now, and hooks run behind it. The grammar itself is the problem: the reference *is* the whole
+command line, so `@command:vault read -token=... kv/smtp` puts the vault's own credentials into a
+file this document promises two paragraphs above is safe to paste into a support ticket. Fetch the
+secret once and `winlogrotate secret set` it instead.
 
 The store is DPAPI machine-scope with per-install entropy, readable only by SYSTEM and
 Administrators, and it does not survive being copied to another machine - by design. `@@` escapes a

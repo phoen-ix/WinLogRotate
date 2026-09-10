@@ -10,11 +10,12 @@ namespace WinLogRotate.Core.Secrets;
 /// each of them would be three DPAPI round trips to answer the same question.
 /// </para>
 /// <para>
-/// <see cref="SecretSource.Command"/> is refused rather than ignored. Running a program named in a
-/// configuration file to fetch a password is the same risk class as a <c>command:</c> hook - it
-/// needs the configuration directory to be one no ordinary account can write, and that gate lands
-/// with the hooks it was written for. Refusing loudly is the honest state in the meantime; a
-/// reference that silently resolves to nothing would look like a broken relay.
+/// <see cref="SecretSource.Command"/> is refused rather than ignored, and permanently. The
+/// configuration-directory gate it was waiting for exists now - hooks run behind it - but the
+/// grammar itself is the problem: <c>SecretRef.Parse</c> keeps the whole command line as the
+/// reference, so <c>@command:vault read -token=... kv/smtp</c> puts the vault's own credentials
+/// into a file this product elsewhere promises is safe to paste into a support ticket. A reference
+/// that silently resolved to nothing would look like a broken relay, so it refuses out loud.
 /// </para>
 /// </remarks>
 public sealed class SecretResolver(ISecretPlatform platform, string storePath) : ISecretResolver
@@ -30,7 +31,8 @@ public sealed class SecretResolver(ISecretPlatform platform, string storePath) :
         SecretSource.Store => FromStore(reference.Key),
 
         SecretSource.Command => SecretResolution.Failed(
-            "fetching a credential by running a command is not supported in this build"),
+            "fetching a credential by running a command is not supported: the command line would "
+            + "sit in a configuration file, and a vault's own credentials with it"),
 
         _ => SecretResolution.Failed($"unknown credential source '{reference.Source}'"),
     };

@@ -311,13 +311,12 @@ from elevation rather than from the install.
 - **The Windows Service host is not implemented.** `host use service` says so and refuses.
 - **No notification has ever been delivered on Windows by CI.** The senders and their whole
   decision layer are exercised on the Linux leg against local listeners and fakes, but no runner
-  has yet sent real mail, reached a real webhook or written an `eventlog:` digest. `command:`,
-  `service:` and `event:` as **notification targets** are still not delivered — as *job hooks* they
-  are, and the configuration-directory check that gates them now exists.
-- **No hook has run as SYSTEM in CI.** The bracket, the refusals, the deadline clamp and the
-  process discipline — flooding a pipe, killing a tree, a missing executable — are all tested,
-  including against real child processes on both legs. What has never happened on a runner is
-  `service:paramchange:` reaching a real service, or `event:` signalling a real waiter.
+  has yet sent real mail, reached a real webhook or written an `eventlog:` digest.
+- **No `service:` or `event:` hook has run against a real target in CI.** A `command:` hook does
+  run as SYSTEM in the installer smoke, out of the directory the installer locked down, and the run
+  asserts that a dry run did not fire it, a rotation did, and a run that rotated nothing did not.
+  What has never happened on a runner is `service:paramchange:` reaching a real service, or
+  `event:` signalling a real waiter.
 
 ### What is thoroughly tested, everywhere
 

@@ -38,5 +38,5 @@ public sealed class SenderTable
         _senders.TryGetValue(scheme, out var sender)
             ? sender
             : new UndeliveredScheme(
-                $"{HookSchemes.Name(scheme)}: targets are not delivered by this build");
+                $"{HookSchemes.Name(scheme)}: is a hook, not a notification target");
 }

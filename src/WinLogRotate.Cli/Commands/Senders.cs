@@ -15,10 +15,13 @@ namespace WinLogRotate.Cli.Commands;
 /// <remarks>
 /// <para>
 /// This is where the four reporting schemes are assembled and where the three that execute code -
-/// <c>command:</c>, <c>service:</c>, <c>event:</c> - are conspicuously absent. They are not
-/// forgotten: they need the configuration directory to be one no ordinary account can write, and
-/// they land with that gate. Leaving them out of the table means a target naming one gets a
-/// refusal every run instead of silence, which is the difference between "not yet" and "broken".
+/// <c>command:</c>, <c>service:</c>, <c>event:</c> - are permanently absent. They are hooks, and
+/// they run as hooks: a job's <c>prerotate</c> and <c>postrotate</c> dispatch them behind the
+/// configuration-directory gate. What they are not is notification targets - a target carries a
+/// message, and a service control code and a kernel event carry nothing - so leaving them out of
+/// the table means a <c>[notify]</c> entry naming one gets a refusal every run instead of silence.
+/// <c>ChannelResolver.Instead</c> has the wording, including why <c>command:</c>, which could
+/// carry a message, is excluded for a different reason.
 /// </para>
 /// <para>
 /// The Event Log transport comes from Hosting because it is a P/Invoke into advapi32 and Core is
