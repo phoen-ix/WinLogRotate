@@ -21,6 +21,9 @@ public enum DueReason
     TooSmall,
     TooYoung,
     Empty,
+
+    /// <summary>No strategy can touch this file, so nothing was planned for it.</summary>
+    StrategyRefused,
 }
 
 /// <summary>The verdict for one log file.</summary>
@@ -29,6 +32,17 @@ public sealed record DueVerdict
     public required bool Due { get; init; }
     public required DueReason Reason { get; init; }
     public required string Explanation { get; init; }
+
+    /// <summary>
+    /// The strategy this rotation will actually use, once <c>auto</c> has been resolved.
+    /// </summary>
+    /// <remarks>
+    /// Carried on the verdict rather than looked up separately, because the runner already
+    /// produces one of these per file and the planner already receives them. Null where the
+    /// caller did not resolve a strategy, in which case the job's configured one stands - which
+    /// keeps every existing construction site of this record compiling unchanged.
+    /// </remarks>
+    public LockStrategy? Strategy { get; init; }
 }
 
 /// <summary>

@@ -311,3 +311,79 @@ function Assert-TaskHardening {
 
     Write-Host "  task hardening ok (as $($task.Principal.UserId))"
 }
+
+function Invoke-WithHeldHandle {
+    <#
+        .SYNOPSIS
+        Holds a real handle on a file, with a chosen share mode, while a scriptblock runs.
+
+        .DESCRIPTION
+        The share mode is the only variable, and it is the only thing CreateFile's sharing check
+        consults - so it is what decides which strategies LockProbe finds available. FileShare
+        ReadWrite WITHOUT Delete is what MSVCRT's fopen("a"), .NET's FileMode.Append and IIS all
+        produce, and it is exactly the condition that makes rename impossible and copytruncate
+        necessary.
+
+        A separate process, because the rotation happens inside winlogrotate.exe and a handle held
+        in this same PowerShell would prove nothing about cross-process sharing.
+
+        Two named events rather than a sleep. A sleep long enough to be safe is the slowest step in
+        the job; a sleep short enough to be quick is a flake that looks exactly like the product
+        working - the holder dies, the file is free, the verdict comes back Rename, and everything
+        passes for the wrong reason.
+    #>
+    param(
+        [Parameter(Mandatory)][string] $Path,
+        [Parameter(Mandatory)][string] $Share,
+        [Parameter(Mandatory)][scriptblock] $While,
+        [int] $TimeoutSeconds = 120
+    )
+
+    $readyName   = 'Global\WinLogRotate.Smoke.HolderReady'
+    $releaseName = 'Global\WinLogRotate.Smoke.HolderRelease'
+
+    # Created here, opened there: a child that had to create them could race ahead of us.
+    $ready   = New-Object System.Threading.EventWaitHandle($false, 'ManualReset', $readyName)
+    $release = New-Object System.Threading.EventWaitHandle($false, 'ManualReset', $releaseName)
+
+    $job = Start-Job -ScriptBlock {
+        param($path, $share, $readyName, $releaseName, $timeout)
+
+        $ready   = [System.Threading.EventWaitHandle]::OpenExisting($readyName)
+        $release = [System.Threading.EventWaitHandle]::OpenExisting($releaseName)
+
+        $fs = [System.IO.File]::Open(
+            $path,
+            [System.IO.FileMode]::Open,
+            [System.IO.FileAccess]::Write,
+            [System.IO.FileShare]$share)
+
+        try {
+            $ready.Set() | Out-Null
+            $release.WaitOne([int]($timeout * 1000)) | Out-Null
+        } finally {
+            $fs.Dispose()
+        }
+    } -ArgumentList $Path, $Share, $readyName, $releaseName, $TimeoutSeconds
+
+    try {
+        if (-not $ready.WaitOne(30000)) {
+            Receive-Job $job | ForEach-Object { Write-Host "    holder: $_" }
+            throw "The holder never opened '$Path' with share '$Share'."
+        }
+
+        if ($job.State -ne 'Running') { throw 'The holder exited before the test ran.' }
+
+        & $While
+
+        # If the holder died during the body, every verdict measured above was taken against an
+        # unlocked file - which is the one failure this whole helper exists to rule out.
+        if ($job.State -ne 'Running') {
+            throw 'The holder died DURING the test; nothing measured above can be trusted.'
+        }
+    } finally {
+        $release.Set() | Out-Null
+        Receive-Job $job -Wait -AutoRemoveJob | ForEach-Object { Write-Host "    holder: $_" }
+        $ready.Dispose(); $release.Dispose()
+    }
+}

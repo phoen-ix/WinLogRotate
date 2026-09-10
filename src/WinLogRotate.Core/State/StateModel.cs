@@ -3,6 +3,13 @@ using System.Text.Json.Serialization;
 namespace WinLogRotate.Core.State;
 
 /// <summary>What a lock probe concluded about a path.</summary>
+/// <remarks>
+/// Written as a name rather than a number, for the reason <c>NotifyOutcome</c> gives: this file
+/// lands in support bundles, and a bare 2 tells a reader nothing. It also removes a live hazard -
+/// stored as ordinals, appending a member anywhere but the end silently reinterprets every state
+/// file already on disk, and this particular enum decides whether a path is quarantined.
+/// </remarks>
+[JsonConverter(typeof(JsonStringEnumConverter<ProbeVerdict>))]
 public enum ProbeVerdict
 {
     Unknown,
@@ -25,6 +32,13 @@ public enum ProbeVerdict
 /// can do to the same file, and vice versa - so a cached verdict is only reused for the same
 /// class of identity. Without this the bug is silent and intermittent, which is the worst kind.
 /// </summary>
+/// <remarks>
+/// Written as a name rather than a number, for the reason <c>NotifyOutcome</c> gives: this file
+/// lands in support bundles, and a bare 2 tells a reader nothing. It also removes a live hazard -
+/// stored as ordinals, appending a member anywhere but the end silently reinterprets every state
+/// file already on disk, and this particular enum decides whether a path is quarantined.
+/// </remarks>
+[JsonConverter(typeof(JsonStringEnumConverter<ProbeIdentity>))]
 public enum ProbeIdentity
 {
     Unknown,
@@ -34,6 +48,25 @@ public enum ProbeIdentity
 
     /// <summary>An ordinary user token.</summary>
     Standard,
+}
+
+/// <summary>Which rule produced a verdict.</summary>
+/// <remarks>
+/// The caller needs this, not just the verdict. A NUL run at the resume offset is the signature
+/// itself and means the same thing whenever it is observed; the size ratio is an inference whose
+/// force depends entirely on how long ago the truncation was. Without knowing which fired, a
+/// caller cannot tell one from the other - and quarantining on the ratio one full interval later
+/// would permanently refuse copytruncate to every steadily-growing log on the machine.
+/// </remarks>
+public enum NulFillEvidence
+{
+    None,
+
+    /// <summary>The file returned to roughly its pre-truncation size. An inference.</summary>
+    ReGrowth,
+
+    /// <summary>A NUL run at the offset the truncation left. The signature itself.</summary>
+    NulSignature,
 }
 
 /// <summary>
@@ -46,6 +79,13 @@ public enum ProbeIdentity
 /// and repeating that every rotation forever. Once observed, the verdict is permanent for that
 /// path: we must never try copytruncate on it again.
 /// </remarks>
+/// <remarks>
+/// Written as a name rather than a number, for the reason <c>NotifyOutcome</c> gives: this file
+/// lands in support bundles, and a bare 2 tells a reader nothing. It also removes a live hazard -
+/// stored as ordinals, appending a member anywhere but the end silently reinterprets every state
+/// file already on disk, and this particular enum decides whether a path is quarantined.
+/// </remarks>
+[JsonConverter(typeof(JsonStringEnumConverter<NulFillVerdict>))]
 public enum NulFillVerdict
 {
     Unknown,
@@ -81,6 +121,50 @@ public sealed record PathState
     /// <summary>Size before the last truncation, kept so the detector has something to
     /// compare against on the following run.</summary>
     public long? LastTruncatedFrom { get; init; }
+
+    /// <summary>
+    /// Where the last truncation left the file, and therefore where a NUL gap would begin.
+    /// </summary>
+    /// <remarks>
+    /// Not zero. Bytes the writer appends while the copy is running are preserved by writing them
+    /// back at the head, so a truncated file usually <i>starts</i> with log text - and a detector
+    /// sampling from byte zero finds that tail instead of the NUL run it is looking for.
+    /// </remarks>
+    public long? LastTruncatedTo { get; init; }
+
+    public DateTimeOffset? LastTruncatedAt { get; init; }
+
+    /// <summary>
+    /// Volume serial and file index of the handle that was truncated.
+    /// </summary>
+    /// <remarks>
+    /// Deliberately not the creation time. NTFS file tunneling reuses the creation timestamp of a
+    /// file recreated under the same name within fifteen seconds - which is exactly the
+    /// rotate-then-recreate window, so creation time would report "same file" precisely when it is
+    /// most certainly a different one.
+    /// </remarks>
+    public string? FileIdentity { get; init; }
+
+    /// <summary>
+    /// How many runs have failed to reach a verdict on the pending truncation.
+    /// </summary>
+    /// <remarks>
+    /// Capped, so a file that can never be read does not leave a baseline sitting for ever. An
+    /// immortal baseline is not harmless: it is evidence that gets staler every night while still
+    /// being compared against.
+    /// </remarks>
+    public int TruncationChecks { get; init; }
+
+    public DateTimeOffset? NulFillAt { get; init; }
+
+    /// <summary>Which rule reached the verdict. See <c>NulFillEvidence</c>.</summary>
+    public NulFillEvidence NulFillEvidence { get; init; }
+
+    public long? NulFillSizeBefore { get; init; }
+    public long? NulFillSizeAfter { get; init; }
+
+    /// <summary>The Win32 error that blocked the better strategy at the last probe.</summary>
+    public int ProbeError { get; init; }
 }
 
 /// <summary>The on-disk state document.</summary>

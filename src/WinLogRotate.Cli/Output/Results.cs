@@ -315,6 +315,17 @@ public sealed record ProbeResultDto
 
     public int BlockingError { get; init; }
     public string? BlockingErrorText { get; init; }
+
+    /// <summary>
+    /// True when nothing else holds the file open at all.
+    /// </summary>
+    /// <remarks>
+    /// <c>ProbeResult</c> has computed this since the probe existed and nothing carried it out, so
+    /// the one fact that distinguishes "the writer permits renaming" from "there is no writer" was
+    /// thrown away. It is also what lets a test prove it measured a genuinely contended file
+    /// rather than one whose holder had quietly died.
+    /// </remarks>
+    public bool Unlocked { get; init; }
 }
 
 /// <summary>Payload of <c>winlogrotate import</c>.</summary>

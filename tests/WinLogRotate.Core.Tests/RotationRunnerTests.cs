@@ -5,6 +5,7 @@ using WinLogRotate.Core.Compression;
 using WinLogRotate.Core.Configuration;
 using WinLogRotate.Core.Engine;
 using WinLogRotate.Core.Globbing;
+using WinLogRotate.Core.Io;
 using WinLogRotate.Core.Journaling;
 using WinLogRotate.Core.Safety;
 using WinLogRotate.Core.State;
@@ -37,6 +38,10 @@ public sealed class RotationRunnerTests : IDisposable
 
     private RotationRunner Runner(StateStore state, IArchiveSource source) =>
         new(new NullJournal(), new PathGuard(new GuardOptions()), state, _clock, source);
+
+    private RotationRunner Runner(StateStore state, IWriterInspector inspector) =>
+        new(new NullJournal(), new PathGuard(new GuardOptions()), state, _clock,
+            new NoArchives(), hookHost: null, hookGate: null, inspector);
 
     /// <summary>Nothing on disk; every rotation here is a decision, not an operation.</summary>
     private sealed class NoArchives : IArchiveSource
@@ -300,5 +305,199 @@ public sealed class RotationRunnerTests : IDisposable
 
         ConfigBinder.BindJob(toml, new DiagnosticBag()).ShouldNotBeNull()
             .Kind.ShouldBe(JobKind.Rotate);
+    }
+
+    // ---- the lock strategy --------------------------------------------------------------------
+
+    private JobPlan PlanWith(
+        EffectiveJob job, StateStore state, IWriterInspector inspector, RunOptions options,
+        List<CliDiagnostic>? reported = null) =>
+        Runner(state, inspector)
+            .PlanRotation(job, [Live()], options, Now, d => reported?.Add(d));
+
+    private StateStore Due(out string path)
+    {
+        var state = State();
+        path = @"C:\logs\app.log";
+        state.Set(path, new PathState { Path = path, LastRotated = Now.AddDays(-2) });
+        return state;
+    }
+
+    /// <summary>
+    /// <c>auto</c> is resolved by asking the file, before anything is planned.
+    /// </summary>
+    /// <remarks>
+    /// The defect this milestone exists for. <c>LockStrategy.Auto</c> fell into
+    /// <c>RotateJobPlanner</c>'s discard arm and silently became <c>rename</c> - the strategy that
+    /// fails outright on a writer withholding FILE_SHARE_DELETE, which is exactly the writer
+    /// somebody chooses <c>auto</c> to cope with. This is the test that fails if the wiring in
+    /// PlanRotation is removed.
+    /// </remarks>
+    [Fact]
+    public void AutoIsResolvedByAskingTheFile()
+    {
+        var state = Due(out var path);
+        var probe = new FakeInspector(ProbeVerdict.CopyTruncate);
+
+        var plan = PlanWith(Job() with { LockStrategy = LockStrategy.Auto }, state, probe, new RunOptions());
+
+        probe.Classified.ShouldBe(1);
+        plan.Operations.ShouldContain(o => o.Action == PlannedAction.CopyTruncate);
+
+        // copytruncate keeps the inode, so there is nothing to recreate.
+        plan.Operations.ShouldNotContain(o => o.Action == PlannedAction.Create);
+
+        // And the operation carries the resolved strategy, not the word "auto".
+        plan.Operations.First(o => o.Action == PlannedAction.CopyTruncate)
+            .Strategy.ShouldBe(LockStrategy.CopyTruncate);
+
+        state.Get(path).ShouldNotBeNull().Probe.ShouldBe(ProbeVerdict.CopyTruncate);
+    }
+
+    /// <summary>A file nothing can open is skipped, with the reason, rather than renamed.</summary>
+    [Fact]
+    public void AutoSkipsAFileNothingCanOpen()
+    {
+        var reported = new List<CliDiagnostic>();
+        var state = Due(out _);
+
+        var plan = PlanWith(
+            Job() with { LockStrategy = LockStrategy.Auto }, state,
+            new FakeInspector(ProbeVerdict.None), new RunOptions(), reported);
+
+        plan.Operations.ShouldAllBe(o => o.Action == PlannedAction.Skip);
+        reported.ShouldContain(d => d.Code == DiagnosticCode.FileLocked);
+    }
+
+    /// <summary>A quarantined path is skipped and the plan says why.</summary>
+    [Fact]
+    public void AQuarantinedPathIsSkippedWithItsReason()
+    {
+        var reported = new List<CliDiagnostic>();
+        var state = Due(out var path);
+        state.Update(path, e => e with { NulFill = NulFillVerdict.Confirmed });
+
+        var plan = PlanWith(
+            Job() with { LockStrategy = LockStrategy.CopyTruncate }, state,
+            new FakeInspector(), new RunOptions(), reported);
+
+        plan.Operations.ShouldAllBe(o => o.Action == PlannedAction.Skip);
+        plan.Operations[0].Reason.ShouldContain("refused");
+        reported.ShouldContain(d => d.Code == DiagnosticCode.StrategyUnavailable);
+    }
+
+    /// <summary>A log nothing is going to touch is never probed.</summary>
+    [Fact]
+    public void AFileThatIsNotDueIsNeverProbed()
+    {
+        var state = State();
+        state.Set(@"C:\logs\app.log", new PathState
+        {
+            Path = @"C:\logs\app.log",
+            LastRotated = Now.AddMinutes(-5),
+        });
+
+        var probe = new FakeInspector(ProbeVerdict.Rename);
+        PlanWith(Job() with { LockStrategy = LockStrategy.Auto }, state, probe, new RunOptions());
+
+        probe.Classified.ShouldBe(0);
+    }
+
+    /// <summary>
+    /// A dry run asks the file and writes nothing down.
+    /// </summary>
+    /// <remarks>
+    /// It must probe, or it would report rename for a file that would really be copied - breaking
+    /// the property that makes --dry-run worth trusting, that it is the same code path stopped one
+    /// step earlier. And it must not persist, because judging <i>consumes</i> the recorded
+    /// truncation and a dry run destroying the real run's only evidence would be worse than
+    /// useless.
+    /// </remarks>
+    [Fact]
+    public void ADryRunProbesAndPersistsNothing()
+    {
+        var state = Due(out var path);
+        var probe = new FakeInspector(ProbeVerdict.CopyTruncate);
+
+        PlanWith(
+            Job() with { LockStrategy = LockStrategy.Auto }, state, probe,
+            new RunOptions { DryRun = true });
+
+        probe.Classified.ShouldBe(1);
+        state.Get(path).ShouldNotBeNull().Probe.ShouldBe(ProbeVerdict.Unknown);
+        state.Get(path).ShouldNotBeNull().ProbedAt.ShouldBeNull();
+    }
+
+    /// <summary>
+    /// A truncation recorded last run is judged, whether or not the log is due now.
+    /// </summary>
+    /// <remarks>
+    /// Gating the judgement on dueness would leave a monthly job's evidence unexamined for a
+    /// month, and a minsize-suppressed job's unexamined for ever - which is one more
+    /// multi-gigabyte night each time.
+    /// </remarks>
+    [Fact]
+    public void APendingTruncationIsJudgedEvenWhenTheLogIsNotDue()
+    {
+        var reported = new List<CliDiagnostic>();
+        var state = State();
+        var path = @"C:\logs\app.log";
+
+        state.Set(path, new PathState
+        {
+            Path = path,
+            LastRotated = Now.AddMinutes(-5),
+            LastTruncatedFrom = 2L << 20,
+            LastTruncatedTo = 0,
+        });
+
+        var probe = new FakeInspector
+        {
+            Next = new WriterSample { Opened = true, Size = 2L << 20, BytesRead = 4096, NulRun = 4096 },
+        };
+
+        PlanWith(Job(), state, probe, new RunOptions(), reported);
+
+        probe.Sampled.ShouldBe(1);
+        state.Get(path).ShouldNotBeNull().NulFill.ShouldBe(NulFillVerdict.Confirmed);
+        reported.ShouldContain(d => d.Code == DiagnosticCode.NulFillDetected);
+    }
+
+    /// <summary>Nothing was truncated, so nothing is looked at.</summary>
+    [Fact]
+    public void ALogWithNoRecordedTruncationIsNotSampled()
+    {
+        var probe = new FakeInspector();
+        PlanWith(Job(), Due(out _), probe, new RunOptions());
+
+        probe.Sampled.ShouldBe(0);
+    }
+
+    /// <summary>
+    /// The planner refuses to plan an unresolved <c>auto</c> rather than guessing.
+    /// </summary>
+    /// <remarks>
+    /// Belt to the braces above. The old discard arm made "auto silently means rename" a one-line
+    /// regression away; this makes it unreachable instead of merely fixed.
+    /// </remarks>
+    [Fact]
+    public void ThePlannerRefusesAnUnresolvedAuto()
+    {
+        var verdicts = new Dictionary<string, DueVerdict>(StringComparer.OrdinalIgnoreCase)
+        {
+            [@"C:\logs\app.log"] = new()
+            {
+                Due = true,
+                Reason = DueReason.Scheduled,
+                Explanation = "due",
+            },
+        };
+
+        Should.Throw<InvalidOperationException>(() => RotateJobPlanner.Plan(
+                Job() with { LockStrategy = LockStrategy.Auto },
+                LogSeries.Discover(Job(), [Live()], new NoArchives()),
+                verdicts,
+                Now))
+            .Message.ShouldContain("must be resolved");
     }
 }

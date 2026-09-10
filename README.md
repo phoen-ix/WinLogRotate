@@ -181,6 +181,13 @@ differs in exactly one line. Your comments survive — including the "do NOT ena
 shipper can't read .gz" note that explains why a setting is the way it is. YAML and JSON both
 destroy comments on write.
 
+`lockstrategy = "auto"` asks the file what its writer permits and picks accordingly — rename if it
+allows `FILE_SHARE_DELETE`, copytruncate if it allows writing, a copy if it allows only reading,
+and nothing at all if it allows none of those, which is what log4net's default `ExclusiveLock`
+looks like. And `copytruncate` is watched: if the writer resumes at a cached offset and leaves NTFS
+to zero-fill the gap, that is detected from the NUL run where the truncation left the file, and the
+strategy is refused for that path from then on. See [hooks](docs/hooks.md) for the other half.
+
 `postrotate` replaces `kill -HUP`, which Windows doesn't have: `service:paramchange:NAME` sends
 `SERVICE_CONTROL_PARAMCHANGE`, `event:Global\Name` signals a named event, and `command:` runs a
 program — no shell, ever, and an ambiguous command line is refused rather than guessed at. Hooks run
@@ -302,9 +309,21 @@ from elevation rather than from the install.
   covered on the Windows leg, but nothing has ever clicked the button that uses it.
 - **Nothing unelevated.** The runner is an administrator throughout, so the read-only banner, the
   "needs administrator" refusals and the UAC child-process elevation are untested.
-- **No locked files.** The smoke test rotates files nothing holds open, so `LockProbe`,
-  `copytruncate` and the NUL-fill detector — the hardest and most Windows-specific code here —
-  have never met a real contended handle.
+- **No writer that genuinely misbehaves.** The NUL-fill is reproduced by a handle that caches its
+  own file offset and resumes at it — which is what log4net and most C++ `std::ofstream`
+  implementations do — but it is not log4net. No runner has IIS, SQL Server or http.sys installed,
+  so the share masks those take are read from documentation rather than observed.
+- **Nothing probed as SYSTEM against a handle held by a different account.** Every probe in CI is
+  run by, and against a handle held by, the same administrator. `ProbeIdentity` exists because a
+  verdict reached by SYSTEM says nothing about what a desktop user can do to the same file, and
+  that asymmetry has been reasoned about and never seen.
+- **The retry backoff is untested above one attempt.** `RetryPolicy` sleeps for real, deliberately,
+  because it is waiting for another process to release a handle and no test clock can hurry that
+  along. That the delay doubles and caps at five seconds is asserted as arithmetic, never as
+  elapsed time.
+- **`auto` resolving to `rename` is the one case CI cannot tell from the old bug.** Before
+  milestone 14 `auto` silently meant `rename`, so that case produces identical files either way. It
+  is separated only by the journal recording which strategy was chosen.
 - **The .NET bootstrap is skipped** (`/NORUNTIME`), so the winget detection and install path is
   unexercised.
 - **English locale, no domain, no UNC paths, no IIS installed.**

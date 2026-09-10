@@ -81,7 +81,7 @@ same guard is a Warning. The **ID** never varies, which is what an alert rule sh
 | 124 | Warning | First run: a baseline was recorded | `LR2005` |
 | 130 | Error | A rotation failed | `LR3001` |
 | 131 | Error | The file was locked by another process | `LR3002` |
-| 132 | Warning | The configured lock strategy was unavailable | `LR3003` |
+| 132 | *varies* | The configured lock strategy was unavailable | `LR3003` |
 | 133 | Warning | A previous run abandoned the rotation mutex | `LR3101` |
 | 134 | Error | NUL-fill detected; `copytruncate` quarantined for that path | `LR3102` |
 | 135 | Error | A hook ran and failed, timed out, or could not be started | `LR3103` |
@@ -102,6 +102,14 @@ same guard is a Warning. The **ID** never varies, which is what an alert rule sh
 | 195 | Warning | A credential is written in a world-readable configuration file | `LR9006` |
 | 196 | Error | The secret store, or the key protecting it, is unsafe or was repaired | `LR9007` |
 | 999 | Warning | Unclassified, or the per-invocation event cap was reached | — |
+
+`LR3003`'s severity is contextual, and deliberately so. It is an **Error** when a job asking
+explicitly for `copytruncate` is skipped because that path has a confirmed NUL-fill — the log is
+not being rotated, and that is a failure. It is a **Warning** when `lockstrategy = "auto"` degrades
+to `copy`, said every run because the live file keeps growing for as long as it lasts. It is
+**Info** when a recorded truncation is abandoned unexamined, which costs nothing. `LR3102` is the
+detection, raised once; `LR3003` is the ongoing condition — an alert rule needs to tell "a disk is
+being destroyed tonight" from "this path has been excluded since Tuesday".
 
 `Severity.Critical` is written as an Error event: the registered `TypesSupported` is 7, which is
 Error, Warning and Information, and there is no fourth type. The distinction survives in the

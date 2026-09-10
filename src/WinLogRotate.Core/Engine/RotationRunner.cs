@@ -2,6 +2,7 @@ using WinLogRotate.Contracts;
 using WinLogRotate.Core.Configuration;
 using WinLogRotate.Core.Globbing;
 using WinLogRotate.Core.Hooks;
+using WinLogRotate.Core.Io;
 using WinLogRotate.Core.Journaling;
 using WinLogRotate.Core.Safety;
 using WinLogRotate.Core.State;
@@ -92,8 +93,32 @@ public sealed record RunReport
 /// <summary>Runs every due job.</summary>
 public sealed class RotationRunner(
     IJournal journal, PathGuard guard, StateStore state, TimeProvider clock,
-    IArchiveSource? archiveSource = null, IHookHost? hookHost = null, HookGate? hookGate = null)
+    IArchiveSource? archiveSource = null, IHookHost? hookHost = null, HookGate? hookGate = null,
+    IWriterInspector? inspector = null)
 {
+    /// <summary>
+    /// What can be asked of a live log: what its writer permits, and what it looks like now.
+    /// </summary>
+    /// <remarks>
+    /// Optional and defaulted for <see cref="IArchiveSource"/>'s reason. Unlike the hook gate it
+    /// defaults to the real thing rather than to refusing: there is no trust decision here, a
+    /// probe opens a handle and closes it, and a wrong answer costs a fallback to rename - the
+    /// documented default, which fails loudly.
+    /// </remarks>
+    private readonly IWriterInspector _inspector = inspector ?? new WriterInspector();
+
+    /// <summary>
+    /// Which class of token this run's probes were reached with.
+    /// </summary>
+    /// <remarks>
+    /// Taken once, for the reason the hook gate is: nothing inside one run changes it. Recorded
+    /// beside every verdict because a verdict reached by SYSTEM says nothing about what a desktop
+    /// user can do to the same file - which is what <see cref="ProbeIdentity"/> exists to say, and
+    /// what nothing has ever recorded.
+    /// </remarks>
+    private readonly ProbeIdentity _identity =
+        Privilege.IsElevated() ? ProbeIdentity.Elevated : ProbeIdentity.Standard;
+
     /// <summary>
     /// The bracket around each job's execution.
     /// </summary>
@@ -129,9 +154,23 @@ public sealed class RotationRunner(
 
         // Both lists are appended together, always. Keeping them in step is the whole contract
         // between the flat strings the envelope carries and the classified form callers group by.
-        void Fail(CliDiagnostic d)
+        //
+        // It also counts, which it did not: every call site incremented `failed` separately, so a
+        // diagnostic raised from inside PlanRotation could be an Error and cost nothing. And the
+        // FirstRunBaseline Info went into `errors`, which RunCommand publishes as the --json
+        // errors array - so a healthy first run reported an error it had not had.
+        void Report(CliDiagnostic d)
         {
-            errors.Add(d.Message);
+            if (d.Severity >= Severity.Error)
+            {
+                failed++;
+            }
+
+            if (d.Severity >= Severity.Warning)
+            {
+                errors.Add(d.Message);
+            }
+
             diagnostics.Add(d);
         }
 
@@ -144,7 +183,15 @@ public sealed class RotationRunner(
             Reason = options.DryRun ? "dry run" : null,
         });
 
-        var executor = new PlanExecutor(journal, guard, clock);
+        // What was truncated this run, so the same run can look at the result. The callback has
+        // existed since copytruncate did and was never once assigned, so the number it offers was
+        // computed on every truncation and dropped on the floor every time.
+        var truncated = new Dictionary<string, TruncationOutcome>(StringComparer.OrdinalIgnoreCase);
+
+        var executor = new PlanExecutor(journal, guard, clock)
+        {
+            RecordTruncation = (path, outcome) => truncated[path] = outcome,
+        };
 
         foreach (var job in config.Jobs)
         {
@@ -166,9 +213,8 @@ public sealed class RotationRunner(
                 var decision = guard.CheckPattern(pattern);
                 if (!decision.IsAllowed)
                 {
-                    failed++;
                     refused = true;
-                    Fail(Diagnose.Refusal(decision, job.Name));
+                    Report(Diagnose.Refusal(decision, job.Name));
                     continue;
                 }
 
@@ -178,8 +224,7 @@ public sealed class RotationRunner(
             var count = guard.CheckMatchCount(job.Name, matched.Count);
             if (!count.IsAllowed)
             {
-                failed++;
-                Fail(Diagnose.Refusal(count, job.Name));
+                Report(Diagnose.Refusal(count, job.Name));
                 continue;
             }
 
@@ -189,8 +234,7 @@ public sealed class RotationRunner(
             // failure count and puts two lines in front of an operator for one cause.
             if (matched.Count == 0 && !job.MissingOk && !refused)
             {
-                failed++;
-                Fail(new CliDiagnostic
+                Report(new CliDiagnostic
                 {
                     Severity = Severity.Error,
                     Code = DiagnosticCode.FileMissing,
@@ -203,7 +247,7 @@ public sealed class RotationRunner(
 
             var plan = job.Kind == JobKind.Manage
                 ? ManageJobPlanner.Plan(job, matched, now)
-                : PlanRotation(job, matched, options, now, Fail);
+                : PlanRotation(job, matched, options, now, Report);
 
             // Only when a live log is actually moving. A job whose plan is "compress an archive
             // from last month" has not rotated anything, and a reload hook that fired for it would
@@ -217,10 +261,9 @@ public sealed class RotationRunner(
                     job.Name, HookStage.PreRotate, job.PreRotate, job.HookTimeout,
                     options.DryRun, started, options.RunDeadline, job.SourceFile);
 
-                failed += pre.Failed;
                 foreach (var d in pre.Diagnostics)
                 {
-                    Fail(d);
+                    Report(d);
                 }
 
                 // logrotate's asymmetry, and the reason the two stages are not one loop: a
@@ -271,12 +314,21 @@ public sealed class RotationRunner(
                 // nothing to undo and nothing to skip: the rotation stands and the failure is
                 // reported against the job. Rolling a rotation back because a reload script
                 // exited 1 would be much the more surprising of the two.
-                failed += post.Failed;
                 foreach (var d in post.Diagnostics)
                 {
-                    Fail(d);
+                    Report(d);
                 }
             }
+
+            // After the hook, deliberately. service:paramchange: is the Windows kill -HUP: it
+            // tells the writer to reopen, which is precisely the remedy for a cached offset.
+            // Looking before it would quarantine a path whose hook fixes it every single night.
+            foreach (var (path, outcome) in truncated)
+            {
+                Verify(job, path, outcome, now, Report);
+            }
+
+            truncated.Clear();
         }
 
         journal.Write(new CliEvent
@@ -308,6 +360,65 @@ public sealed class RotationRunner(
             Plans = plans,
         };
     }
+
+    /// <summary>
+    /// Looks at a log we truncated moments ago, and records only bad news.
+    /// </summary>
+    /// <remarks>
+    /// A confirmed NUL-fill here saves a whole interval: the alternative is learning about it on
+    /// the next run, which for a daily job is one more multi-gigabyte night. Anything else is
+    /// <b>not</b> recorded, because a clean reading this soon may only mean the writer has not
+    /// written yet - the baseline is left in place for the next run to settle with a full
+    /// interval of evidence behind it.
+    /// </remarks>
+    private void Verify(
+        EffectiveJob job, string path, TruncationOutcome outcome, DateTimeOffset now,
+        Action<CliDiagnostic> report)
+    {
+        state.Update(path, existing => existing with
+        {
+            LastTruncatedFrom = outcome.SizeBefore,
+            LastTruncatedTo = outcome.SizeAfter,
+            LastTruncatedAt = now,
+            TruncationChecks = 0,
+        });
+
+        var sample = _inspector.Sample(path, outcome.SizeAfter);
+        var judged = LockChoice.Judge(job.Name, path, state.Get(path)!, sample);
+
+        if (judged.Verdict != NulFillVerdict.Confirmed)
+        {
+            // Including the file's identity, so the next run can tell "the writer behaved" from
+            // "somebody replaced the file".
+            if (sample.Identity is not null)
+            {
+                state.Update(path, existing => existing with { FileIdentity = sample.Identity });
+            }
+
+            return;
+        }
+
+        Settle(path, judged, now);
+
+        if (judged.Diagnostic is { } d)
+        {
+            report(d);
+        }
+    }
+
+    /// <summary>Writes a reached verdict, and the numbers that reached it.</summary>
+    private void Settle(string path, NulFillJudgement judged, DateTimeOffset now) =>
+        state.Update(path, existing => existing with
+        {
+            NulFill = judged.Verdict ?? existing.NulFill,
+            NulFillEvidence = judged.Verdict is not null ? judged.Evidence : existing.NulFillEvidence,
+            NulFillAt = judged.Verdict is not null ? now : existing.NulFillAt,
+            NulFillSizeBefore = judged.SizeBefore ?? existing.NulFillSizeBefore,
+            NulFillSizeAfter = judged.SizeAfter ?? existing.NulFillSizeAfter,
+            LastTruncatedFrom = judged.ClearBaseline ? null : existing.LastTruncatedFrom,
+            LastTruncatedTo = judged.ClearBaseline ? null : existing.LastTruncatedTo,
+            TruncationChecks = judged.ClearBaseline ? 0 : existing.TruncationChecks + 1,
+        });
 
     /// <summary>
     /// The same plan, restated as the nothing that actually happened.
@@ -405,6 +516,63 @@ public sealed class RotationRunner(
                 : RotationCriteria.Evaluate(
                     job, state.Get(file.Path)?.LastRotated, now, file.Length, file.LastWriteUtc,
                     options.Force);
+
+            // Phase A - judge the truncation recorded last time, whether or not the log is due.
+            // Gating this on dueness would leave a monthly job's evidence unexamined for a month,
+            // and a minsize-suppressed job's unexamined for ever.
+            if (state.Get(file.Path) is { LastTruncatedFrom: not null } pending)
+            {
+                var sample = _inspector.Sample(file.Path, pending.LastTruncatedTo ?? 0);
+                var judged = LockChoice.Judge(job.Name, file.Path, pending, sample);
+
+                if (!options.DryRun)
+                {
+                    Settle(file.Path, judged, now);
+                }
+
+                if (judged.Diagnostic is { } verdictNews)
+                {
+                    report(verdictNews);
+                }
+            }
+
+            // Phase B - resolve the strategy, for a log that is actually going to move. Probing a
+            // file nothing will touch is an open per file per run buying a decision nobody acts on.
+            if (due[file.Path].Due)
+            {
+                var decision = LockChoice.Choose(
+                    job, file.Path, state.Get(file.Path)?.NulFill ?? NulFillVerdict.Unknown,
+                    _inspector);
+
+                if (decision.Diagnostic is { } choiceNews)
+                {
+                    report(choiceNews);
+                }
+
+                if (decision.Probed && !options.DryRun)
+                {
+                    state.Update(file.Path, existing => existing with
+                    {
+                        Probe = decision.Probe,
+                        ProbedAs = _identity,
+                        ProbedAt = now,
+                        ProbeError = decision.ProbeError,
+                    });
+                }
+
+                due[file.Path] = decision.Strategy is { } chosen
+                    ? due[file.Path] with { Strategy = chosen, Explanation = decision.Explanation }
+
+                    // Nothing can touch it. Reported as not due rather than as a special case,
+                    // so the planner's existing Skip path carries the reason, the clock does not
+                    // advance and the hooks do not fire - all of which is already correct.
+                    : new DueVerdict
+                    {
+                        Due = false,
+                        Reason = DueReason.StrategyRefused,
+                        Explanation = decision.Explanation,
+                    };
+            }
         }
 
         return RotateJobPlanner.Plan(job, LogSeries.Discover(job, consider, _archives), due, now);

@@ -129,3 +129,34 @@ A half-translated script that runs the wrong thing as SYSTEM is worse than one t
 
 See [hooks](hooks.md) for the grammar, the timeout, the configuration-directory requirement and
 what a failure in each stage costs.
+
+## Locked files
+
+logrotate runs where a rename always works. Windows is not that: renaming or deleting a file needs
+`DELETE` access, and that is only granted when **every** existing handle was opened with
+`FILE_SHARE_DELETE` — which MSVCRT's `fopen("a")`, .NET's default `FileShare.Read`, IIS, http.sys
+and SQL Server all withhold.
+
+| `lockstrategy` | What it does |
+|---|---|
+| `rename` | Atomic `MoveFileEx`, then recreate the log. **The default**, because it fails loudly rather than silently doing something else. |
+| `copytruncate` | Copy the contents aside, then truncate in place. The inode never changes, so the writer keeps working. |
+| `copy` | Archive a snapshot and leave the original alone. It keeps growing. |
+| `auto` | Ask the file which of those its writer permits, and take the best. Probed fresh every run. |
+
+`copytruncate` carries a hazard logrotate does not have on Linux. A writer that caches its own file
+offset — log4net, and many C++ `std::ofstream` implementations — does not seek back to zero when
+the file is truncated underneath it. Its next write lands at the offset it remembers and NTFS
+zero-fills everything in between, producing a file of NUL bytes plus one line of log that reappears
+at its old size every rotation, for ever.
+
+That is detected. The size the file was truncated from and the offset it was left at are recorded,
+and the next run looks at the bytes **at that offset** — a NUL run there is the signature itself,
+where a healthy writer leaves log text. Once confirmed the verdict is permanent for that path:
+`copytruncate` is refused (`LR3102`, then `LR3003` on every later run), `auto` takes the next best
+strategy instead, and a job that asks for `copytruncate` explicitly is skipped rather than
+substituted — it said what it wanted, and neither alternative is what it asked for.
+
+A path that returns to its old size but carries log text at the resume offset is **not** quarantined.
+A log producing four gigabytes a day is back at four gigabytes every morning for entirely innocent
+reasons, and the verdict cannot be undone.

@@ -51,4 +51,29 @@ internal static partial class NativeMethods
     [LibraryImport("kernel32.dll", EntryPoint = "MoveFileExW", StringMarshalling = StringMarshalling.Utf16, SetLastError = true)]
     [return: MarshalAs(UnmanagedType.Bool)]
     internal static partial bool MoveFileEx(string lpExistingFileName, string? lpNewFileName, uint dwFlags);
+
+    /// <summary>Enough of BY_HANDLE_FILE_INFORMATION to identify a file.</summary>
+    /// <remarks>
+    /// Blittable and laid out sequentially so the source-generated stub can marshal it without a
+    /// hand-written unsafe block, which is the promise this project's csproj makes.
+    /// </remarks>
+    [StructLayout(LayoutKind.Sequential)]
+    internal struct ByHandleFileInformation
+    {
+        internal uint FileAttributes;
+        internal long CreationTime;
+        internal long LastAccessTime;
+        internal long LastWriteTime;
+        internal uint VolumeSerialNumber;
+        internal uint FileSizeHigh;
+        internal uint FileSizeLow;
+        internal uint NumberOfLinks;
+        internal uint FileIndexHigh;
+        internal uint FileIndexLow;
+    }
+
+    [LibraryImport("kernel32.dll", EntryPoint = "GetFileInformationByHandle", SetLastError = true)]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    internal static partial bool GetFileInformationByHandle(
+        SafeFileHandle hFile, out ByHandleFileInformation lpFileInformation);
 }

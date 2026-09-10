@@ -4,6 +4,22 @@ using WinLogRotate.Core.Safety;
 
 namespace WinLogRotate.Core.Io;
 
+/// <summary>What one truncation did, in the two numbers the NUL-fill detector needs.</summary>
+/// <remarks>
+/// A record rather than the bare pre-truncation size it used to return. <see cref="SizeAfter"/>
+/// is the offset the file was left at, and the detector must sample <b>there</b>: tail
+/// preservation means a truncated file usually begins with log text, so reading from byte zero
+/// finds none of the NUL run that is the failure's actual signature.
+/// </remarks>
+public sealed record TruncationOutcome
+{
+    /// <summary>What the file measured immediately before it was cut.</summary>
+    public required long SizeBefore { get; init; }
+
+    /// <summary>Where the cut left it, and therefore where a NUL gap would begin.</summary>
+    public required long SizeAfter { get; init; }
+}
+
 /// <summary>
 /// The destructive file primitives, each with the Win32 semantics spelled out.
 /// </summary>
@@ -50,11 +66,20 @@ public static class FileOps
     /// </para>
     /// <para>
     /// And a writer that caches its own file offset will resume at it, leaving NTFS to
-    /// zero-fill the gap - see <see cref="NulFillDetector"/>. The size before truncation is
-    /// returned so the caller can record it and judge that on the following run.
+    /// zero-fill the gap - see <see cref="NulFillDetector"/>. The sizes on either side of the
+    /// truncation are returned so the caller can record them and judge that afterwards.
+    /// </para>
+    /// <para>
+    /// <b>The archive is written to a temporary name and moved into place before anything is
+    /// truncated.</b> This is not tidiness. The whole call is wrapped in
+    /// <see cref="RetryPolicy"/>, and <c>SetLength</c> can throw ERROR_LOCK_VIOLATION - which
+    /// that policy treats as transient - after the truncation has already applied. Writing
+    /// straight to the destination meant the retry reopened a now-empty source and wrote a
+    /// zero-byte archive over the one it had just successfully saved. The retry destroyed the
+    /// data the rotation existed to preserve.
     /// </para>
     /// </remarks>
-    public static long CopyTruncate(string source, string destination, bool truncate)
+    public static TruncationOutcome CopyTruncate(string source, string destination, bool truncate)
     {
         var native = WinPath.ToExtendedLength(WinPath.Normalize(source));
 
@@ -85,7 +110,11 @@ public static class FileOps
             Directory.CreateDirectory(directory);
         }
 
-        using (var output = new FileStream(destination, FileMode.Create, FileAccess.Write, FileShare.None))
+        // Written aside, then moved. See the remarks: a retry that re-ran this after a partial
+        // success used to overwrite a good archive with an empty one.
+        var staging = destination + ".part";
+
+        using (var output = new FileStream(staging, FileMode.Create, FileAccess.Write, FileShare.None))
         {
             var buffer = new byte[81920];
             var remaining = length;
@@ -105,6 +134,10 @@ public static class FileOps
             output.Flush(flushToDisk: true);
         }
 
+        File.Move(staging, destination, overwrite: true);
+
+        var resumeOffset = 0L;
+
         if (truncate)
         {
             // Cut at the offset we copied to, not at zero: bytes the writer appended while the
@@ -114,10 +147,13 @@ public static class FileOps
             {
                 var tail = new byte[written - length];
                 stream.Position = length;
-                var read = stream.Read(tail, 0, tail.Length);
+
+                // ReadExactly, not Read. A single Read may return short, and what it would drop
+                // is precisely the tail this branch exists to save.
+                stream.ReadExactly(tail);
                 stream.SetLength(0);
                 stream.Position = 0;
-                stream.Write(tail, 0, read);
+                stream.Write(tail);
             }
             else
             {
@@ -125,9 +161,18 @@ public static class FileOps
             }
 
             stream.Flush();
+
+            // Read back rather than computed. This is where a writer holding a cached offset
+            // will leave a NUL gap beginning, and the detector samples at exactly this offset -
+            // so it has to be what the file really is, not what the arithmetic above expected.
+            resumeOffset = stream.Length;
         }
 
-        return length;
+        return new TruncationOutcome
+        {
+            SizeBefore = length,
+            SizeAfter = resumeOffset,
+        };
     }
 
     /// <summary>Recreates the log a rename moved away, so the writer finds it again.</summary>

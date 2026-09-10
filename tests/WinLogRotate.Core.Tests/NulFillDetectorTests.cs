@@ -36,10 +36,60 @@ public class NulFillDetectorTests
     public void ALeadingNulRunIsConclusiveOnItsOwn()
     {
         var result = NulFillDetector.Judge(
-            sizeBefore: FourGigabytes, sizeNow: 1024, leadingNulBytes: 4096);
+            sizeBefore: FourGigabytes, sizeNow: 1024, nulRun: 4096);
 
         result.Verdict.ShouldBe(NulFillVerdict.Confirmed);
         result.Explanation.ShouldNotBeNull().ShouldContain("NUL bytes");
+    }
+
+    /// <summary>
+    /// A small file with a NUL run is still the failure.
+    /// </summary>
+    /// <remarks>
+    /// The size floor used to be asked first, so a 512 KB log carrying four thousand NUL bytes
+    /// came back Unknown. The floor exists because proportional reasoning is noise below a
+    /// megabyte - and a NUL run is not proportional reasoning.
+    /// </remarks>
+    [Fact]
+    public void ANulRunIsConclusiveBelowTheSizeFloorToo()
+    {
+        NulFillDetector.Judge(sizeBefore: 512 * 1024, sizeNow: 512 * 1024, nulRun: 4096)
+            .Verdict.ShouldBe(NulFillVerdict.Confirmed);
+    }
+
+    /// <summary>
+    /// Which rule fired is reported, because the two are not interchangeable.
+    /// </summary>
+    /// <remarks>
+    /// A NUL run means the same thing whenever it is seen. The size ratio is an inference whose
+    /// force depends on how recently the truncation happened - one full interval later, a
+    /// steadily-growing log returns to its old size for entirely innocent reasons. The caller
+    /// cannot apply that distinction without being told which rule produced the verdict.
+    /// </remarks>
+    [Fact]
+    public void TheEvidenceSaysWhichRuleFired()
+    {
+        NulFillDetector.Judge(FourGigabytes, FourGigabytes)
+            .Evidence.ShouldBe(NulFillEvidence.ReGrowth);
+
+        NulFillDetector.Judge(FourGigabytes, 1024, nulRun: 4096)
+            .Evidence.ShouldBe(NulFillEvidence.NulSignature);
+    }
+
+    /// <summary>Not sampling is not the same as sampling and finding log text.</summary>
+    /// <remarks>
+    /// Zero used to mean both. A file that could not be opened would then be recorded as clean -
+    /// a positive claim about the writer's behaviour, made on no evidence at all.
+    /// </remarks>
+    [Fact]
+    public void AnUnsampledFileIsNotReportedAsHavingBeenLookedAt()
+    {
+        // Both resume from empty, so both are Clean. Only one of them is Clean on evidence.
+        NulFillDetector.Judge(FourGigabytes, 1024, nulRun: null)
+            .Evidence.ShouldBe(NulFillEvidence.None);
+
+        NulFillDetector.Judge(FourGigabytes, 1024, nulRun: 0)
+            .Evidence.ShouldBe(NulFillEvidence.NulSignature);
     }
 
     [Fact]

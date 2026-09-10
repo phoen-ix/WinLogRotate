@@ -21,6 +21,55 @@ public sealed record ProbeResult
 }
 
 /// <summary>
+/// What a probe verdict permits, in the configuration's vocabulary.
+/// </summary>
+/// <remarks>
+/// Deliberately not on <see cref="LockProbe"/>, which is
+/// <c>[SupportedOSPlatform("windows")]</c> at type scope - an annotation every member inherits.
+/// These two are pure functions of two enums, and the planner needs them: <c>lockstrategy =
+/// "auto"</c> cannot be resolved anywhere the Linux test leg can reach while they sit on a
+/// Windows-only type, because CA1416 is an error here. <c>Win32Error</c> makes the same argument
+/// for itself in its own remarks.
+/// </remarks>
+public static class ProbeSupport
+{
+    /// <summary>Maps a probe verdict onto the strategy a job configured, or reports why not.</summary>
+    public static bool Supports(ProbeVerdict verdict, Configuration.LockStrategy strategy) =>
+        strategy switch
+        {
+            Configuration.LockStrategy.Rename => verdict is ProbeVerdict.Rename,
+            Configuration.LockStrategy.CopyTruncate => verdict is ProbeVerdict.Rename or ProbeVerdict.CopyTruncate,
+            Configuration.LockStrategy.Copy => verdict is not ProbeVerdict.None,
+            Configuration.LockStrategy.Auto => verdict is not ProbeVerdict.None,
+            _ => false,
+        };
+
+    /// <summary>
+    /// The best strategy a verdict actually allows, for <c>lockstrategy = "auto"</c>.
+    /// </summary>
+    /// <param name="allowCopyTruncate">
+    /// False once a path has a confirmed NUL-fill. The verdict is about what the writer permits,
+    /// which does not change because we learned the writer misbehaves - so the exclusion belongs
+    /// here, at the choice, rather than in the probe.
+    /// </param>
+    public static Configuration.LockStrategy? Best(ProbeVerdict verdict, bool allowCopyTruncate = true) =>
+        verdict switch
+        {
+            ProbeVerdict.Rename => Configuration.LockStrategy.Rename,
+
+            // Falls through to Copy rather than to nothing: the operator asked auto to pick what
+            // works, and a copy still archives something. It costs unbounded growth of the live
+            // file, which is why the caller warns every run rather than reporting it once.
+            ProbeVerdict.CopyTruncate => allowCopyTruncate
+                ? Configuration.LockStrategy.CopyTruncate
+                : Configuration.LockStrategy.Copy,
+
+            ProbeVerdict.Copy => Configuration.LockStrategy.Copy,
+            _ => null,
+        };
+}
+
+/// <summary>
 /// Works out what can actually be done to a log file that something else is writing.
 /// </summary>
 /// <remarks>
@@ -99,26 +148,6 @@ public static class LockProbe
             Explanation = $"The file cannot be opened at all: {Win32Error.Describe(error)}.",
         };
     }
-
-    /// <summary>Maps a probe verdict onto the strategy a job configured, or reports why not.</summary>
-    public static bool Supports(ProbeVerdict verdict, Configuration.LockStrategy strategy) =>
-        strategy switch
-        {
-            Configuration.LockStrategy.Rename => verdict is ProbeVerdict.Rename,
-            Configuration.LockStrategy.CopyTruncate => verdict is ProbeVerdict.Rename or ProbeVerdict.CopyTruncate,
-            Configuration.LockStrategy.Copy => verdict is not ProbeVerdict.None,
-            Configuration.LockStrategy.Auto => verdict is not ProbeVerdict.None,
-            _ => false,
-        };
-
-    /// <summary>The best strategy a verdict actually allows, for <c>lockstrategy = "auto"</c>.</summary>
-    public static Configuration.LockStrategy? Best(ProbeVerdict verdict) => verdict switch
-    {
-        ProbeVerdict.Rename => Configuration.LockStrategy.Rename,
-        ProbeVerdict.CopyTruncate => Configuration.LockStrategy.CopyTruncate,
-        ProbeVerdict.Copy => Configuration.LockStrategy.Copy,
-        _ => null,
-    };
 
     private static bool TryOpen(string path, uint access, out int error, uint? shareMode = null)
     {

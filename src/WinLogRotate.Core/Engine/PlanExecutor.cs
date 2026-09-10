@@ -182,18 +182,20 @@ public sealed class PlanExecutor(IJournal journal, PathGuard guard, TimeProvider
             case PlannedAction.CopyTruncate:
             case PlannedAction.Copy:
                 var truncate = op.Action == PlannedAction.CopyTruncate;
-                var sizeBefore = RetryPolicy.Execute(
+                var outcome = RetryPolicy.Execute(
                     () => FileOps.CopyTruncate(op.Source, op.Destination!, truncate),
                     job.RetryCount, job.RetryIntervalMs);
 
-                // Recorded so the next run can judge whether the writer honoured the
-                // truncation or resumed at a cached offset and left NTFS to zero-fill the gap.
+                // Recorded so the run can judge whether the writer honoured the truncation or
+                // resumed at a cached offset and left NTFS to zero-fill the gap. Both numbers,
+                // not just the size: the gap begins where the cut left the file, and sampling
+                // from byte zero finds the preserved tail rather than the NUL run.
                 if (truncate)
                 {
-                    RecordTruncation?.Invoke(op.Source, sizeBefore);
+                    RecordTruncation?.Invoke(op.Source, outcome);
                 }
 
-                return sizeBefore;
+                return outcome.SizeBefore;
 
             case PlannedAction.Create:
                 RetryPolicy.Execute(() => FileOps.Create(op.Destination ?? op.Source),
@@ -210,7 +212,7 @@ public sealed class PlanExecutor(IJournal journal, PathGuard guard, TimeProvider
     /// it in state. Without that number the NUL-fill detector has nothing to compare against on
     /// the following run, and the failure it exists to catch stays invisible.
     /// </summary>
-    public Action<string, long>? RecordTruncation { get; set; }
+    public Action<string, TruncationOutcome>? RecordTruncation { get; set; }
 
     private void Emit(
         JobPlan plan, PlannedOp op, string phase, string? result,
@@ -237,6 +239,12 @@ public sealed class PlanExecutor(IJournal journal, PathGuard guard, TimeProvider
             Dst = op.Destination,
             BytesBefore = op.Bytes,
             BytesAfter = bytesAfter,
+
+            // CliEvent.Strategy is documented as "which locked-file strategy was used, when one
+            // was" and was set by nothing, so it was null on every journal line this product has
+            // ever written. It is also the only way to tell afterwards what lockstrategy = "auto"
+            // actually resolved to, which is now a question worth being able to answer.
+            Strategy = op.Strategy?.ToString().ToLowerInvariant(),
             Reason = op.Reason,
             Error = error,
             Ms = ms == 0 ? null : ms,

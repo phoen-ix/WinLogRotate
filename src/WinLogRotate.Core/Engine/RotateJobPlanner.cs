@@ -55,11 +55,11 @@ public static class RotateJobPlanner
 
             if (job.DateExt)
             {
-                PlanDateExt(job, generation, operations, now);
+                PlanDateExt(job, generation, operations, now, verdict);
             }
             else
             {
-                PlanNumbered(job, generation, operations, now);
+                PlanNumbered(job, generation, operations, now, verdict);
             }
         }
 
@@ -72,7 +72,8 @@ public static class RotateJobPlanner
     }
 
     private static void PlanNumbered(
-        EffectiveJob job, LogGeneration generation, List<PlannedOp> operations, DateTimeOffset now)
+        EffectiveJob job, LogGeneration generation, List<PlannedOp> operations, DateTimeOffset now,
+        DueVerdict verdict)
     {
         var live = generation.Live;
         var byIndex = generation.Archives
@@ -132,14 +133,15 @@ public static class RotateJobPlanner
         }
 
         // Step 3: the live log itself.
-        AddLiveRotation(job, live, ArchiveNaming.FirstRotation(job, live.Path, now), operations);
+        AddLiveRotation(job, live, ArchiveNaming.FirstRotation(job, live.Path, now), operations, verdict);
 
         // Step 4: age-based disposal, on top of the count.
         AddMaxAgeDeletions(job, generation.Archives, operations, now);
     }
 
     private static void PlanDateExt(
-        EffectiveJob job, LogGeneration generation, List<PlannedOp> operations, DateTimeOffset now)
+        EffectiveJob job, LogGeneration generation, List<PlannedOp> operations, DateTimeOffset now,
+        DueVerdict verdict)
     {
         var live = generation.Live;
         var target = ArchiveNaming.FirstRotation(job, live.Path, now);
@@ -183,7 +185,7 @@ public static class RotateJobPlanner
             }
         }
 
-        AddLiveRotation(job, live, target, operations);
+        AddLiveRotation(job, live, target, operations, verdict);
 
         // Ordered newest-first by parsed date, so retention keeps the newest N regardless of
         // how the format happens to sort as a string.
@@ -205,13 +207,26 @@ public static class RotateJobPlanner
     }
 
     private static void AddLiveRotation(
-        EffectiveJob job, MatchedFile live, string target, List<PlannedOp> operations)
+        EffectiveJob job, MatchedFile live, string target, List<PlannedOp> operations,
+        DueVerdict verdict)
     {
-        var action = job.LockStrategy switch
+        // The resolved strategy where the caller worked one out, the configured one otherwise.
+        var strategy = verdict.Strategy ?? job.LockStrategy;
+
+        var action = strategy switch
         {
+            LockStrategy.Rename => PlannedAction.Rename,
             LockStrategy.CopyTruncate => PlannedAction.CopyTruncate,
             LockStrategy.Copy => PlannedAction.Copy,
-            _ => PlannedAction.Rename,
+
+            // Exhaustive on purpose, and this arm is the point of the milestone. Auto used to
+            // fall into a discard `_ => Rename`, so the documented safe option silently became
+            // the one that fails outright on a writer withholding FILE_SHARE_DELETE - while the
+            // reason line printed "lockstrategy = auto". Throwing makes that unreachable rather
+            // than merely fixed.
+            _ => throw new InvalidOperationException(
+                $"lockstrategy = {strategy.ToString().ToLowerInvariant()} must be resolved to a "
+                + "concrete strategy before planning."),
         };
 
         operations.Add(new PlannedOp
@@ -219,9 +234,9 @@ public static class RotateJobPlanner
             Action = action,
             Source = live.Path,
             Destination = target,
-            Reason = $"due; lockstrategy = {job.LockStrategy.ToString().ToLowerInvariant()}",
+            Reason = $"due; {verdict.Explanation}",
             Bytes = live.Length,
-            Strategy = job.LockStrategy,
+            Strategy = strategy,
         });
 
         // Under copytruncate the inode never changes, so there is nothing to recreate; under a

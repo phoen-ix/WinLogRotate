@@ -46,11 +46,11 @@ internal static class ProbeCommand
 
         foreach (var strategy in Enum.GetValues<Core.Configuration.LockStrategy>())
         {
-            var supported = LockProbe.Supports(result.Verdict, strategy);
+            var supported = ProbeSupport.Supports(result.Verdict, strategy);
             ctx.Output.Line($"  {strategy.ToString().ToLowerInvariant(),-16}{(supported ? "yes" : "no")}");
         }
 
-        var best = LockProbe.Best(result.Verdict);
+        var best = ProbeSupport.Best(result.Verdict);
         if (best is not null)
         {
             ctx.Output.Line("");
@@ -92,6 +92,7 @@ internal static class ProbeCommand
             Suggested = best?.ToString()?.ToLowerInvariant(),
             BlockingError = result.BlockingError,
             BlockingErrorText = result.BlockingError == 0 ? null : Win32Error.Describe(result.BlockingError),
+            Unlocked = result.Unlocked,
         });
     }
 }

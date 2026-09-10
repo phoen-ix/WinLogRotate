@@ -422,6 +422,197 @@ jobs:
           "  journal:"; Get-ChildItem "$env:DATA_DIR\journal" | ForEach-Object { "    $($_.Name)" }
           & $exe journal | Select-Object -First 10 | Out-Host
 
+      # LockProbe decides which strategy a rotation may use, its whole job is to answer a question
+      # about a file somebody else is holding, and until milestone 14 it had never met one - on a
+      # runner or in a test. Four share masks, four verdicts, through the shipped NativeAOT binary,
+      # which is the only place CreateFileW is reached through a source-generated stub.
+      - name: 'Leg A: the probe meets four real contended handles'
+        shell: pwsh
+        run: |
+          . .github/scripts/installer-smoke-helpers.ps1
+          $exe = Join-Path (Get-UninstallEntry -Scope machine).InstallLocation 'winlogrotate.exe'
+
+          New-Item -ItemType Directory -Force 'C:\smoke\lock' | Out-Null
+          $log = 'C:\smoke\lock\held.log'
+          Set-Content $log 'baseline'
+
+          # The control. If an unheld file does not probe as Rename, everything below is noise.
+          $free = & $exe probe $log --json | ConvertFrom-Json
+          if ($free.result.verdict -ne 'Rename') { throw "An unheld file probed as $($free.result.verdict)." }
+          if (-not $free.result.unlocked)        { throw 'An unheld file did not report unlocked.' }
+
+          $cases = @(
+            @{ Share = 'ReadWrite, Delete'; Verdict = 'Rename';       Suggested = 'rename' },
+            @{ Share = 'ReadWrite';         Verdict = 'CopyTruncate'; Suggested = 'copytruncate' },
+            @{ Share = 'Read';              Verdict = 'Copy';         Suggested = 'copy' },
+            @{ Share = 'None';              Verdict = 'None';         Suggested = $null }
+          )
+
+          foreach ($c in $cases) {
+            Invoke-WithHeldHandle -Path $log -Share $c.Share -While {
+              $p = & $exe probe $log --json | ConvertFrom-Json
+              "  share $($c.Share.PadRight(18)) -> $($p.result.verdict)"
+
+              if ($p.result.verdict -ne $c.Verdict) {
+                throw "A holder sharing '$($c.Share)' probed as '$($p.result.verdict)', expected '$($c.Verdict)'."
+              }
+              if ($p.result.unlocked) {
+                throw 'The probe called the file unlocked while a handle was demonstrably open on it.'
+              }
+              if ($p.result.suggested -ne $c.Suggested) {
+                throw "suggested is '$($p.result.suggested)', expected '$($c.Suggested)'."
+              }
+              # 32 is ERROR_SHARING_VIOLATION - the single most important error code here.
+              if ($c.Verdict -ne 'Rename' -and $p.result.blockingError -ne 32) {
+                throw "blockingError is $($p.result.blockingError), expected 32."
+              }
+            }
+          }
+          '  four contended handles, four verdicts'
+
+      # lockstrategy = "auto" fell through RotateJobPlanner's discard arm and silently meant
+      # rename - the one strategy a holder withholding FILE_SHARE_DELETE denies, which is exactly
+      # the writer somebody picks auto to cope with. The ReadWrite and Read cases below fail
+      # outright against the old code.
+      - name: 'Leg A: lockstrategy = "auto" picks what the handle actually permits'
+        shell: pwsh
+        run: |
+          . .github/scripts/installer-smoke-helpers.ps1
+          $exe = Join-Path (Get-UninstallEntry -Scope machine).InstallLocation 'winlogrotate.exe'
+
+          $cases = @(
+            @{ Name='auto-rename'; Share='ReadWrite, Delete'; Strategy='rename';       Live=0    },
+            @{ Name='auto-trunc';  Share='ReadWrite';         Strategy='copytruncate'; Live=0    },
+            @{ Name='auto-copy';   Share='Read';              Strategy='copy';         Live=4096 }
+          )
+
+          foreach ($c in $cases) {
+            $dir = "C:\smoke\auto\$($c.Name)"
+            New-Item -ItemType Directory -Force $dir | Out-Null
+            $log = Join-Path $dir 'svc.log'
+            [System.IO.File]::WriteAllBytes($log, (New-Object byte[] 4096))
+
+            @(
+              'schema = 1', '[job]', "name  = `"$($c.Name)`"", 'kind  = "rotate"',
+              "paths = [`"$($dir -replace '\\','/')/svc.log`"]",
+              'rotate = 3', 'compress = false', 'notifempty = false', 'lockstrategy = "auto"'
+            ) | Set-Content "$env:DATA_DIR\conf.d\$($c.Name).toml"
+
+            $state = "$dir\state.json"
+
+            Invoke-WithHeldHandle -Path $log -Share $c.Share -While {
+              & $exe run --catchup --job $c.Name --state $state --no-notify --verbose | Out-Host
+              $code = $LASTEXITCODE; $global:LASTEXITCODE = 0
+
+              if ($code -ne 0) { throw "[$($c.Name)] run exited $code against a $($c.Share) holder." }
+              if (-not (Test-Path "$log.1")) {
+                throw ("[$($c.Name)] no svc.log.1 - auto did not resolve to $($c.Strategy), and " +
+                       "almost certainly fell through to rename, which this holder denies.")
+              }
+              if ((Get-Item "$log.1").Length -ne 4096) { throw "[$($c.Name)] the archive is not the log." }
+              if ((Get-Item $log).Length -ne $c.Live) {
+                throw ("[$($c.Name)] the live log is $((Get-Item $log).Length) bytes, expected " +
+                       "$($c.Live) - that is a different strategy from $($c.Strategy).")
+              }
+            }
+
+            # Asserted after the handle is released, so a failure cannot leave the file locked.
+            # The journal is the only place the chosen strategy is visible, and it is visible only
+            # because PlanExecutor.Emit populates CliEvent.Strategy at all now.
+            $applied = @((& $exe journal --job $c.Name --json | ConvertFrom-Json).result.entries |
+                         Where-Object { $_.phase -eq 'apply' -and $_.src -eq $log })
+            if (@($applied | Where-Object { $_.strategy -eq $c.Strategy }).Count -eq 0) {
+              throw ("[$($c.Name)] the journal does not record strategy '$($c.Strategy)'. " +
+                     'A rotation whose strategy is unrecorded cannot be audited afterwards.')
+            }
+            Remove-Item "$env:DATA_DIR\conf.d\$($c.Name).toml"
+          }
+          '  auto resolved three ways against three real handles'
+
+      # The failure no other Windows log rotator detects, on real NTFS. The writer here stands in
+      # for log4net and most C++ std::ofstream implementations: it holds its own file offset and
+      # does not seek back to zero when we truncate underneath it. FileMode.Append would prove
+      # nothing - FILE_APPEND_DATA always writes at the end, which is the healthy case.
+      - name: 'Leg A: a real NUL-fill is detected and copytruncate is quarantined'
+        shell: pwsh
+        run: |
+          . .github/scripts/installer-smoke-helpers.ps1
+          $exe = Join-Path (Get-UninstallEntry -Scope machine).InstallLocation 'winlogrotate.exe'
+
+          $dir = 'C:\smoke\nul'; $log = "$dir\app.log"; $state = "$dir\state.json"
+          New-Item -ItemType Directory -Force $dir | Out-Null
+
+          # 2 MiB: above NulFillDetector.MinimumInterestingSize, below which proportional
+          # reasoning is noise rather than evidence.
+          $size = 2MB
+          [System.IO.File]::WriteAllBytes($log, (New-Object byte[] $size))
+
+          @(
+            'schema = 1', '[job]', 'name = "nulfill"', 'kind = "rotate"',
+            "paths = [`"$($dir -replace '\\','/')/app.log`"]",
+            'rotate = 3', 'compress = false', 'notifempty = false',
+            'lockstrategy = "copytruncate"'
+          ) | Set-Content "$env:DATA_DIR\conf.d\nulfill.toml"
+
+          $writer = [System.IO.File]::Open($log, 'Open', 'Write', 'ReadWrite')
+          try {
+            # Where a cached-offset writer believes it is.
+            $writer.Position = $size
+
+            & $exe run --catchup --job nulfill --state $state --no-notify --verbose | Out-Host
+            if ($LASTEXITCODE -ne 0) { throw "run 1 exited $LASTEXITCODE" }
+            $global:LASTEXITCODE = 0
+
+            if ((Get-Item "$log.1").Length -ne $size) { throw 'The archive is not the log we truncated.' }
+            if ((Get-Item $log).Length -ne 0)         { throw 'copytruncate did not empty the original.' }
+
+            # RecordTruncation had no subscriber at all before this milestone, so this number was
+            # computed on every truncation and thrown away every time.
+            $s1 = (Get-Content $state -Raw | ConvertFrom-Json).paths.PSObject.Properties |
+                  Where-Object { $_.Value.path -ieq $log } | Select-Object -First 1
+            if ($s1.Value.lastTruncatedFrom -ne $size) {
+              throw "state records lastTruncatedFrom = $($s1.Value.lastTruncatedFrom), expected $size."
+            }
+
+            # THE FAILURE. The rotation just emptied this file; a true append handle would resume
+            # at zero. This one resumes where it remembers, and NTFS zero-fills the gap.
+            $line = [System.Text.Encoding]::ASCII.GetBytes("resumed at a cached offset`r`n")
+            $writer.Write($line, 0, $line.Length)
+            $writer.Flush()
+          } finally { $writer.Dispose() }
+
+          $now = (Get-Item $log).Length
+          if ($now -lt $size) { throw "NTFS did not zero-fill: the file is $now bytes, expected >= $size." }
+          "  the log came back as {0:N0} bytes of NULs plus one line" -f $now
+
+          # Run 2 judges the previous truncation. Deliberately not --force: the judgement is about
+          # what already happened, and a detector gated on dueness quarantines a day late.
+          $r2 = & $exe run --job nulfill --state $state --no-notify --json | ConvertFrom-Json
+          $global:LASTEXITCODE = 0
+
+          if ($r2.diagnostics.code -notcontains 'LR3102') {
+            throw ('A 2 MiB NUL-filled file produced no LR3102. Codes: ' + ($r2.diagnostics.code -join ', '))
+          }
+
+          $s2 = (Get-Content $state -Raw | ConvertFrom-Json).paths.PSObject.Properties |
+                Where-Object { $_.Value.path -ieq $log } | Select-Object -First 1
+          if ($s2.Value.nulFill -ne 'Confirmed') {
+            throw "state records nulFill = '$($s2.Value.nulFill)', expected 'Confirmed'."
+          }
+
+          # Run 3: refused, permanently, rather than truncating again.
+          & $exe run --force --job nulfill --state $state --no-notify --verbose | Out-Host
+          $global:LASTEXITCODE = 0
+
+          $applied = @((& $exe journal --job nulfill --json | ConvertFrom-Json).result.entries |
+                       Where-Object { $_.phase -eq 'apply' -and $_.src -ieq $log })
+          if (@($applied | Where-Object { $_.strategy -eq 'copytruncate' }).Count -gt 1) {
+            throw 'copytruncate ran again on a path with a confirmed NUL-fill.'
+          }
+          '  detected, reported and quarantined'
+
+          Remove-Item "$env:DATA_DIR\conf.d\nulfill.toml"
+
       # The one assertion that proves the whole event-ID design on real hardware. The installer
       # registers EventCreate.exe as the message file, which constrains every ID to 1..1000, one
       # insertion string, and category 0. Get any of those wrong and the event still appears -

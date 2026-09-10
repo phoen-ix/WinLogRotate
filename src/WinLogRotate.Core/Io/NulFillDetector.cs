@@ -8,6 +8,7 @@ public sealed record NulFillObservation
     public required NulFillVerdict Verdict { get; init; }
     public required long SizeBeforeTruncation { get; init; }
     public required long SizeAfterWriterResumed { get; init; }
+    public NulFillEvidence Evidence { get; init; }
     public string? Explanation { get; init; }
 }
 
@@ -49,8 +50,36 @@ public static class NulFillDetector
     /// <param name="sizeNow">Size observed at the start of this run.</param>
     /// <param name="leadingNulBytes">How many leading bytes were NUL, if the caller sampled
     /// them. A file whose first bytes are all zero is conclusive rather than merely suspicious.</param>
-    public static NulFillObservation Judge(long sizeBefore, long sizeNow, int leadingNulBytes = 0)
+    /// <param name="nulRun">
+    /// Consecutive NUL bytes found at the offset the truncation left the file, or null when the
+    /// file could not be read.
+    /// </param>
+    /// <remarks>
+    /// <paramref name="nulRun"/> is nullable, and the distinction is load-bearing: zero means "we
+    /// looked and found log text", which is evidence the writer behaves, while null means "we
+    /// could not look", which is no evidence at all. Collapsing them into 0 would let an
+    /// unreadable file be recorded as clean.
+    /// </remarks>
+    public static NulFillObservation Judge(long sizeBefore, long sizeNow, int? nulRun = null)
     {
+        // Asked before the size floor, not after. The floor exists because "proportional
+        // reasoning is noise" below a megabyte - and a NUL run is not proportional reasoning. A
+        // 512 KB log with four thousand NUL bytes at the resume offset is the failure, whatever
+        // its size, and returning Unknown for it was the floor overreaching.
+        if (nulRun >= 512)
+        {
+            return new NulFillObservation
+            {
+                Verdict = NulFillVerdict.Confirmed,
+                SizeBeforeTruncation = sizeBefore,
+                SizeAfterWriterResumed = sizeNow,
+                Evidence = NulFillEvidence.NulSignature,
+                Explanation =
+                    $"The file carries {nulRun} NUL bytes at the offset the truncation left it. The writer is " +
+                    "holding a cached file offset and resumed at it, so NTFS zero-filled the gap.",
+            };
+        }
+
         if (sizeBefore < MinimumInterestingSize)
         {
             return new NulFillObservation
@@ -59,21 +88,6 @@ public static class NulFillDetector
                 SizeBeforeTruncation = sizeBefore,
                 SizeAfterWriterResumed = sizeNow,
                 Explanation = "Too small for the size comparison to mean anything.",
-            };
-        }
-
-        // A NUL run at the head of the file is the signature itself, not an inference: a log
-        // that legitimately regrew would begin with log text.
-        if (leadingNulBytes >= 512)
-        {
-            return new NulFillObservation
-            {
-                Verdict = NulFillVerdict.Confirmed,
-                SizeBeforeTruncation = sizeBefore,
-                SizeAfterWriterResumed = sizeNow,
-                Explanation =
-                    $"The file begins with {leadingNulBytes} NUL bytes. The writer is holding a cached file offset " +
-                    "and resumed at it after truncation, so NTFS zero-filled the gap.",
             };
         }
 
@@ -90,6 +104,7 @@ public static class NulFillDetector
                 Verdict = NulFillVerdict.Confirmed,
                 SizeBeforeTruncation = sizeBefore,
                 SizeAfterWriterResumed = sizeNow,
+                Evidence = NulFillEvidence.ReGrowth,
                 Explanation =
                     $"The file returned to {sizeNow:N0} bytes having been truncated from {sizeBefore:N0}. " +
                     "A log that genuinely regrew would have done so gradually; this is a writer resuming at a cached offset.",
@@ -101,6 +116,7 @@ public static class NulFillDetector
             Verdict = NulFillVerdict.Clean,
             SizeBeforeTruncation = sizeBefore,
             SizeAfterWriterResumed = sizeNow,
+            Evidence = nulRun is not null ? NulFillEvidence.NulSignature : NulFillEvidence.None,
             Explanation = "The file resumed from empty, so the writer honours truncation.",
         };
     }
