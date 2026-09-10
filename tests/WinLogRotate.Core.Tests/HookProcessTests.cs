@@ -170,6 +170,42 @@ public sealed class HookProcessTests : IDisposable
             .Detail.ShouldNotBeNull().ShouldContain("could not reach the service");
     }
 
+    /// <summary>
+    /// What a failing hook printed to standard OUTPUT is not repeated anywhere.
+    /// </summary>
+    /// <remarks>
+    /// The tail travels: HookRunner puts it in an LR3103 message, which reaches the run's
+    /// diagnostics, which NotifyPhase snapshots into the digest that is mailed or posted to a
+    /// webhook, and which EventLogSink mirrors into the Windows Application log. stdout is a
+    /// program's product - a token, a connection string - and plenty of tools print theirs and only
+    /// then fail. Falling back to it selected exactly the case where the output is most likely to
+    /// be both sensitive and broadcast.
+    /// </remarks>
+    [Fact]
+    public void WhatAFailingHookPrintedToStdoutIsNotRepeated()
+    {
+        var script = OperatingSystem.IsWindows()
+            ? "echo hunter2-the-vault-token & exit 1"
+            : "echo hunter2-the-vault-token; exit 1";
+
+        var outcome = Host.Run(Hook(script), TimeSpan.FromSeconds(30));
+
+        outcome.Result.ShouldBe(HookResult.Failed);
+        outcome.ExitCode.ShouldBe(1);
+        (outcome.Detail ?? string.Empty).ShouldNotContain("hunter2");
+    }
+
+    /// <summary>And the pipe is still drained, or a chatty failing hook would hang the run.</summary>
+    [Fact]
+    public void StdoutIsStillDrainedEvenThoughItIsNotRepeated()
+    {
+        var script = OperatingSystem.IsWindows()
+            ? "for /L %i in (1,1,4000) do @echo the quick brown fox jumped over the lazy dog again & exit 1"
+            : "i=0; while [ $i -lt 4000 ]; do echo the quick brown fox jumped over the lazy dog again; i=$((i+1)); done; exit 1";
+
+        Host.Run(Hook(script), TimeSpan.FromSeconds(60)).Result.ShouldBe(HookResult.Failed);
+    }
+
     // ---- the missing executable --------------------------------------------------------------
 
     /// <summary>

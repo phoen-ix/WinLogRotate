@@ -168,8 +168,19 @@ public sealed class HookRunner(IJournal journal, IHookHost? host, HookGate gate,
                 : outcome.Result == HookResult.TimedOut
                     ? $"The rotation stands. Raise hook_timeout above {allowed.TotalSeconds:0}s if "
                       + "the hook is simply slow."
-                    : "The rotation stands; only the hook failed.",
+                    : Silent(outcome)
+
+                        // Only standard error is repeated - see WindowsHookHost.Tail. A hook that
+                        // explains itself on standard output leaves nothing here, so say where to
+                        // look rather than leaving an exit code and no thread to pull.
+                        ? "The rotation stands; only the hook failed. It printed nothing to "
+                          + "standard error, so run it by hand to see what it says."
+                        : "The rotation stands; only the hook failed.",
         };
+
+    /// <summary>A hook that failed without explaining itself where anyone was listening.</summary>
+    private static bool Silent(HookOutcome outcome) =>
+        outcome.Result == HookResult.Failed && string.IsNullOrEmpty(outcome.Detail);
 
     private static string Describe(HookOutcome outcome) => outcome.Result switch
     {

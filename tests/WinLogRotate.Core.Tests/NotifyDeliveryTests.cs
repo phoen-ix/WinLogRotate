@@ -418,7 +418,96 @@ public sealed class NotifyDeliveryTests : IDisposable
             budget: TimeSpan.FromSeconds(10));
 
         report.Delivered.ShouldBeEmpty("a channel that was never reached has not been told");
-        report.BudgetExhausted.ShouldBeTrue();
+
+        // And the operator is told. This used to assert DeliveryReport.BudgetExhausted, a flag
+        // that was computed here and read by nothing in the product - so the only evidence that a
+        // channel had been skipped lived in a field no code path consulted.
+        report.Diagnostics.ShouldContain(d =>
+            d.Code == DiagnosticCode.NotifyBudgetClamped && d.Message.Contains("never tried"));
+    }
+
+    /// <summary>
+    /// A channel cut short mid-run reports what it dropped, rather than reporting success.
+    /// </summary>
+    /// <remarks>
+    /// The defect this replaced the flag for. When a channel's share ran out partway through its
+    /// messages, blocked[m] was set without incrementing failed - so ChannelOutcome carried
+    /// Sent = 1, Failed = 0, Error = null, the LR5002 diagnostic was skipped (it is gated on
+    /// failures), the CLI rendered OpResult.Ok, and --verbose printed "1 sent, 0 failed". The
+    /// dropped messages never entered Delivered, so their state never advanced and the next run
+    /// planned and dropped exactly the same ones - nightly, indefinitely, looking like success.
+    /// </remarks>
+    [Fact]
+    public void AChannelCutShortMidRunSaysSoInsteadOfReportingSuccess()
+    {
+        // Two messages, one channel, and a send that overruns the whole share on its own - so
+        // the first is delivered and the second is never attempted.
+        var slow = new FakeSender(_clock) { Cost = TimeSpan.FromSeconds(12) };
+
+        var report = Dispatch(Plan("iis", "app"), State(),
+            [(Channel("hook", HookScheme.Http), slow)],
+            budget: TimeSpan.FromSeconds(10));
+
+        var outcome = report.Channels.ShouldHaveSingleItem();
+        outcome.Sent.ShouldBe(1);
+        outcome.Failed.ShouldBe(0);
+        outcome.Unattempted.ShouldBe(1, "the second message was never tried, and that must be visible");
+
+        report.Diagnostics.ShouldContain(d =>
+            d.Code == DiagnosticCode.NotifyBudgetClamped
+            && d.Message.Contains("never sent")
+            && d.Message.Contains("budget"));
+    }
+
+    /// <summary>
+    /// An abandoned channel still counts its dropped messages, and is still a failure.
+    /// </summary>
+    /// <remarks>
+    /// A dead relay abandons the channel, so every message after the first is never attempted -
+    /// which now shows up in Unattempted. It must not turn the channel into "skipped": that is the
+    /// word for a breaker suppression, and an operator reading it would go looking for a cooldown
+    /// instead of a broken destination.
+    /// </remarks>
+    [Fact]
+    public void AnAbandonedChannelCountsWhatItDroppedAndIsStillAFailure()
+    {
+        // 0 is a connection failure, which abandons the channel for the rest of the run.
+        var dead = new FakeSender(_clock) { Answer = _ => SendResult.Failed(0, "no route to host") };
+
+        var report = Dispatch(Plan("iis", "app"), State(),
+            [(Channel("hook", HookScheme.Http), dead)]);
+
+        var outcome = report.Channels.ShouldHaveSingleItem();
+        outcome.Failed.ShouldBe(1);
+        outcome.Unattempted.ShouldBe(1, "the second message was never tried once the relay was abandoned");
+
+        // And it is reported as unreachable, not as starved - a different problem with a
+        // different fix.
+        report.Diagnostics.ShouldContain(d => d.Code == DiagnosticCode.NotifyFailed);
+        report.Diagnostics.ShouldNotContain(d => d.Code == DiagnosticCode.NotifyBudgetClamped);
+    }
+
+    /// <summary>The four outcomes a channel can report, and the order they are decided in.</summary>
+    [Theory]
+    [InlineData(2, 0, 0, false, OpResult.Ok)]
+    [InlineData(0, 0, 0, true, OpResult.Skipped)]
+    [InlineData(1, 0, 1, false, OpResult.Skipped)]
+    [InlineData(0, 1, 0, false, OpResult.Failed)]
+
+    // The one that matters: abandoned after a dead relay, so both are set. It is a failure.
+    [InlineData(0, 1, 1, false, OpResult.Failed)]
+    public void AChannelReportsTheOutcomeItActuallyHad(
+        int sent, int failed, int unattempted, bool skipped, string expected)
+    {
+        new ChannelOutcome
+        {
+            Key = "hook",
+            Display = "hook",
+            Sent = sent,
+            Failed = failed,
+            Unattempted = unattempted,
+            Skipped = skipped,
+        }.Result.ShouldBe(expected);
     }
 
     // ---- state ------------------------------------------------------------------------------

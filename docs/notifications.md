@@ -262,6 +262,13 @@ enough to finish first. Being killed at the limit reports `0x41306`, which is in
 from an operator pressing **Stop** - so the run's only machine-readable outcome would say it was
 terminated when in fact it succeeded. `LR5005` reports the clamp, and nothing is recorded as sent.
 
+`LR5005` also reports the case that used to be silent: a channel whose share ran out **partway
+through** its messages. Nothing failed, so there was no failure to report - the channel showed
+`1 sent, 0 failed` and a green result while the rest of the run's messages were dropped. Because an
+undelivered message is deliberately never recorded as reported, the next run planned exactly the
+same ones and dropped them again, nightly, looking like success. If you see this, raise `budget`,
+reduce the number of targets, or find the slow one with `winlogrotate notify test`.
+
 Only `4xx`-class rejections and connection failures are treated differently: `400`, `401`, `403`
 and `404` are never retried, because repeating a wrong request is a slower way to be wrong and,
 against a rate-limited endpoint, is how a misconfiguration becomes a lockout.

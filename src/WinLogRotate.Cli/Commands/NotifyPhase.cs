@@ -225,8 +225,11 @@ internal static class NotifyPhase
                 Phase = Phase.Apply,
                 Src = "notify",
                 Dst = channel.Display,
-                Result = channel.Skipped ? OpResult.Skipped
-                    : channel.Failed > 0 ? OpResult.Failed : OpResult.Ok,
+                // Unattempted is not Ok. A channel that sent one message and never tried five
+                // did not do what was asked, and reporting it as "ok" is what made the budget
+                // defect invisible: the event said ok, the verbose line said "1 sent, 0 failed",
+                // and five jobs went unreported every night for ever.
+                Result = channel.Result,
                 Reason = channel.Error,
             });
 
@@ -234,7 +237,8 @@ internal static class NotifyPhase
             {
                 ctx.Output.Line(channel.Skipped
                     ? $"notify: {channel.Display} skipped - suppressed after repeated failures"
-                    : $"notify: {channel.Display} - {channel.Sent} sent, {channel.Failed} failed");
+                    : $"notify: {channel.Display} - {channel.Sent} sent, {channel.Failed} failed"
+                      + (channel.Unattempted > 0 ? $", {channel.Unattempted} never tried" : string.Empty));
             }
         }
 

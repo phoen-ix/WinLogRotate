@@ -88,7 +88,9 @@ public sealed class WindowsHookHost : IHookHost
         }
 
         // Started BEFORE the wait, both of them, and this ordering is the bug that is being
-        // avoided rather than a stylistic preference.
+        // avoided rather than a stylistic preference. stdout is drained and then discarded: a
+        // child that fills its stdout buffer blocks for ever if nobody reads, whether or not
+        // anyone wants what it wrote. See Tail for why nobody wants it.
         var stdout = process.StandardOutput.ReadToEndAsync();
         var stderr = process.StandardError.ReadToEndAsync();
 
@@ -109,7 +111,7 @@ public sealed class WindowsHookHost : IHookHost
             {
                 Result = HookResult.Failed,
                 ExitCode = process.ExitCode,
-                Detail = Tail(stderr, stdout),
+                Detail = Tail(stderr),
                 Elapsed = elapsed,
             };
     }
@@ -138,21 +140,30 @@ public sealed class WindowsHookHost : IHookHost
         };
     }
 
-    /// <summary>Whatever the hook said about itself, stderr first, bounded.</summary>
-    private static string Tail(Task<string> stderr, Task<string> stdout)
+    /// <summary>
+    /// What the hook said about its own failure: standard error, bounded.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// <b>Standard output is deliberately not used, not even as a fallback.</b> This string travels
+    /// a long way: HookRunner puts it in an LR3103 message, which reaches the run's diagnostics,
+    /// which NotifyPhase snapshots into the digest that is mailed or posted to a webhook, and which
+    /// EventLogSink mirrors into the Windows Application log at Error severity. Redaction.MaskText
+    /// masks URLs and operator-configured words and nothing else.
+    /// </para>
+    /// <para>
+    /// stderr is where a program explains itself; stdout is its product - a token, a connection
+    /// string, a report. Plenty of command-line tools print their result and only then discover
+    /// they cannot finish, so falling back to stdout on a non-zero exit selected precisely the case
+    /// where the output is most likely to be both sensitive and broadcast. Both pipes are still
+    /// drained concurrently, because that is what keeps the child from blocking; only stderr is
+    /// repeated.
+    /// </para>
+    /// </remarks>
+    private static string Tail(Task<string> stderr)
     {
-        var text = Read(stderr);
-
-        if (text.Length == 0)
-        {
-            text = Read(stdout);
-        }
-
-        text = text.Trim();
+        var text = (stderr.IsCompletedSuccessfully ? stderr.Result : string.Empty).Trim();
         return text.Length <= TailLength ? text : "..." + text[^TailLength..];
-
-        static string Read(Task<string> task) =>
-            task.IsCompletedSuccessfully ? task.Result : string.Empty;
     }
 
     private static HookOutcome SendParamChange(PlannedHook hook)

@@ -100,7 +100,13 @@ hook runs after the files have already moved, so there is nothing to undo — ro
 because a reload script exited 1 would be much the more surprising of the two.
 
 Either way the run's exit code is 1 and the failure is `LR3103`, with the exit code or the timeout
-and whatever the hook printed.
+and **whatever the hook wrote to standard error**.
+
+Standard output is deliberately not repeated, not even when standard error is empty. That string
+ends up in the notification digest that is mailed or posted to a webhook, and in the Windows
+Application log. `stderr` is where a program explains itself; `stdout` is its product - a token, a
+connection string, a report - and plenty of tools print theirs and only then discover they cannot
+finish. If a hook fails without saying anything, `LR3103` says so and tells you to run it by hand.
 
 ## Timeouts
 

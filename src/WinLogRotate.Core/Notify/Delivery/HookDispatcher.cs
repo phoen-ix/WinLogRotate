@@ -14,8 +14,47 @@ public sealed record ChannelOutcome
     /// <summary>The breaker was open, so nothing was attempted. Not a failure.</summary>
     public bool Skipped { get; init; }
 
+    /// <summary>
+    /// Messages this channel never tried at all - its share of the budget ran out, or a dead
+    /// relay had already abandoned it.
+    /// </summary>
+    /// <remarks>
+    /// Counted separately from <see cref="Failed"/> because nothing failed: no send was made. It
+    /// is nonetheless the number that matters most, and it used to be invisible. A channel that
+    /// sent one message and silently dropped five reported <c>Sent = 1, Failed = 0, Error =
+    /// null</c>, which the diagnostic below skipped (it is gated on failures), which the CLI
+    /// rendered as <c>OpResult.Ok</c>, and which printed "1 sent, 0 failed" under --verbose. The
+    /// five undelivered messages then never advanced their state, so the next run planned them
+    /// again and dropped them again - for ever, with a green line beside them every night.
+    /// </remarks>
+    public int Unattempted { get; init; }
+
     /// <summary>Already redacted.</summary>
     public string? Error { get; init; }
+
+    /// <summary>
+    /// This channel's outcome in the <see cref="OpResult"/> vocabulary.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// Here rather than at the call site so it can be tested without driving the CLI. The order is
+    /// the whole content: <see cref="Failed"/> is asked before <see cref="Unattempted"/>, because a
+    /// channel abandoned after a dead-relay response carries both and it is a failure. Testing
+    /// Unattempted first turns every abandoned channel into "skipped" - which is the word for a
+    /// breaker suppression, and sends an operator looking for a cooldown instead of a broken
+    /// destination.
+    /// </para>
+    /// <para>
+    /// And a channel that dropped messages is never "ok". Reporting it as ok is what kept the
+    /// budget defect invisible: the event said ok, --verbose said "1 sent, 0 failed", and the
+    /// messages that were never tried went unreported every night.
+    /// </para>
+    /// </remarks>
+    public string Result =>
+        Skipped ? OpResult.Skipped
+        : Failed > 0 ? OpResult.Failed
+        : Unattempted > 0 ? OpResult.Skipped
+        : OpResult.Ok;
 }
 
 /// <summary>What the phase delivered, and what it must now record.</summary>
@@ -27,9 +66,6 @@ public sealed record DeliveryReport
     public required IReadOnlyList<ChannelOutcome> Channels { get; init; }
 
     public required IReadOnlyList<CliDiagnostic> Diagnostics { get; init; }
-
-    /// <summary>The phase ran out of wall clock before every channel was tried.</summary>
-    public bool BudgetExhausted { get; init; }
 }
 
 /// <summary>Everything the dispatcher needs that is not a decision.</summary>
@@ -101,7 +137,6 @@ public static class HookDispatcher
         var blocked = new bool[messages.Count];
 
         var deadline = options.Clock.GetUtcNow() + options.Budget;
-        var exhausted = false;
         var retries = Math.Clamp(settings.Retries, 0, RetrySchedule.MaxRetries);
 
         for (var c = 0; c < channels.Count; c++)
@@ -112,12 +147,21 @@ public static class HookDispatcher
             if (remaining <= TimeSpan.Zero)
             {
                 // Everything from here on was not reached, so nothing from here on may be
-                // recorded as told. LR5005 is raised once, by the caller.
-                exhausted = true;
+                // recorded as told.
                 for (var m = 0; m < messages.Count; m++)
                 {
                     blocked[m] = true;
                 }
+
+                // Said here rather than left to the caller. The comment that used to sit on this
+                // line claimed "LR5005 is raised once, by the caller" - it is not: NotifyPhase
+                // raises LR5005 only for NotifyBudget.For's clamp, which is a different condition
+                // decided before any channel is tried. These channels were simply never reached,
+                // and until now the only evidence of that was a DeliveryReport flag that nothing
+                // in the product ever read.
+                diagnostics.Add(Starved(
+                    $"{channels.Count - c} notification channel(s) were never tried: "
+                    + $"{string.Join(", ", channels.Skip(c).Select(x => x.Display))}."));
 
                 break;
             }
@@ -159,6 +203,8 @@ public static class HookDispatcher
             var sender = senders.For(channel);
             var sent = 0;
             var failed = 0;
+            var unattempted = 0;
+            var starved = 0;
             string? lastError = null;
             var abandoned = false;
 
@@ -167,6 +213,7 @@ public static class HookDispatcher
                 if (abandoned)
                 {
                     blocked[m] = true;
+                    unattempted++;
                     continue;
                 }
 
@@ -175,9 +222,10 @@ public static class HookDispatcher
                 {
                     // Out of this channel's share. Not the channel's fault, so it is not a
                     // breaker failure - but the message did not get there, so it cannot count
-                    // as told.
+                    // as told, and it must not pass in silence either.
                     blocked[m] = true;
-                    exhausted = true;
+                    unattempted++;
+                    starved++;
                     continue;
                 }
 
@@ -209,8 +257,21 @@ public static class HookDispatcher
                 Display = channel.Display,
                 Sent = sent,
                 Failed = failed,
+                Unattempted = unattempted,
                 Error = lastError,
             });
+
+            if (starved > 0)
+            {
+                // Reported whether or not anything also failed, because it is a different
+                // problem with a different fix: a failure means the destination is wrong or
+                // unreachable, this means the phase was not given enough time to finish. A
+                // channel that sent one message and dropped five used to report Sent = 1,
+                // Failed = 0 and say nothing at all.
+                diagnostics.Add(Starved(
+                    $"{channel.Display}: {starved} message(s) were never sent - this channel's "
+                    + "share of the notification budget ran out."));
+            }
 
             if (sent + failed == 0)
             {
@@ -256,9 +317,36 @@ public static class HookDispatcher
             Delivered = delivered,
             Channels = outcomes,
             Diagnostics = diagnostics,
-            BudgetExhausted = exhausted,
         };
     }
+
+    /// <summary>
+    /// A message that was never sent because the phase ran out of time.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// A warning rather than an error, and it says the rotation is unaffected, because it is: the
+    /// files moved, and what failed is the reporting of it. But it is never silent. The undelivered
+    /// messages do not advance their state - <see cref="DeliveryReport.Delivered"/> excludes them
+    /// deliberately - so the next run plans exactly the same messages and, on an unchanged budget,
+    /// drops them again. Without this line that repeats nightly and looks like success.
+    /// </para>
+    /// <para>
+    /// The breaker is deliberately untouched by this. Starvation is not a channel fault, and
+    /// opening a breaker on a slow-but-working destination would stop delivery altogether - it
+    /// would turn "some messages were late" into "this channel is suppressed", which is the
+    /// opposite of the remedy.
+    /// </para>
+    /// </remarks>
+    private static CliDiagnostic Starved(string message) => new()
+    {
+        Severity = Severity.Warning,
+        Code = DiagnosticCode.NotifyBudgetClamped,
+        Message = message,
+        Remedy = "Nothing was recorded as reported, so the next run says it again - and will drop "
+               + "it again unless something changes. Raise [notify] budget, reduce the number of "
+               + "targets, or find out which one is slow with 'winlogrotate notify test'.",
+    };
 
     /// <summary>One message on one channel, with retries, inside what is left.</summary>
     private static SendResult Attempt(
