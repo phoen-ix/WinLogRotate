@@ -540,8 +540,11 @@ jobs:
           . .github/scripts/installer-smoke-helpers.ps1
           $exe = Join-Path (Get-UninstallEntry -Scope machine).InstallLocation 'winlogrotate.exe'
 
-          $dir = 'C:\smoke\nul'; $log = "$dir\app.log"; $state = "$dir\state.json"
-          New-Item -ItemType Directory -Force $dir | Out-Null
+          # Not 'nul': NUL is a reserved DOS device name, along with CON, PRN, AUX, COM1-9 and
+          # LPT1-9, so a directory of that name cannot exist. New-Item fails non-terminally and
+          # everything after it reports a missing path instead.
+          $dir = 'C:\smoke\nulfill'; $log = "$dir\app.log"; $state = "$dir\state.json"
+          New-Item -ItemType Directory -Force $dir -ErrorAction Stop | Out-Null
 
           # 2 MiB: above NulFillDetector.MinimumInterestingSize, below which proportional
           # reasoning is noise rather than evidence.
