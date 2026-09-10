@@ -46,6 +46,7 @@ public class RotationCriteriaTests
             RetryIntervalMs = 100,
             PreRotate = [],
             PostRotate = [],
+            HookTimeout = TimeSpan.FromSeconds(60),
             AllowDangerous = [],
         };
 

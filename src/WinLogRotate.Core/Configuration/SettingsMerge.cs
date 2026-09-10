@@ -70,6 +70,7 @@ public static class SettingsMerge
             RetryIntervalMs = Pick(s => s.RetryIntervalMs, 100),
             PreRotate = PickList(s => s.PreRotate),
             PostRotate = PickList(s => s.PostRotate),
+            HookTimeout = Pick(s => s.HookTimeout, TimeSpan.FromSeconds(60)),
             AllowDangerous = job.AllowDangerous,
             SourceFile = job.SourceFile,
         };

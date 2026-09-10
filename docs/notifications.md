@@ -56,10 +56,12 @@ elsewhere in the file - or an **inline target**, written as `scheme:destination`
 | `smtp:` | `smtp:ops@example.com` | a `[notify.email.*]` provider for the relay |
 | `pushover:` | `pushover:uQiRzp6twxx` | a `[notify.pushover.*]` provider for the token |
 
-`command:`, `service:` and `event:` parse today and **are not delivered by this build**. They run
-code on this machine, so they land together with the configuration-directory check that makes that
-safe. A target naming one produces `LR5001` every run rather than silence - a hook that quietly
-does nothing is indistinguishable from a hook that ran.
+`command:`, `service:` and `event:` parse today and **are not delivered by this build as
+notification targets**. As *job* hooks they run - see [hooks](hooks.md) - and the
+configuration-directory check they needed now exists; what is still undecided is how a run's digest
+should reach a program, which a service control code and a kernel event cannot carry at all. A
+`[notify]` target naming one produces `LR5001` every run rather than silence: a target that quietly
+does nothing is indistinguishable from one that worked.
 
 ## Webhooks
 

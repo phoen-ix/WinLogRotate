@@ -55,6 +55,21 @@ public sealed record JobPlan
     public IEnumerable<PlannedOp> Destructive =>
         Operations.Where(o => o.Action is not PlannedAction.Skip);
 
+    /// <summary>
+    /// Whether this plan moves a live log out of the way, as opposed to only tidying older
+    /// generations.
+    /// </summary>
+    /// <remarks>
+    /// What decides whether the job's hooks run at all. A night on which nothing was due but a
+    /// month-old archive was finally compressed is not a night to signal IIS: a reload hook that
+    /// fired because of a deletion would page somebody about a rotation that never happened. The
+    /// three actions here are exactly the ones <c>ExecutionResult.Rotated</c> records, so the
+    /// prerotate question and the postrotate question are asked of the same rule.
+    /// </remarks>
+    public bool RotatesALiveLog =>
+        Operations.Any(o => o.Action
+            is PlannedAction.Rename or PlannedAction.Copy or PlannedAction.CopyTruncate);
+
     public long BytesFreed =>
         Operations.Where(o => o.Action == PlannedAction.Delete).Sum(o => o.Bytes);
 }

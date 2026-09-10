@@ -84,6 +84,7 @@ same guard is a Warning. The **ID** never varies, which is what an alert rule sh
 | 132 | Warning | The configured lock strategy was unavailable | `LR3003` |
 | 133 | Warning | A previous run abandoned the rotation mutex | `LR3101` |
 | 134 | Error | NUL-fill detected; `copytruncate` quarantined for that path | `LR3102` |
+| 135 | Error | A hook ran and failed, timed out, or could not be started | `LR3103` |
 | 140 | Warning | No run host is registered | `LR4001` |
 | 141 | Warning | The registered run host has drifted from its definition | `LR4002` |
 | 142 | Error | Registering the run host failed | `LR4003` |

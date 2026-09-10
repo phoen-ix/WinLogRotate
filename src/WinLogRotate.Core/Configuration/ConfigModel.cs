@@ -159,6 +159,15 @@ public record JobSettings
 
     public IReadOnlyList<string>? PreRotate { get; init; }
     public IReadOnlyList<string>? PostRotate { get; init; }
+
+    /// <summary>How long any one of this job's hooks may run before it is killed.</summary>
+    /// <remarks>
+    /// Per hook, not per stage: two hooks that each take a minute are two minutes, which is what
+    /// somebody writing them expects. Always clamped by what is left of the run's own deadline -
+    /// see <c>HookRunner</c> - so raising it can never be the reason Task Scheduler kills a
+    /// rotation and reports it as though an operator had pressed Stop.
+    /// </remarks>
+    public TimeSpan? HookTimeout { get; init; }
 }
 
 /// <summary>One configured job, as written in a conf.d file.</summary>
@@ -249,6 +258,11 @@ public static class BuiltInDefaults
         MaxFiles = 1000,
         RetryCount = 5,
         RetryIntervalMs = 100,
+
+        // Long enough for a service to re-read its configuration or a script to copy a file
+        // somewhere, short enough that a hung hook is noticed on the same night rather than
+        // eating the scheduled task's whole hour.
+        HookTimeout = TimeSpan.FromSeconds(60),
         Weekday = 0,
         MonthDay = 0,
         SizeThreshold = 1L << 20,
@@ -300,6 +314,7 @@ public sealed record EffectiveJob
     public required int RetryIntervalMs { get; init; }
     public required IReadOnlyList<string> PreRotate { get; init; }
     public required IReadOnlyList<string> PostRotate { get; init; }
+    public required TimeSpan HookTimeout { get; init; }
     public required IReadOnlyList<string> AllowDangerous { get; init; }
     public string? SourceFile { get; init; }
 }

@@ -196,7 +196,8 @@ public static class LogrotateImporter
 
         foreach (var (which, script) in stanza.Scripts)
         {
-            var hook = TranslateScript(script);
+            var hook = Supported(which) ? TranslateScript(script) : null;
+
             if (hook is not null)
             {
                 body.AppendLine();
@@ -211,13 +212,27 @@ public static class LogrotateImporter
                 continue;
             }
 
-            // A shell script is not a Windows command. Preserved commented rather than
+            // A shell script is not a Windows command, and firstaction, lastaction and preremove
+            // are not directives this product has. Preserved commented rather than
             // half-translated, because a hook that runs the wrong thing as SYSTEM is worse
             // than one that does not run.
+            //
+            // This used to emit the key live for all five - so an imported firstaction landed in
+            // conf.d looking exactly like a working directive, next to a postrotate that will
+            // work, with the original shell quoted above it as proof of a correct translation, and
+            // was then dropped in silence by a binder that reported nothing. Setting enabled = true
+            // meant the service was never signalled again and nothing anywhere said so.
             needsReview = true;
-            warnings.Add($"the {which} script is shell and needs a Windows equivalent.");
+            warnings.Add(Supported(which)
+                ? $"the {which} script is shell and needs a Windows equivalent."
+                : $"{which} has no equivalent here; hooks run once per job, either side of it.");
+
+            var todo = Supported(which)
+                ? $"# TODO: {which} was a shell script:"
+                : $"# TODO: {which} is not supported; {Instead(which)}";
+
             body.AppendLine();
-            body.AppendLine(CultureInfo.InvariantCulture, $"# TODO: {which} was a shell script:");
+            body.AppendLine(todo);
             foreach (var line in script.Split('\n'))
             {
                 body.AppendLine(CultureInfo.InvariantCulture, $"#   {line.Trim()}");
@@ -339,6 +354,27 @@ public static class LogrotateImporter
     /// hook that runs approximately the right thing as SYSTEM is worse than one that does not
     /// run at all.
     /// </remarks>
+    /// <summary>
+    /// Whether a logrotate script kind maps onto something this product actually runs.
+    /// </summary>
+    /// <remarks>
+    /// <c>prerotate</c> and <c>postrotate</c> do; the other three do not, and the differences are
+    /// real rather than cosmetic. <c>firstaction</c> and <c>lastaction</c> fire whether or not any
+    /// log was due, where a hook here runs only when a live log actually moves; <c>preremove</c> is
+    /// handed the name of the file about to be deleted, and a job-scoped hook has nowhere to put
+    /// one.
+    /// </remarks>
+    private static bool Supported(string which) =>
+        which.Equals("prerotate", StringComparison.OrdinalIgnoreCase)
+        || which.Equals("postrotate", StringComparison.OrdinalIgnoreCase);
+
+    /// <summary>What to write instead, for the three that have no equivalent.</summary>
+    private static string Instead(string which) =>
+        which.Equals("preremove", StringComparison.OrdinalIgnoreCase)
+            ? "it ran per condemned file, and a hook here has no way to name one."
+            : "it ran whether or not anything rotated. postrotate runs only when a log really "
+              + "moved, which is usually what was wanted:";
+
     private static string? TranslateScript(string script)
     {
         var text = script.Replace('\n', ' ').Replace('\r', ' ');

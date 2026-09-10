@@ -104,7 +104,13 @@ public sealed class PlanExecutor(IJournal journal, PathGuard guard, TimeProvider
                 Emit(plan, op, Phase.Apply, OpResult.Ok, null,
                     (long)clock.GetElapsedTime(started).TotalMilliseconds, bytes);
             }
-            catch (Exception e) when (e is IOException or UnauthorizedAccessException)
+            // ExternalException covers Win32Exception, which nothing here threw until hooks
+            // existed and which this filter did not match. It escaped Execute, and then RunCommand
+            // and Program - neither of which has a catch at all - so a missing executable ended the
+            // process with the journal's run.end record never written. RetryPolicy.ErrorCode has
+            // always understood the type; only the filter stood in the way.
+            catch (Exception e) when (
+                e is IOException or UnauthorizedAccessException or System.Runtime.InteropServices.ExternalException)
             {
                 failed++;
                 var failure = Diagnose.Failure(op.Action, op.Source, e, plan.JobName);

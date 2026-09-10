@@ -102,3 +102,29 @@ One-way, by design: the Windows-specific keys have no representation in logrotat
 round-trip would be lossy in a way that is worse than not offering it. Anything that cannot be
 translated is written into the output **as a comment**, and the job is created disabled, so
 nothing runs until a human has looked at it.
+
+## Scripts
+
+logrotate has five script kinds. Two of them map onto this model; three do not, and the differences
+are real rather than cosmetic.
+
+| logrotate | Here |
+|---|---|
+| `prerotate` | `prerotate` |
+| `postrotate` | `postrotate` |
+| `firstaction` | **not supported** - it runs whether or not any log was due |
+| `lastaction` | **not supported** - same |
+| `preremove` | **not supported** - it is handed the name of each condemned file |
+
+`sharedscripts` and `nosharedscripts` are recognised and not honoured: **hooks always run once per
+job here**, which is `sharedscripts` behaviour. Running a reload once per matched file would signal
+a service forty times for a directory of forty logs.
+
+The other divergence is what a script *is*. There is no shell, so a hook is a program and its
+arguments, a service control code or a named event - never a shell fragment. `winlogrotate import`
+translates `kill -HUP` and `kill -USR1` into `service:paramchange:NAME`; anything else is preserved
+as a `# TODO:` comment with the original quoted beneath, and the job is written `enabled = false`.
+A half-translated script that runs the wrong thing as SYSTEM is worse than one that does not run.
+
+See [hooks](hooks.md) for the grammar, the timeout, the configuration-directory requirement and
+what a failure in each stage costs.

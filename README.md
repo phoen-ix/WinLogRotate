@@ -181,10 +181,13 @@ differs in exactly one line. Your comments survive — including the "do NOT ena
 shipper can't read .gz" note that explains why a setting is the way it is. YAML and JSON both
 destroy comments on write.
 
-`postrotate` replaces `kill -HUP`, which Windows doesn't have:
-`service:paramchange:NAME` sends `SERVICE_CONTROL_PARAMCHANGE`, `event:Global\Name` signals a
-named event, plus `http:`, `command:` and raw scripts. Every hook has a timeout, and hooks are
-refused outright if the config directory isn't locked down.
+`postrotate` replaces `kill -HUP`, which Windows doesn't have: `service:paramchange:NAME` sends
+`SERVICE_CONTROL_PARAMCHANGE`, `event:Global\Name` signals a named event, and `command:` runs a
+program — no shell, ever, and an ambiguous command line is refused rather than guessed at. Hooks run
+once per job and only when a live log actually moves; every one has a timeout that kills the whole
+process tree; a failing `prerotate` skips the job untouched while a failing `postrotate` leaves the
+rotation standing. All of it is refused outright if the config directory isn't locked down. See
+[hooks](docs/hooks.md).
 
 The same target grammar reports failures. `[notify]` sends **one message per run, only when
 something changed**, over `smtp:`, `http:`, `pushover:` or `eventlog:` — with credentials in an
@@ -309,8 +312,12 @@ from elevation rather than from the install.
 - **No notification has ever been delivered on Windows by CI.** The senders and their whole
   decision layer are exercised on the Linux leg against local listeners and fakes, but no runner
   has yet sent real mail, reached a real webhook or written an `eventlog:` digest. `command:`,
-  `service:` and `event:` targets are not delivered at all — they run code, and land with the
-  configuration-directory check that makes that safe.
+  `service:` and `event:` as **notification targets** are still not delivered — as *job hooks* they
+  are, and the configuration-directory check that gates them now exists.
+- **No hook has run as SYSTEM in CI.** The bracket, the refusals, the deadline clamp and the
+  process discipline — flooding a pipe, killing a tree, a missing executable — are all tested,
+  including against real child processes on both legs. What has never happened on a runner is
+  `service:paramchange:` reaching a real service, or `event:` signalling a real waiter.
 
 ### What is thoroughly tested, everywhere
 

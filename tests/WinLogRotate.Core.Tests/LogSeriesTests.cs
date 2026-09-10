@@ -77,6 +77,7 @@ public sealed class LogSeriesTests
             RetryIntervalMs = 100,
             PreRotate = [],
             PostRotate = [],
+            HookTimeout = TimeSpan.FromSeconds(60),
             AllowDangerous = [],
         };
 

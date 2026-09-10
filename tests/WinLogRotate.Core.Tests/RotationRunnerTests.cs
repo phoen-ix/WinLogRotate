@@ -78,6 +78,7 @@ public sealed class RotationRunnerTests : IDisposable
         RetryIntervalMs = 100,
         PreRotate = [],
         PostRotate = [],
+        HookTimeout = TimeSpan.FromSeconds(60),
         AllowDangerous = [],
     };
 

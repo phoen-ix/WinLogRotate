@@ -1,6 +1,7 @@
 using WinLogRotate.Contracts;
 using WinLogRotate.Core.Configuration;
 using WinLogRotate.Core.Globbing;
+using WinLogRotate.Core.Hooks;
 using WinLogRotate.Core.Journaling;
 using WinLogRotate.Core.Safety;
 using WinLogRotate.Core.State;
@@ -48,6 +49,17 @@ public sealed record RunOptions
     /// </para>
     /// </remarks>
     public TimeSpan? RunDeadline { get; init; }
+
+    /// <summary>
+    /// When the invocation began, or null to measure from when the rotation itself starts.
+    /// </summary>
+    /// <remarks>
+    /// Paired with <see cref="RunDeadline"/>, and it has to be the process's own start rather than
+    /// the runner's: configuration loading, journal maintenance and taking the rotation gate all
+    /// happen first and all count against the scheduled task's limit. Measuring from here would
+    /// hand a hook time that has already been spent.
+    /// </remarks>
+    public DateTimeOffset? Started { get; init; }
 }
 
 /// <summary>What a whole run did.</summary>
@@ -80,8 +92,20 @@ public sealed record RunReport
 /// <summary>Runs every due job.</summary>
 public sealed class RotationRunner(
     IJournal journal, PathGuard guard, StateStore state, TimeProvider clock,
-    IArchiveSource? archiveSource = null)
+    IArchiveSource? archiveSource = null, IHookHost? hookHost = null, HookGate? hookGate = null)
 {
+    /// <summary>
+    /// The bracket around each job's execution.
+    /// </summary>
+    /// <remarks>
+    /// Both halves are optional and both default to refusing. Core cannot reference Hosting, where
+    /// process spawning and the ACL check live, so the host and the gate are handed in by the CLI
+    /// - and a runner built without them runs no hooks at all rather than running them ungated. A
+    /// gate that opens because nobody supplied one is indistinguishable from no gate.
+    /// </remarks>
+    private readonly HookRunner _hooks =
+        new(journal, hookHost, hookGate ?? HookGate.Unknown, clock);
+
     /// <summary>
     /// Where a rotate job looks for the archives it wrote last time.
     /// </summary>
@@ -181,6 +205,40 @@ public sealed class RotationRunner(
                 ? ManageJobPlanner.Plan(job, matched, now)
                 : PlanRotation(job, matched, options, now, Fail);
 
+            // Only when a live log is actually moving. A job whose plan is "compress an archive
+            // from last month" has not rotated anything, and a reload hook that fired for it would
+            // signal a service on a night nothing happened.
+            var rotating = plan.RotatesALiveLog;
+            var started = options.Started ?? now;
+
+            if (rotating)
+            {
+                var pre = _hooks.Run(
+                    job.Name, HookStage.PreRotate, job.PreRotate, job.HookTimeout,
+                    options.DryRun, started, options.RunDeadline, job.SourceFile);
+
+                failed += pre.Failed;
+                foreach (var d in pre.Diagnostics)
+                {
+                    Fail(d);
+                }
+
+                // logrotate's asymmetry, and the reason the two stages are not one loop: a
+                // prerotate hook is the job's precondition. If the service did not stop or the
+                // buffer was not flushed, rotating anyway does the exact damage the hook was
+                // written to prevent - so nothing is touched, and the diagnostic above says so.
+                if (!pre.Ok)
+                {
+                    // Reported as what happened rather than as what was intended. Adding the
+                    // original plan here would print "did rename C:\logs\app.log" for a file
+                    // that was never touched - the plan is the engine's intention, and once the
+                    // job is abandoned the intention is not what an operator needs to read.
+                    plans.Add(Abandoned(plan, "the prerotate hook did not succeed"));
+                    jobsRun++;
+                    continue;
+                }
+            }
+
             plans.Add(plan);
             jobsRun++;
 
@@ -197,6 +255,27 @@ public sealed class RotationRunner(
             foreach (var path in result.Rotated)
             {
                 state.Update(path, existing => existing with { LastRotated = now });
+            }
+
+            // From what the executor did, not from what was planned - except under --dry-run,
+            // where nothing was done and the plan is the only thing there is to describe. A
+            // postrotate hook that ran after every rename failed on a share violation would be
+            // reporting a rotation that did not happen.
+            if (rotating && (options.DryRun || result.Rotated.Count > 0))
+            {
+                var post = _hooks.Run(
+                    job.Name, HookStage.PostRotate, job.PostRotate, job.HookTimeout,
+                    options.DryRun, started, options.RunDeadline, job.SourceFile);
+
+                // The other half of the asymmetry. The files have already moved, so there is
+                // nothing to undo and nothing to skip: the rotation stands and the failure is
+                // reported against the job. Rolling a rotation back because a reload script
+                // exited 1 would be much the more surprising of the two.
+                failed += post.Failed;
+                foreach (var d in post.Diagnostics)
+                {
+                    Fail(d);
+                }
             }
         }
 
@@ -229,6 +308,29 @@ public sealed class RotationRunner(
             Plans = plans,
         };
     }
+
+    /// <summary>
+    /// The same plan, restated as the nothing that actually happened.
+    /// </summary>
+    /// <remarks>
+    /// One line per file rather than one per operation: a log that was going to be renamed,
+    /// compressed and have its oldest generation deleted was not touched once, and saying so three
+    /// times reads like three separate decisions.
+    /// </remarks>
+    private static JobPlan Abandoned(JobPlan plan, string reason) => plan with
+    {
+        Operations =
+        [
+            .. plan.Operations
+                .DistinctBy(o => o.Source, StringComparer.OrdinalIgnoreCase)
+                .Select(o => new PlannedOp
+                {
+                    Action = PlannedAction.Skip,
+                    Source = o.Source,
+                    Reason = reason,
+                }),
+        ],
+    };
 
     /// <summary>
     /// Decides what a rotate job should do to each of its logs.

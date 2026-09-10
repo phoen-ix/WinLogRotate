@@ -33,6 +33,19 @@ public static class DiagnosticCode
     /// The strategy is quarantined for this path permanently.</summary>
     public const string NulFillDetected = "LR3102";
 
+    /// <summary>
+    /// A hook was permitted, it ran, and it did not succeed - a non-zero exit, a timeout, an
+    /// executable that is not there.
+    /// </summary>
+    /// <remarks>
+    /// Deliberately not <see cref="HookRefused"/>, which means the gate said no. An alert rule has
+    /// to be able to tell "somebody's configuration directory is writable" from "the reload script
+    /// returned 1": the first is a security finding about the machine, the second is a broken
+    /// script, and they go to different people. Same argument the 5xxx band's own comment makes
+    /// for not folding a webhook failure into a rotation failure.
+    /// </remarks>
+    public const string HookFailed = "LR3103";
+
     // 4xxx - host / scheduling
     public const string NoRunHost = "LR4001";
     public const string HostDrift = "LR4002";

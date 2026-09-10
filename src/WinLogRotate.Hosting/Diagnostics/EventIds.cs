@@ -73,6 +73,7 @@ public static class EventIds
         DiagnosticCode.StrategyUnavailable => 132,
         DiagnosticCode.PreviousRunAbandoned => 133,
         DiagnosticCode.NulFillDetected => 134,
+        DiagnosticCode.HookFailed => 135,
 
         // 4xxx - host and scheduling.
         DiagnosticCode.NoRunHost => 140,

@@ -1,4 +1,5 @@
 using WinLogRotate.Contracts;
+using WinLogRotate.Core.Hooks;
 using WinLogRotate.Core.Safety;
 
 namespace WinLogRotate.Core.Configuration;
@@ -110,6 +111,71 @@ public static class ConfigValidator
             d.Error(file, DiagnosticCode.ConfigInvalid,
                 $"minsize ({job.MinSize}) is larger than maxsize ({job.MaxSize}), so this job can never rotate.",
                 remedy: "minsize suppresses a due rotation; maxsize forces an early one. Setting minsize above maxsize cancels both.");
+        }
+
+        CheckHooks(job, HookStage.PreRotate, job.PreRotate, file, d);
+        CheckHooks(job, HookStage.PostRotate, job.PostRotate, file, d);
+
+        // A manage job never moves a live log - the application rotates, and this only compresses
+        // and retains what it left behind - and hooks run only when a live log actually moves. So
+        // a hook here would never fire, ever, and would look exactly like one that does.
+        if (job.Kind == JobKind.Manage && (job.PreRotate.Count > 0 || job.PostRotate.Count > 0))
+        {
+            d.Warn(file, DiagnosticCode.HookRefused,
+                "a manage job never rotates anything itself, so its hooks would never run.",
+                remedy: "Hooks belong on a kind = \"rotate\" job. If the application's own rotation "
+                      + "needs to trigger something, it has to do that itself - this job only "
+                      + "compresses and retains what it already wrote.");
+        }
+
+        if (job.HookTimeout <= TimeSpan.Zero && (job.PreRotate.Count > 0 || job.PostRotate.Count > 0))
+        {
+            d.Warn(file, DiagnosticCode.ConfigInvalid,
+                "hook_timeout is not positive, so no hook could ever run.",
+                remedy: "Give it a duration, e.g. hook_timeout = \"60s\".");
+        }
+    }
+
+    /// <summary>
+    /// Puts a job's hook strings through the same parser that will run them.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// So a typo is caught by <c>config check</c> rather than at 03:00. Notification targets have
+    /// been validated this way since they existed - <c>ConfigLoader</c> parses every
+    /// <c>[notify].to</c> entry and reports what it cannot understand - while the identical string
+    /// in <c>postrotate</c> produced no diagnostic anywhere. <c>HookParser</c>'s own doc comment
+    /// claims "one parser for hooks and for notification targets alike, so postrotate and [notify]
+    /// cannot drift apart in what they accept"; this is the half that makes it true.
+    /// </para>
+    /// <para>
+    /// The gate is deliberately open here. Whether the configuration directory is safe to execute
+    /// from is a fact about the machine at the moment of a run, and <c>config check</c> is often
+    /// run on a different machine entirely - refusing every hook because the reviewer's laptop has
+    /// a loose conf.d would report a security finding about the wrong computer. The runtime asks
+    /// the real question, immediately before dispatching.
+    /// </para>
+    /// <para>
+    /// Warnings, not errors, even though the runtime refusal is an error. A config-time error sets
+    /// <c>LoadedConfig.HasErrors</c>, and <c>run</c> then attempts nothing at all - so one
+    /// mistyped hook in one file would stop every healthy job on the machine from rotating. The
+    /// runtime refuses the hook that is actually wrong and leaves the rest alone, which is where
+    /// that severity belongs.
+    /// </para>
+    /// </remarks>
+    private static void CheckHooks(
+        EffectiveJob job, HookStage stage, IReadOnlyList<string> hooks, string file, DiagnosticBag d)
+    {
+        if (hooks.Count == 0)
+        {
+            return;
+        }
+
+        // The same existence probe the runtime uses, so config check cannot pass something run
+        // would refuse - or refuse something it would happily run.
+        foreach (var refusal in HookPlan.For(job.Name, stage, hooks, HookGate.Open).Refusals)
+        {
+            d.Warn(file, refusal.Code, refusal.Message, remedy: refusal.Remedy);
         }
     }
 }

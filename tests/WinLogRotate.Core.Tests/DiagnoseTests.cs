@@ -237,6 +237,7 @@ public sealed class RunReportDiagnosticsTests : IDisposable
             RetryIntervalMs = 1,
             PreRotate = [],
             PostRotate = [],
+            HookTimeout = TimeSpan.FromSeconds(60),
             AllowDangerous = [],
         };
 

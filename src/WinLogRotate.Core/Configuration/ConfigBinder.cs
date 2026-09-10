@@ -311,6 +311,7 @@ public static class ConfigBinder
         }
 
         var settings = BindSettings(table, file.Path, diagnostics);
+        ReportUnknownJobKeys(table, file.Path, diagnostics);
 
         return new JobConfig
         {
@@ -347,6 +348,7 @@ public static class ConfigBinder
             RetryIntervalMs = settings.RetryIntervalMs,
             PreRotate = settings.PreRotate,
             PostRotate = settings.PostRotate,
+            HookTimeout = settings.HookTimeout,
         };
     }
 
@@ -418,7 +420,133 @@ public static class ConfigBinder
             RetryIntervalMs = GetInt(table, "retryinterval", file, d),
             PreRotate = GetStringListOrNull(table, "prerotate", file, d),
             PostRotate = GetStringListOrNull(table, "postrotate", file, d),
+            HookTimeout = GetDuration(table, "hook_timeout", file, d),
         };
+    }
+
+    /// <summary>
+    /// Every key a <c>[job]</c> table may carry.
+    /// </summary>
+    /// <remarks>
+    /// Deliberately next to <see cref="BindSettings"/> rather than beside the unknown-key loop
+    /// that consumes it: a key added to the binder and forgotten here starts being reported as a
+    /// mistake the moment it works, which is loud, immediate and impossible to ship past.
+    /// </remarks>
+    internal static readonly string[] JobKeys =
+    [
+        // Structural - read by BindJob itself.
+        "name", "paths", "kind", "enabled", "allowdangerous",
+
+        // Schedule.
+        "hourly", "daily", "weekly", "monthly", "yearly", "schedule", "size",
+        "weekday", "monthday",
+
+        // Retention.
+        "rotate", "start", "maxage", "minage", "minsize", "maxsize", "maxfiles",
+
+        // Archiving.
+        "compress", "compresstype", "delaycompress", "dateext", "dateformat",
+        "olddir", "createolddir",
+
+        // Behaviour.
+        "missingok", "notify", "notifempty", "lockstrategy", "livefiles",
+        "retrycount", "retryinterval",
+
+        // Hooks.
+        "prerotate", "postrotate", "hook_timeout",
+    ];
+
+    /// <summary>
+    /// Reports a key in <c>[job]</c> that is not a setting.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// A mistyped <c>postrotae</c> used to bind cleanly, validate cleanly and do nothing forever.
+    /// So did <c>firstaction</c>, <c>lastaction</c> and <c>preremove</c> - which the importer
+    /// wrote into generated configuration files as real-looking directives, next to a
+    /// <c>postrotate</c> that works, with the original shell script quoted above them as proof of
+    /// a correct translation.
+    /// </para>
+    /// <para>
+    /// A warning rather than an error, and for the reason <c>[notify]</c> gives for its own: this
+    /// runs over every file in conf.d, and promoting one misspelling to an error would stop the
+    /// whole run - every healthy job included - over a key that is optional in the first place.
+    /// </para>
+    /// </remarks>
+    private static void ReportUnknownJobKeys(TableSyntaxBase table, string file, DiagnosticBag d)
+    {
+        foreach (var kv in table.Items.OfType<KeyValueSyntax>())
+        {
+            var key = KeyName(kv);
+
+            if (JobKeys.Contains(key, StringComparer.OrdinalIgnoreCase))
+            {
+                continue;
+            }
+
+            d.Warn(file, DiagnosticCode.ConfigInvalid,
+                $"'{key}' is not a [job] setting, and is ignored.",
+                LineOf(kv), ColumnOf(kv),
+                remedy: Suggest(key) is { } near
+                    ? $"Did you mean '{near}'?"
+                    : "Remove it, or check it against the Configuration section of README.md "
+                      + "(hooks are in docs/hooks.md).");
+        }
+    }
+
+    /// <summary>The known key one edit away from what was written, if there is exactly one.</summary>
+    /// <remarks>
+    /// Only substitutions, insertions and deletions of a single character - enough for
+    /// <c>postrotae</c> and <c>compres</c>, and not enough to confidently propose
+    /// <c>postrotate</c> for <c>firstaction</c>, which is a different directive rather than a
+    /// misspelling of this one.
+    /// </remarks>
+    private static string? Suggest(string key)
+    {
+        string? best = null;
+
+        foreach (var known in JobKeys)
+        {
+            if (Math.Abs(known.Length - key.Length) > 1 || !WithinOneEdit(key, known))
+            {
+                continue;
+            }
+
+            if (best is not null)
+            {
+                return null;
+            }
+
+            best = known;
+        }
+
+        return best;
+    }
+
+    private static bool WithinOneEdit(string a, string b)
+    {
+        if (a.Equals(b, StringComparison.OrdinalIgnoreCase))
+        {
+            return false;
+        }
+
+        // Walk both from the front until they diverge, then from the back. What is left in the
+        // middle is the edit, and one edit means at most one character left on each side: a
+        // substitution leaves one and one, an insertion one and none.
+        int i = 0, j = a.Length - 1, k = b.Length - 1;
+
+        while (i < a.Length && i < b.Length && char.ToLowerInvariant(a[i]) == char.ToLowerInvariant(b[i]))
+        {
+            i++;
+        }
+
+        while (j >= i && k >= i && char.ToLowerInvariant(a[j]) == char.ToLowerInvariant(b[k]))
+        {
+            j--;
+            k--;
+        }
+
+        return j <= i && k <= i;
     }
 
     // ---- syntax-tree helpers ------------------------------------------------------------

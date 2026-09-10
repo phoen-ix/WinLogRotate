@@ -154,8 +154,25 @@ internal static class RunCommand
             : JournalWriter.Open(
                 paths.JournalDirectory, TimeProvider.System, maxSize: journalSettings.MaxSize);
 
-        var runner = new RotationRunner(journal, guard, state, TimeProvider.System);
-        var report = runner.Run(config, options);
+        // Taken here, immediately before rotation, and not at configuration load. A run reads its
+        // configuration and then works for an hour; a directory's permissions can be changed in
+        // between, by exactly the person the check exists to stop.
+        var hooks = HookSupport.ForThisMachine(paths);
+
+        // Once per run, and only where it costs somebody something. A machine with no hooks
+        // configured has nothing refused, and telling it nightly that its conf.d could be tighter
+        // would be a warning nobody can act on about a feature nobody uses.
+        if (hooks.Finding is { } insecure
+            && config.Jobs.Any(j => j.Enabled && (j.PreRotate.Count > 0 || j.PostRotate.Count > 0)))
+        {
+            ctx.Output.Diagnostic(insecure);
+        }
+
+        var runner = new RotationRunner(
+            journal, guard, state, TimeProvider.System,
+            archiveSource: null, hooks.Host, hooks.Gate);
+
+        var report = runner.Run(config, options with { Started = started });
 
         foreach (var plan in report.Plans)
         {

@@ -357,7 +357,15 @@ jobs:
             'paths = ["C:/smoke/rot/svc.log"]',
             'rotate   = 3',
             'compress = false',
-            'notifempty = false'
+            'notifempty = false',
+
+            # And a real hook, run by SYSTEM out of a directory the installer locked down. Until
+            # milestone 13 nothing in this product had ever spawned a bounded child process, and
+            # the ACL gate that permits one was computed, printed by doctor, and gated nothing.
+            # A witness file is the only way to tell "the hook ran" from "the hook was refused
+            # and the run reported success anyway", which is the failure this whole area exists
+            # to prevent.
+            'postrotate = ["command:C:\\Windows\\System32\\cmd.exe /c echo ran> C:\\smoke\\rot\\hook-ran.txt"]'
           )
           Set-Content -Path "$env:DATA_DIR\conf.d\smoke-rotate.toml" -Value $rotate
 
@@ -368,6 +376,9 @@ jobs:
           # rotating every log on the machine at once - so --catchup is what actually rotates.
           if (Test-Path "C:\smoke\rot\svc.log.1") {
             throw 'The first run rotated instead of baselining, so a fresh install would rotate every log at once.'
+          }
+          if (Test-Path "C:\smoke\rot\hook-ran.txt") {
+            throw 'A dry run executed the postrotate hook. --dry-run must describe a hook without running it.'
           }
 
           & $exe run --catchup --verbose | Out-Host
@@ -382,10 +393,21 @@ jobs:
             throw 'The recreated log is not empty, so the rename did not do what it claimed.'
           }
 
+          # The first hook this product has ever run. It proves four things at once that no unit
+          # test can: the ACL gate opened on a real installer-made directory, the process was
+          # spawned by SYSTEM, its pipes were drained, and it was waited for rather than abandoned.
+          if (-not (Test-Path "C:\smoke\rot\hook-ran.txt")) {
+            throw 'The postrotate hook left no witness file, so it was refused or never dispatched.'
+          }
+          Remove-Item "C:\smoke\rot\hook-ran.txt"
+
           # And again: the clock has just been set, so a second run must decline.
           & $exe run --verbose | Out-Host
           if (Test-Path "C:\smoke\rot\svc.log.2") {
             throw 'A second run rotated again within the interval; the rotation clock is not being read.'
+          }
+          if (Test-Path "C:\smoke\rot\hook-ran.txt") {
+            throw 'A run that rotated nothing still ran the hook; a reload must follow a rotation, not a schedule.'
           }
 
           $result = Wait-TaskResult -TaskPath $env:TASK_PATH -TaskName $env:TASK_NAME

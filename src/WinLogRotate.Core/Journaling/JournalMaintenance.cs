@@ -175,6 +175,11 @@ public static class JournalMaintenance
         RetryIntervalMs = 100,
         PreRotate = [],
         PostRotate = [],
+
+        // The journal's own upkeep runs no hooks and never will: it is the one job whose
+        // definition is code rather than configuration, so there is nothing for an operator to
+        // hang a script on.
+        HookTimeout = TimeSpan.Zero,
         AllowDangerous = [],
     };
 }

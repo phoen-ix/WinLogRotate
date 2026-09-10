@@ -53,6 +53,7 @@ public class RotatePlannerTests
             RetryIntervalMs = 100,
             PreRotate = [],
             PostRotate = [],
+            HookTimeout = TimeSpan.FromSeconds(60),
             AllowDangerous = [],
         };
 
@@ -318,6 +319,7 @@ public class ArchiveNamingTests
         RetryIntervalMs = 100,
         PreRotate = [],
         PostRotate = [],
+        HookTimeout = TimeSpan.FromSeconds(60),
         AllowDangerous = [],
     };
 

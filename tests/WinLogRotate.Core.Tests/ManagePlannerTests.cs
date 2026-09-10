@@ -56,6 +56,7 @@ public class ManagePlannerTests
             RetryIntervalMs = 100,
             PreRotate = [],
             PostRotate = [],
+            HookTimeout = TimeSpan.FromSeconds(60),
             AllowDangerous = [],
         };
 
