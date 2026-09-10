@@ -339,12 +339,22 @@ function Invoke-WithHeldHandle {
         [int] $TimeoutSeconds = 120
     )
 
-    $readyName   = 'Global\WinLogRotate.Smoke.HolderReady'
-    $releaseName = 'Global\WinLogRotate.Smoke.HolderRelease'
+    # Unique per call. EventWaitHandle's constructor OPENS an existing name rather than creating
+    # a fresh object, and a ManualReset event left signalled by the previous call stays signalled -
+    # so the second holder set ready, fell straight through its already-signalled release, and
+    # disposed its handle while the probe was still measuring. Everything after the first case
+    # would then be measured against an unlocked file, which looks exactly like the product
+    # working. Reset as well as renaming, because a crashed earlier run can leave a name behind.
+    if ($null -eq $script:HeldHandleSeq) { $script:HeldHandleSeq = 0 }
+    $script:HeldHandleSeq++
+    $readyName   = "Global\WinLogRotate.Smoke.HolderReady.$script:HeldHandleSeq"
+    $releaseName = "Global\WinLogRotate.Smoke.HolderRelease.$script:HeldHandleSeq"
 
     # Created here, opened there: a child that had to create them could race ahead of us.
     $ready   = New-Object System.Threading.EventWaitHandle($false, 'ManualReset', $readyName)
     $release = New-Object System.Threading.EventWaitHandle($false, 'ManualReset', $releaseName)
+    $ready.Reset()   | Out-Null
+    $release.Reset() | Out-Null
 
     $job = Start-Job -ScriptBlock {
         param($path, $share, $readyName, $releaseName, $timeout)
@@ -373,6 +383,16 @@ function Invoke-WithHeldHandle {
         }
 
         if ($job.State -ne 'Running') { throw 'The holder exited before the test ran.' }
+
+        # The job object can still say Running for a moment after the handle is gone, so ask the
+        # file system instead: if we can take an exclusive handle, nothing else is holding one.
+        try {
+            $proof = [System.IO.File]::Open($Path, 'Open', 'Read', 'None')
+            $proof.Dispose()
+            throw "Nothing is actually holding '$Path' - every verdict below would be measured against a free file."
+        } catch [System.IO.IOException] {
+            # Expected: the holder has it.
+        }
 
         & $While
 
