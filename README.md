@@ -280,10 +280,13 @@ upgrades, uninstalls, and does the per-user variant too.
 installed to C:\Program Files\WinLogRotate
 ACL ok: O:BAG:SYD:PAI(A;OICI;FA;;;SY)(A;OICI;FA;;;BA)(A;OICI;0x1200a9;;;BU)
 task LastTaskResult = 0x0
-[smoke] 6 file(s) matched
-  skip      app-2026-09-07.log  (newest file - the application is still writing it)
-  would del app-2026-08-03.log  (rotate = 2 keeps 2 archive(s); this is number 3)
-  would zip app-2026-08-05.log  (compress = zip)
+  run.start  (dry run)
+  [smoke] job.start
+  [smoke] skip app-2026-09-07.log  (newest file - the application is still writing it)
+  [smoke] would delete app-2026-08-03.log  (rotate = 2 keeps 2 archive(s); this is number 3)
+  [smoke] would compress app-2026-08-05.log -> app-2026-08-05.log.zip  (compress = zip)
+  [smoke] job.end
+  run.end
 upgrade took 18.3s
 ```
 

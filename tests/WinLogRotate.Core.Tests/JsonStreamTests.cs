@@ -106,6 +106,33 @@ public sealed class JsonStreamTests : IDisposable
     }
 
     /// <summary>
+    /// A run streams the work, not only the verdict on it.
+    /// </summary>
+    /// <remarks>
+    /// The flag is called --json-stream and produced, for the run verb, a file containing one
+    /// envelope and nothing else - because RunCommand reported every per-file line through
+    /// Output.Line, which the JSON sink discards, and called Output.Event zero times. A watcher
+    /// got the ending without the story. The brackets are what can be asserted on this leg: the
+    /// job's paths are spelled for Windows and match nothing here, so the operations in between
+    /// are covered by RunEventStreamTests against the engine itself.
+    /// </remarks>
+    [Fact]
+    public void ARunStreamsItsEventsAndNotOnlyItsResult()
+    {
+        var lines = Stream("run", "--no-notify", "--config-dir", Config(Job("app", "\"C:/app/logs/*.log\"")));
+
+        var operations = lines
+            .Where(l => l.Length > 0)
+            .Select(l => JsonDocument.Parse(l).RootElement)
+            .Where(e => e.TryGetProperty("operation", out _))
+            .Select(e => e.GetProperty("operation").GetString())
+            .ToList();
+
+        operations.ShouldContain("run.start", "the file the GUI tails held the envelope and nothing else");
+        operations.ShouldContain("run.end");
+    }
+
+    /// <summary>
     /// The verbs the GUI runs elevated all put something in the file.
     /// </summary>
     /// <remarks>

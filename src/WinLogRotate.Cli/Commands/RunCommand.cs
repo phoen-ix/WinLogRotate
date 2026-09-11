@@ -163,10 +163,22 @@ internal static class RunCommand
             }
         }
 
-        using IJournal journal = options.DryRun || !journalSettings.Enabled
+        // Not a "using" of its own: the tee below takes ownership and disposes it. Two using
+        // declarations over one writer double-dispose it, and JournalWriter.Dispose flushes
+        // rather than checking - so every real run ended on an ObjectDisposedException from the
+        // last line of the verb, after all the work was done and before the exit code was
+        // returned. The test that runs the verb for real found it on the first attempt.
+        IJournal durable = options.DryRun || !journalSettings.Enabled
             ? new NullJournal()
             : JournalWriter.Open(
                 paths.JournalDirectory, TimeProvider.System, maxSize: journalSettings.MaxSize);
+
+        // Wrapped unconditionally, NullJournal included. A dry run is the one that most needs to
+        // say what it would do, and it is the run that journals nothing - so making the tee
+        // conditional on a real journal would leave --dry-run silent on exactly the channel the
+        // GUI reads. The seam is two members wide, which is why the whole engine can be given a
+        // voice from the Cli project without Core learning what a sink is.
+        using IJournal journal = new TeeJournal(durable, ctx.Output, TimeProvider.System, options.DryRun);
 
         // Taken here, immediately before rotation, and not at configuration load. A run reads its
         // configuration and then works for an hour; a directory's permissions can be changed in
@@ -188,23 +200,10 @@ internal static class RunCommand
 
         var report = runner.Run(config, options with { Started = started });
 
-        foreach (var plan in report.Plans)
-        {
-            ctx.Output.Line($"[{plan.JobName}] {plan.MatchedFiles} file(s) matched");
-            foreach (var op in plan.Operations)
-            {
-                var verb = options.DryRun ? "would" : "did";
-                var line = op.Action switch
-                {
-                    PlannedAction.Skip => $"  skip      {op.Source}  ({op.Reason})",
-                    PlannedAction.Compress => $"  {verb} zip  {op.Source}  ({op.Reason})",
-                    PlannedAction.Delete => $"  {verb} del  {op.Source}  ({op.Reason})",
-                    PlannedAction.CreateDirectory => $"  {verb} mkdir {op.Source}  ({op.Reason})",
-                    _ => $"  {verb} {op.Action}  {op.Source}  ({op.Reason})",
-                };
-                ctx.Output.Line(line);
-            }
-        }
+        // The per-operation report used to be hand-printed here, from report.Plans, in a format
+        // of its own - a second renderer for facts the sinks already had, reaching only the
+        // channel --json throws away. The sinks render it now, from the events the tee carries,
+        // so text and NDJSON describe the same run instead of two versions of it.
 
         // Forwarded as the engine classified them, not re-labelled. Reporting every failure as
         // an Error with DiagnosticCode.RotationFailed used to describe a refused dangerous path

@@ -6,9 +6,14 @@ namespace WinLogRotate.Cli.Output;
 /// The default sink: plain text for a human at a prompt. Warnings and errors go to stderr
 /// so <c>winlogrotate run | Select-String ...</c> pipes only the actual output.
 /// </summary>
-internal sealed class TextOutputSink(bool verbose, bool color) : IOutputSink
+internal sealed class TextOutputSink(bool verbose, bool color, TextWriter? to = null) : IOutputSink
 {
     private readonly DiagnosticCollector _diagnostics = new();
+
+    // Taken once, like JsonOutputSink's own writer, and overridable for the same reason the
+    // engine's seams are: what a run renders is now worth asserting, and Console.SetOut is a
+    // process-wide global that two test classes running in parallel would take from each other.
+    private readonly TextWriter _out = to ?? Console.Out;
 
     public bool Verbose { get; } = verbose;
 
@@ -22,7 +27,7 @@ internal sealed class TextOutputSink(bool verbose, bool color) : IOutputSink
             return;
         }
 
-        var writer = d.Severity >= Severity.Warning ? Console.Error : Console.Out;
+        var writer = d.Severity >= Severity.Warning ? Console.Error : _out;
         var label = d.Severity switch
         {
             Severity.Critical => "critical",
@@ -46,24 +51,42 @@ internal sealed class TextOutputSink(bool verbose, bool color) : IOutputSink
 
     public void Event(CliEvent e)
     {
-        // The plan half is the interesting one for a human: under --dry-run it is all there
-        // is, and under a real run the apply half only repeats it unless something failed.
-        if (e.Phase == Phase.Plan || e.Result == OpResult.Failed || Verbose)
+        // One line per operation, which is what "run" printed by hand until the sinks rendered.
+        // The tee has already reduced each operation to its last word, so this does not have to
+        // choose between the plan and apply halves - it only decides what is not the work: the
+        // run and job brackets are scaffolding, and a notification that went out is already
+        // reported by notify's own line. Both stay behind --verbose. Failures are never
+        // scaffolding and always print.
+        if (Verbose || !(IsBracket(e) || WasSent(e)))
         {
-            Console.Out.WriteLine(Describe(e));
+            _out.WriteLine(Describe(e));
         }
     }
 
-    public void Line(string text) => Console.Out.WriteLine(text);
+    private static bool IsBracket(CliEvent e) =>
+        e.Operation is Op.RunStart or Op.RunEnd or Op.JobStart or Op.JobEnd;
+
+    private static bool WasSent(CliEvent e) => e.Operation == Op.Hook && e.Result == OpResult.Ok;
+
+    public void Line(string text) => _out.WriteLine(text);
 
     public int Complete<T>(string verb, int exitCode, T? result) => exitCode;
 
     private static string Describe(CliEvent e)
     {
-        var verb = e.Phase == Phase.Plan ? "would" : "did";
+        // Three states, not two. Until the tee existed the only events reaching a sink were
+        // notify's, which are never "failed to" in a way a human reads on this line - so "did
+        // delete" was printed for a delete that threw, with the truth left to the diagnostic
+        // underneath it.
+        var verb = e.Result == OpResult.Failed ? "failed to"
+            : e.Phase == Phase.Plan ? "would"
+            : "did";
         var job = e.Job is null ? "" : $"[{e.Job}] ";
         var body = e.Operation switch
         {
+            // The only operation a skip is ever recorded as: PlanExecutor maps every action it
+            // can carry out to a named op, and PlannedAction.Skip is the one that is left.
+            Op.Plan => $"skip {e.Src}",
             Op.Delete => $"{verb} delete {e.Src}",
             Op.Compress => $"{verb} compress {e.Src} -> {e.Dst}",
             Op.Rename => $"{verb} rename {e.Src} -> {e.Dst}",
