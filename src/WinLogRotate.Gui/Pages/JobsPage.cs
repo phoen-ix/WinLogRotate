@@ -116,8 +116,16 @@ public sealed class JobsPage : UserControl
             return;
         }
 
+        // Exit 2 means nothing was attempted; exit 1 means a job was skipped and the rest
+        // rotated. Milestone 17 introduced the second, and this sentence - written when 2 was
+        // the only failure - then told an operator nothing would run when almost everything
+        // would. The distinction is the whole point of having two codes.
+        var everythingStopped = result.ExitCode == Core.ExitCode.ConfigInvalid;
+
         LrDialog.Show(this, DialogKind.Warning, "Configuration",
-            "The configuration has problems. Nothing will run until they are fixed.",
+            everythingStopped
+                ? "The configuration has problems. Nothing will run until they are fixed."
+                : "One or more jobs have problems and will be skipped. The rest will still run.",
             result.StdOut + result.StdErr);
     }
 

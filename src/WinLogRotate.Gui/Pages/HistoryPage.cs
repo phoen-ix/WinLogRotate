@@ -82,9 +82,19 @@ public sealed class HistoryPage : UserControl
                 var operation = entry.GetProperty("operation").GetString() ?? "";
 
                 // Bookkeeping events are noise in a history view; the file operations are what
-                // somebody came here to see.
+                // somebody came here to see. Guard verdicts and NUL-fill findings are decisions
+                // rather than operations - milestone 17 gave them emitters, and without this they
+                // became rows in a grid that says it shows what was compressed, moved or deleted,
+                // and were counted as operations underneath it.
                 if (operation.StartsWith("run.", StringComparison.Ordinal)
-                    || operation.StartsWith("job.", StringComparison.Ordinal))
+                    || operation.StartsWith("job.", StringComparison.Ordinal)
+                    || operation.StartsWith("guard.", StringComparison.Ordinal)
+                    || operation == "nulfill"
+
+                    // Storing a credential is not something that happened to a log file. A hook
+                    // is kept: it ran as part of a rotation, and "did the postrotate script
+                    // fire?" is a question people come to a history for.
+                    || operation == "secret")
                 {
                     continue;
                 }

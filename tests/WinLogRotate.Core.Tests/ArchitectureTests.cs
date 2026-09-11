@@ -712,4 +712,58 @@ public partial class ArchitectureTests
 
         unread.ShouldBeEmpty("commands that declare --config-dir and never read it");
     }
+
+    /// <summary>
+    /// The History page has an opinion about every journal operation.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// It shows file operations and filters bookkeeping, by prefix. Milestone 17 gave emitters
+    /// to guard.refuse, guard.override and nulfill - decisions rather than operations - and the
+    /// filter did not know about them, so verdicts became rows in a grid whose own doc comment
+    /// says it shows "what was actually compressed, moved or deleted", and were counted as
+    /// operations underneath it.
+    /// </para>
+    /// <para>
+    /// A text scan, because the GUI cannot be referenced by a test that runs on the Linux leg:
+    /// it carries a Microsoft.WindowsDesktop.App framework reference, so such a project fails to
+    /// resolve its framework before a single test executes. What makes this more than a grep is
+    /// the other side - the expected set is read from <c>Op</c> by reflection, so adding an
+    /// operation forces a decision here rather than silently landing in the grid.
+    /// </para>
+    /// </remarks>
+    [Fact]
+    public void TheHistoryPageHasAnOpinionAboutEveryJournalOperation()
+    {
+        var page = File.ReadAllText(Path.Combine(
+            RepoRoot.Find().FullName, "src", "WinLogRotate.Gui", "Pages", "HistoryPage.cs"));
+
+        // What a history of file operations is for. Everything else is bookkeeping or a verdict
+        // and belongs behind the filter.
+        // Hook is shown alongside the file operations: it ran as part of a rotation, and "did
+        // the postrotate script fire?" is a question people come to a history for.
+        string[] shown =
+        [
+            Op.Compress, Op.Delete, Op.Rename, Op.CopyTruncate,
+            Op.Copy, Op.Create, Op.CreateDir, Op.Plan, Op.Hook,
+        ];
+
+        var all = typeof(Op)
+            .GetFields(BindingFlags.Public | BindingFlags.Static)
+            .Where(f => f.IsLiteral && f.FieldType == typeof(string))
+            .Select(f => (string)f.GetRawConstantValue()!)
+            .ToArray();
+
+        all.Length.ShouldBeGreaterThan(10);
+
+        // A filtered operation is named by the page, either whole or by its prefix up to the dot.
+        bool Filtered(string op) =>
+            page.Contains($"\"{op}\"", StringComparison.Ordinal)
+            || (op.IndexOf('.', StringComparison.Ordinal) is > 0 and var dot
+                && page.Contains($"\"{op[..(dot + 1)]}\"", StringComparison.Ordinal));
+
+        all.Except(shown, StringComparer.Ordinal)
+            .Where(op => !Filtered(op))
+            .ShouldBeEmpty("journal operations the History page neither shows nor filters");
+    }
 }
