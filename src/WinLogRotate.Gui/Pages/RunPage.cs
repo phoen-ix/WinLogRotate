@@ -108,14 +108,17 @@ public sealed class RunPage : UserControl
         }
     }
 
-    private void Append(string text)
-    {
-        if (InvokeRequired)
-        {
-            BeginInvoke(() => Append(text));
-            return;
-        }
-
-        _output.AppendText(text.EndsWith('\n') ? text : text + Environment.NewLine);
-    }
+    /// <summary>
+    /// Appends a line, from whichever thread produced it.
+    /// </summary>
+    /// <remarks>
+    /// This is handed to RunElevatedAsync as the stream callback, so since the stream started
+    /// carrying events it is called once per operation from a thread-pool thread. It guarded
+    /// itself with InvokeRequired alone, which answers false when no handle exists anywhere up
+    /// the parent chain - so a page the user had navigated away from took the "already on the UI
+    /// thread" branch and wrote to a destroyed control off the UI thread.
+    /// </remarks>
+    private void Append(string text) => UiThread.Post(
+        _output,
+        () => _output.AppendText(text.EndsWith('\n') ? text : text + Environment.NewLine));
 }

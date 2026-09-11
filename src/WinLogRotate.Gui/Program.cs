@@ -54,24 +54,12 @@ internal static class Program
     /// Closes the window from a pool thread, whatever state it is in.
     /// </summary>
     /// <remarks>
-    /// BeginInvoke needs a created handle and a live form, and this can fire before the window is
-    /// shown - the event is registered before Application.Run - or after it has closed on its own.
-    /// Either would throw on a thread-pool thread, which takes the process down rather than the
-    /// window. An installer asking a GUI to close politely must never be the thing that crashes it.
+    /// This can fire before the window is shown - the event is registered before
+    /// Application.Run - or after it has closed on its own. An installer asking a GUI to close
+    /// politely must never be the thing that crashes it, and the guard that makes that true is
+    /// now <see cref="UiThread.Post"/>, which this method's own shape was taken from.
     /// </remarks>
-    private static void Close(Form form)
-    {
-        try
-        {
-            if (form.IsHandleCreated && !form.IsDisposed)
-            {
-                form.BeginInvoke(form.Close);
-            }
-        }
-        catch (Exception e) when (e is ObjectDisposedException or InvalidOperationException)
-        {
-        }
-    }
+    private static void Close(Form form) => UiThread.Post(form, form.Close);
 
     private sealed class Quitter(EventWaitHandle handle, RegisteredWaitHandle registration) : IDisposable
     {

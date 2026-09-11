@@ -119,7 +119,7 @@ public sealed class SchedulingPage : UserControl
             // seconds of a frozen window reads as a hang.
             var result = await _cli.RunElevatedAsync(
                 MainForm.BuildArgs(_configDir, "host", "use", kind),
-                line => BeginInvoke(() => _log.AppendText(line + Environment.NewLine)))
+                UiThread.LineTo(_log, line => _log.AppendText(line + Environment.NewLine)))
                 .ConfigureAwait(true);
 
             _log.AppendText(result.Describe() + Environment.NewLine);

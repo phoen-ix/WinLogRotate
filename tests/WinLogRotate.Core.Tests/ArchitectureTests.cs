@@ -73,6 +73,50 @@ public partial class ArchitectureTests
     }
 
     /// <summary>
+    /// Nothing marshals to the UI thread by hand.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// <c>InvokeRequired</c> is only meaningful once a handle exists: it walks up the parent
+    /// chain looking for a control with a created handle and answers <c>false</c> when it finds
+    /// none. So the natural-looking guard - <c>if (InvokeRequired) BeginInvoke(...)</c> - sends a
+    /// detached control's work down the "already on the UI thread" branch and runs it on
+    /// whichever thread produced it. <c>MainForm.ShowPage</c> detaches a page on every
+    /// navigation, and a rotation's line callbacks arrive from a thread-pool thread, so that is
+    /// an ordinary sequence rather than a corner.
+    /// </para>
+    /// <para>
+    /// A text scan, because the helper touches <c>Control</c> and so cannot leave the WinForms
+    /// project, and a test project that references that project cannot run on the Linux leg. The
+    /// file set is derived rather than listed, so a new hand-rolled site turns this red.
+    /// </para>
+    /// </remarks>
+    [Fact]
+    public void NothingMarshalsToTheUiThreadByHand()
+    {
+        var gui = Path.Combine(RepoRoot.Find().FullName, "src", "WinLogRotate.Gui");
+        var helper = Path.Combine(gui, "Ui", "UiThread.cs");
+
+        File.Exists(helper).ShouldBeTrue("the one place allowed to do this must exist");
+
+        var offenders = Directory
+            .EnumerateFiles(gui, "*.cs", SearchOption.AllDirectories)
+            .Where(f => !f.Contains(Path.Combine("obj", ""), StringComparison.Ordinal))
+            .Where(f => !string.Equals(f, helper, StringComparison.Ordinal))
+            .Where(f => File.ReadAllLines(f)
+                // Prose about the hazard is not the hazard. Only code counts.
+                .Where(line => !line.TrimStart().StartsWith("///", StringComparison.Ordinal))
+                .Any(line =>
+                    line.Contains("BeginInvoke", StringComparison.Ordinal)
+                    || line.Contains("InvokeRequired", StringComparison.Ordinal)))
+            .Select(Path.GetFileName)
+            .ToArray();
+
+        offenders.ShouldBeEmpty(
+            "post through WinLogRotate.Gui/Ui/UiThread.cs - InvokeRequired alone is not a guard");
+    }
+
+    /// <summary>
     /// A page that walks an envelope by hand catches every way that walk can fail.
     /// </summary>
     /// <remarks>
