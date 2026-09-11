@@ -559,7 +559,7 @@ public static class ConfigBinder
                 LineOf(kv), ColumnOf(kv),
                 remedy: Suggest(key) is { } near
                     ? $"Did you mean '{near}'?"
-                    : "Remove it, or check it against the Configuration section of README.md "
+                    : "Remove it, or check it against docs/configuration.md "
                       + "(hooks are in docs/hooks.md).");
         }
     }

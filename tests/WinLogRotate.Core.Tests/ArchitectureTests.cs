@@ -532,4 +532,76 @@ public partial class ArchitectureTests
         secrets.HasDefaultValue.ShouldBeFalse(
             "an optional lookup is how LR9005 stayed unreachable for nine milestones");
     }
+
+    [GeneratedRegex(@"^\|\s*`([a-z_]+)`\s*\|", RegexOptions.Compiled)]
+    private static partial Regex DocumentedJobKey();
+
+    /// <summary>
+    /// Every <c>[job]</c> key has a row in the configuration reference, and every row is real.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// Eight keys were documented nowhere at all - <c>allowdangerous</c>, <c>hourly</c>,
+    /// <c>yearly</c>, <c>monthday</c>, <c>maxfiles</c>, <c>dateformat</c>, <c>olddir</c> and
+    /// <c>createolddir</c> - and the unknown-key remedy sent operators to a README section that
+    /// contains one example and no key reference at all. <c>allowdangerous</c> is the sharpest
+    /// case: it is the only escape hatch from a guard refusal, and the refusal's own remedy named
+    /// it while no document did.
+    /// </para>
+    /// <para>
+    /// Read from <see cref="ConfigBinder.JobKeys"/> directly rather than by scanning the binder's
+    /// source, because that array is the thing the binder actually consults - a source scan could
+    /// pass while the binder disagreed with itself.
+    /// </para>
+    /// <para>
+    /// Both directions, like the diagnostics rule. A stale row is worse than a missing one: it
+    /// tells an operator to write a key that will be warned about and ignored.
+    /// </para>
+    /// <para>
+    /// <b>What this deliberately does not assert:</b> row order, which section a key sits in, the
+    /// Default column against the code, or anything about the prose. Defaults live in three places
+    /// and are rendered for humans ("on", "beside the log"), so pinning them would either be wrong
+    /// or force the page into a machine-readable straitjacket - and a doc test that fails on a
+    /// wording change gets deleted within a month, which is worse than having none.
+    /// </para>
+    /// </remarks>
+    [Fact]
+    public void EveryJobKeyIsDocumentedInTheConfigurationReference()
+    {
+        var doc = Path.Combine(RepoRoot.Find().FullName, "docs", "configuration.md");
+
+        var documented = File.ReadAllLines(doc)
+            .Select(line => DocumentedJobKey().Match(line))
+            .Where(m => m.Success)
+            .Select(m => m.Groups[1].Value)
+            .ToHashSet(StringComparer.OrdinalIgnoreCase);
+
+        // A regex that silently stopped matching would make everything below pass while asserting
+        // nothing, which is the failure this whole file exists to prevent.
+        documented.Count.ShouldBeGreaterThan(30);
+
+        ConfigBinder.JobKeys
+            .Where(k => !documented.Contains(k))
+            .ShouldBeEmpty("[job] keys with no row in docs/configuration.md");
+
+        documented
+            .Where(k => !ConfigBinder.JobKeys.Contains(k, StringComparer.OrdinalIgnoreCase))
+            .ShouldBeEmpty("documented keys the binder does not accept");
+    }
+
+    /// <summary>The unknown-key remedy points at a document that lists the keys.</summary>
+    /// <remarks>
+    /// It pointed at README's Configuration section, which has one example block naming eleven
+    /// keys and no reference of any kind - so the single-edit suggester was doing the work the
+    /// documentation was credited with, and an operator two edits away from a real key was sent
+    /// somewhere that never mentions it.
+    /// </remarks>
+    [Fact]
+    public void TheUnknownKeyRemedyPointsAtTheConfigurationReference()
+    {
+        var binder = Path.Combine(
+            RepoRoot.Find().FullName, "src", "WinLogRotate.Core", "Configuration", "ConfigBinder.cs");
+
+        File.ReadAllText(binder).ShouldContain("docs/configuration.md");
+    }
 }

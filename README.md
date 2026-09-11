@@ -153,6 +153,8 @@ WinForms doesn't run on Server Core and that's where IIS usually lives.
 ## Configuration
 
 `C:\ProgramData\WinLogRotate\config.toml` holds defaults; one file per job in `conf.d\`.
+Every `[job]` key, with its type and default, is in
+[configuration](docs/configuration.md).
 
 ```toml
 # conf.d\myapp.toml
