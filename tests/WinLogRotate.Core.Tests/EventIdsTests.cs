@@ -1,6 +1,8 @@
 using System.Reflection;
 using Shouldly;
 using WinLogRotate.Contracts;
+using WinLogRotate.Core.Engine;
+using WinLogRotate.Core.Safety;
 using WinLogRotate.Hosting.Diagnostics;
 using Xunit;
 
@@ -72,23 +74,34 @@ public sealed class EventIdsTests
         EventIds.RunCompletedWithFailures.ShouldBeInRange(EventIds.MinId, EventIds.MaxId);
     }
 
+    /// <remarks>
+    /// Built from a real guard refusal rather than a hand-written diagnostic. It used to
+    /// construct its own CliDiagnostic, render it, and assert the output echoed what it had just
+    /// put in - so it proved that Render concatenates its input and would have passed with
+    /// PathGuard deleted entirely. It was also the last place in the repo where the wording
+    /// "Add the exact pattern to allowDangerous" survived, a remedy milestone 16 removed because
+    /// it named a key that reached nothing.
+    /// </remarks>
     [Fact]
     public void TheRenderedMessageCarriesEverythingAnOperatorNeeds()
     {
-        var text = EventIds.Render(new CliDiagnostic
+        var guard = new PathGuard(new GuardOptions
         {
-            Severity = Severity.Critical,
-            Code = DiagnosticCode.DangerousPathRefused,
-            Message = "'C:\\Windows\\*.log' resolves inside 'C:\\Windows'.",
-            Path = "C:\\Windows\\*.log",
-            Job = "bad job",
-            Remedy = "Add the exact pattern to allowDangerous.",
+            ProtectedRoots = ["C:\\Windows"],
+            Overrides = OverrideGate.Open,
         });
+
+        var refused = Diagnose.Refusal(
+            guard.CheckPattern("C:\\Windows\\*.log", GuardScope.None), job: "bad job");
+
+        var text = EventIds.Render(refused);
 
         text.ShouldContain("[bad job]");
         text.ShouldContain("resolves inside");
         text.ShouldContain("C:\\Windows\\*.log");
-        text.ShouldContain("allowDangerous");
+
+        // The remedy really reaches the operator, whatever it currently says.
+        text.ShouldContain(refused.Remedy.ShouldNotBeNull());
 
         // The code is repeated in the body even though it decided the event ID: an operator
         // reading the message should not have to consult a table to identify the condition.

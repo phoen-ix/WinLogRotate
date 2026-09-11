@@ -657,4 +657,59 @@ public partial class ArchitectureTests
             .Where(name => !code.Any(c => c.Contains($"Op.{name}", StringComparison.Ordinal)))
             .ShouldBeEmpty("journal operations nothing under src/ ever writes");
     }
+
+    [GeneratedRegex(@"GlobalOptions\.AddTo\((\w+)(,\s*configDir:\s*false)?\)", RegexOptions.Compiled)]
+    private static partial Regex GlobalOptionsAdded();
+
+    /// <summary>
+    /// A command that declares --config-dir reads it.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// <c>EveryOptionDeclaredOnTheCommandTreeIsReadByIt</c> searches the whole file, so one
+    /// reader anywhere satisfies every declaration - and <c>--config-dir</c> was added to all
+    /// twenty-nine commands and read by twenty-one. The other eight accepted it, listed it in
+    /// --help, and ignored it. That is the same shape as the unread options milestone 15 deleted,
+    /// hidden from the rule that was written to catch them by being declared in a loop.
+    /// </para>
+    /// <para>
+    /// Scoped per command: each <c>AddTo</c> owns the text up to the next one, which is where its
+    /// <c>SetAction</c> sits. A command that genuinely does not read configuration says so with
+    /// <c>configDir: false</c> rather than being allowlisted here - the exemption lives beside the
+    /// declaration, where the next person to add a verb will see it.
+    /// </para>
+    /// </remarks>
+    [Fact]
+    public void EveryCommandDeclaringAConfigDirectoryReadsIt()
+    {
+        var tree = Path.Combine(
+            RepoRoot.Find().FullName, "src", "WinLogRotate.Cli", "Commands", "CommandTree.cs");
+
+        var text = File.ReadAllText(tree);
+        var added = GlobalOptionsAdded().Matches(text).ToArray();
+
+        // A regex that stopped matching would make this pass while asserting nothing.
+        added.Length.ShouldBeGreaterThan(20);
+
+        var unread = new List<string>();
+
+        for (var i = 0; i < added.Length; i++)
+        {
+            // Opted out, and the reason is written at the call site.
+            if (added[i].Groups[2].Success)
+            {
+                continue;
+            }
+
+            var from = added[i].Index;
+            var to = i + 1 < added.Length ? added[i + 1].Index : text.Length;
+
+            if (!text[from..to].Contains("GlobalOptions.ConfigDir", StringComparison.Ordinal))
+            {
+                unread.Add(added[i].Groups[1].Value);
+            }
+        }
+
+        unread.ShouldBeEmpty("commands that declare --config-dir and never read it");
+    }
 }

@@ -417,13 +417,12 @@ Section "-Core" SEC_CORE
   nsExec::ExecToLog '"$INSTDIR\${CLI}" host use none --config-dir "$DataDir"'
   Pop $0
 
-!ifndef MINIMAL_ONLY
+  ; Both binaries, in every variant. There was a !ifndef MINIMAL_ONLY here whose two branches
+  ; were byte-identical, which reads as though the minimal build ships something different and
+  ; does not. What actually differs between the variants is whether the .NET bootstrap section is
+  ; compiled in at all - see EnsureDotnet - not which files are installed.
   File "${CLI}"
   File "${GUI}"
-!else
-  File "${CLI}"
-  File "${GUI}"
-!endif
   File "winlogrotate.ico"
   File /oname=LICENSE.txt "..\LICENSE"
 

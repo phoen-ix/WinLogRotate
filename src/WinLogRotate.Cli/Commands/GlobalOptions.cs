@@ -29,7 +29,15 @@ internal static class GlobalOptions
     public static readonly Option<DirectoryInfo?> ConfigDir =
         new("--config-dir") { Description = "Override the configuration directory. Defaults to the installed location." };
 
-    public static void AddTo(Command command)
+    /// <param name="configDir">
+    /// False for a verb that does not read configuration. Eight commands declared
+    /// <c>--config-dir</c> and never passed it to <c>InstallPaths.Resolve</c>, so it parsed, was
+    /// accepted, appeared in --help and changed nothing - the same shape as the unread options
+    /// milestone 15 deleted from the command tree. <c>glob</c> is the one where it looked
+    /// plausible: it tests a single pattern typed on a command line, builds its own guard, and
+    /// has no job, so there is nothing in a configuration directory for it to read.
+    /// </param>
+    public static void AddTo(Command command, bool configDir = true)
     {
         command.Options.Add(Json);
         command.Options.Add(JsonStream);
@@ -37,6 +45,10 @@ internal static class GlobalOptions
         command.Options.Add(Verbose);
         command.Options.Add(NoColor);
         command.Options.Add(NoEventLog);
-        command.Options.Add(ConfigDir);
+
+        if (configDir)
+        {
+            command.Options.Add(ConfigDir);
+        }
     }
 }

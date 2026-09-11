@@ -265,7 +265,7 @@ deliberately differs, and what cannot exist on Windows.
 
 ## Status, honestly
 
-**v0.3.x.** The installer and scheduler are verified end to end on Windows. Rotation itself ran
+**v0.7.x.** The installer and scheduler are verified end to end on Windows. Rotation itself ran
 for the first time in 0.4.0 — before that the engine skipped every `kind = "rotate"` job silently,
 which is to say the headline feature had never executed at all. It is verified only against files
 nothing holds open. The GUI is entirely unverified.
@@ -341,7 +341,7 @@ from elevation rather than from the install.
 
 ### What is thoroughly tested, everywhere
 
-695 tests, and the platform-neutral half is where the subtle bugs live:
+972 tests, and the platform-neutral half is where the subtle bugs live:
 
 - logrotate's scheduling rules, including that `--force` does **not** override `notifempty`,
   `minsize` or `minage` — one test per gate

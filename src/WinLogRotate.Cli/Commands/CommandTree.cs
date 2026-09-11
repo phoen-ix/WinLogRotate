@@ -32,7 +32,7 @@ internal static class CommandTree
             BuildNotify(),
         };
 
-        GlobalOptions.AddTo(root);
+        GlobalOptions.AddTo(root, configDir: false);  // the root verb prints a banner or a version
 
         // Replace the built-in version option rather than adding beside it. Its action runs
         // first and prints bare text, so `--version --json` would emit no envelope at all -
@@ -192,7 +192,7 @@ internal static class CommandTree
     {
         var path = new Argument<string>("path") { Description = "The log file to probe." };
         var probe = new Command("probe", "Report which locked-file strategies a path actually supports.") { path };
-        GlobalOptions.AddTo(probe);
+        GlobalOptions.AddTo(probe, configDir: false);  // probe takes the path it probes as an argument
         probe.SetAction(parse => ProbeCommand.Run(CommandContext.From(parse), parse.GetRequiredValue(path)));
         return probe;
     }
@@ -203,7 +203,7 @@ internal static class CommandTree
         var glob = new Command("glob",
             "Resolve a pattern and show what it matches, or why it was refused. Use this before trusting a pattern in a job.")
         { pattern };
-        GlobalOptions.AddTo(glob);
+        GlobalOptions.AddTo(glob, configDir: false);  // glob tests one pattern and builds its own guard
         glob.SetAction(parse => GlobCommand.Run(CommandContext.From(parse), parse.GetRequiredValue(pattern)));
         return glob;
     }
@@ -419,12 +419,12 @@ internal static class CommandTree
         };
 
         var pathAdd = new Command("path-add", "Add the install directory to PATH.") { machineScope };
-        GlobalOptions.AddTo(pathAdd);
+        GlobalOptions.AddTo(pathAdd, configDir: false);  // path-add edits PATH, not configuration
         pathAdd.SetAction(parse => HostCommand.Path(
             CommandContext.From(parse), add: true, machine: parse.GetValue(machineScope)));
 
         var pathRemove = new Command("path-remove", "Remove the install directory from PATH.") { machineScope };
-        GlobalOptions.AddTo(pathRemove);
+        GlobalOptions.AddTo(pathRemove, configDir: false);  // path-remove edits PATH, not configuration
         pathRemove.SetAction(parse => HostCommand.Path(
             CommandContext.From(parse), add: false, machine: parse.GetValue(machineScope)));
 
@@ -449,7 +449,7 @@ internal static class CommandTree
     private static Command BuildScan()
     {
         var scan = new Command("scan", "Find log producers on this machine and say which ones rotate but never delete.");
-        GlobalOptions.AddTo(scan);
+        GlobalOptions.AddTo(scan, configDir: false);  // scan looks at the machine, not at a configuration
         scan.SetAction(parse => ScanCommand.Run(CommandContext.From(parse)));
         return scan;
     }
@@ -457,16 +457,16 @@ internal static class CommandTree
     private static Command BuildUpdate()
     {
         var check = new Command("check", "Report whether a newer release exists. Makes no changes.");
-        GlobalOptions.AddTo(check);
+        GlobalOptions.AddTo(check, configDir: false);  // update check asks GitHub for a version
         check.SetAction(parse => UpdateCommand.CheckAsync(CommandContext.From(parse)).GetAwaiter().GetResult());
 
         // No --yes, and the description says what the verb does rather than what it is named
         // after. Apply deliberately does not self-replace - see UpdateCommand.Apply - so a switch
         // offering to "install without asking" was attached to a verb that installs nothing.
         var apply = new Command("apply", "Explain how to install the newest release.");
-        GlobalOptions.AddTo(apply);
+        GlobalOptions.AddTo(apply, configDir: false);  // update apply prints where to download
         apply.SetAction(parse => UpdateCommand.Apply(CommandContext.From(parse)));
 
-        return new Command("update", "Check for and install newer releases.") { check, apply };
+        return new Command("update", "Check for newer releases, and say how to install one.") { check, apply };
     }
 }
