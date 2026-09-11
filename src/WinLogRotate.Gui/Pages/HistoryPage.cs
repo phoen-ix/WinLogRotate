@@ -1,4 +1,3 @@
-using System.Text.Json;
 using WinLogRotate.Gui.Cli;
 using WinLogRotate.Gui.Ui;
 
@@ -72,57 +71,31 @@ public sealed class HistoryPage : UserControl
             return;
         }
 
-        try
-        {
-            using var document = JsonDocument.Parse(result.StdOut);
-            var payload = document.RootElement.GetProperty("result");
+        // Read by JournalHistory, which lives in a project a test can reference. What was here
+        // was a JsonDocument walk that added one row per record - so every operation that really
+        // happened appeared twice, its plan half and its apply half, and the count underneath
+        // said the doubled number. None of that was reachable by a test while it lived beside a
+        // DataGridView, which is the reason it survived three milestones.
+        var view = JournalHistory.From(result.StdOut);
 
-            foreach (var entry in payload.GetProperty("entries").EnumerateArray())
-            {
-                var operation = entry.GetProperty("operation").GetString() ?? "";
-
-                // Bookkeeping events are noise in a history view; the file operations are what
-                // somebody came here to see. Guard verdicts and NUL-fill findings are decisions
-                // rather than operations - milestone 17 gave them emitters, and without this they
-                // became rows in a grid that says it shows what was compressed, moved or deleted,
-                // and were counted as operations underneath it.
-                if (operation.StartsWith("run.", StringComparison.Ordinal)
-                    || operation.StartsWith("job.", StringComparison.Ordinal)
-                    || operation.StartsWith("guard.", StringComparison.Ordinal)
-                    || operation == "nulfill"
-
-                    // Storing a credential is not something that happened to a log file. A hook
-                    // is kept: it ran as part of a rotation, and "did the postrotate script
-                    // fire?" is a question people come to a history for.
-                    || operation == "secret")
-                {
-                    continue;
-                }
-
-                _grid.Rows.Add(
-                    Field(entry, "ts"),
-                    Field(entry, "job"),
-                    operation,
-                    Field(entry, "src"),
-                    Field(entry, "reason"));
-            }
-
-            var skipped = payload.GetProperty("skippedLines").GetInt32();
-            _status.ForeColor = Theme.Current.Muted;
-            _status.Text = _grid.Rows.Count == 0
-                ? "Nothing has been rotated yet."
-                : $"{_grid.Rows.Count} operation(s)."
-                  + (skipped > 0
-                      ? $" {skipped} unreadable line(s) skipped - a previous run was probably terminated."
-                      : "");
-        }
-        catch (JsonException)
+        if (view.Unreadable)
         {
             _status.ForeColor = Theme.Current.Danger;
             _status.Text = "Could not read the journal.";
+            return;
         }
-    }
 
-    private static string Field(JsonElement element, string name) =>
-        element.TryGetProperty(name, out var value) ? value.GetString() ?? "" : "";
+        foreach (var row in view.Rows)
+        {
+            _grid.Rows.Add(row.When, row.Job, row.What, row.File, row.Why);
+        }
+
+        _status.ForeColor = Theme.Current.Muted;
+        _status.Text = view.Rows.Count == 0
+            ? "Nothing has been rotated yet."
+            : $"{view.Rows.Count} operation(s)."
+              + (view.SkippedLines > 0
+                  ? $" {view.SkippedLines} unreadable line(s) skipped - a previous run was probably terminated."
+                  : "");
+    }
 }

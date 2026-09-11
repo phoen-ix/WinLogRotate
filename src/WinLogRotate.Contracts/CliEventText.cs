@@ -48,35 +48,64 @@ public static class CliEventText
         }
     }
 
-    /// <summary>What happened, to what, and why - indented under the run that is reporting it.</summary>
-    public static string Describe(CliEvent e)
+    /// <summary>
+    /// What was done, or would be, or could not be - without saying to what.
+    /// </summary>
+    /// <remarks>
+    /// Split out of <see cref="Describe"/> because a grid wants fields and a console wants a
+    /// sentence, and the alternative is a second mapping on the GUI's side that says "delete"
+    /// where this one says "did delete". That is the shape of defect the previous milestone spent
+    /// itself removing; one rendering with two entry points is not.
+    /// <para>
+    /// Three states, not two. While the only events reaching a sink were the notification
+    /// phase's, "would" in the plan phase and "did" otherwise was true; it is not true of an
+    /// operation that threw, which was rendered "did delete C:\logs\app.log" with the truth
+    /// left to a diagnostic printed underneath it.
+    /// </para>
+    /// </remarks>
+    public static string Action(CliEvent e)
     {
-        // Three states, not two. While the only events reaching a sink were the notification
-        // phase's, "would" in the plan phase and "did" otherwise was true; it is not true of an
-        // operation that threw, which was rendered "did delete C:\logs\app.log" with the truth
-        // left to a diagnostic printed underneath it.
         var verb = e.Result == OpResult.Failed ? "failed to"
             : e.Phase == Phase.Plan ? "would"
             : "did";
 
-        var job = e.Job is null ? "" : $"[{e.Job}] ";
-        var body = e.Operation switch
+        return e.Operation switch
         {
             // The only operation a skip is ever recorded as: PlanExecutor maps every action it
             // can carry out to a named op, and PlannedAction.Skip is the one that is left.
-            Op.Plan => $"skip {e.Src}",
-            Op.Delete => $"{verb} delete {e.Src}",
-            Op.Compress => $"{verb} compress {e.Src} -> {e.Dst}",
-            Op.Rename => $"{verb} rename {e.Src} -> {e.Dst}",
-            Op.CopyTruncate => $"{verb} copytruncate {e.Src} -> {e.Dst}",
-            Op.Copy => $"{verb} copy {e.Src} -> {e.Dst}",
-            Op.Create => $"{verb} create {e.Dst}",
-            Op.CreateDir => $"{verb} mkdir {e.Src}",
-            Op.Hook => $"{verb} run hook {e.Src}",
-            _ => $"{e.Operation} {e.Src}".TrimEnd(),
+            Op.Plan => "skip",
+            Op.Delete => $"{verb} delete",
+            Op.Compress => $"{verb} compress",
+            Op.Rename => $"{verb} rename",
+            Op.CopyTruncate => $"{verb} copytruncate",
+            Op.Copy => $"{verb} copy",
+            Op.Create => $"{verb} create",
+            Op.CreateDir => $"{verb} mkdir",
+            Op.Hook => $"{verb} run hook",
+            _ => e.Operation,
         };
+    }
 
+    /// <summary>
+    /// The file the action was about, and where it went when it went somewhere.
+    /// </summary>
+    /// <remarks>
+    /// Empty for the run and job brackets, which are about no file at all - which is why
+    /// <see cref="Describe"/> trims: "run.start" is a whole sentence.
+    /// </remarks>
+    public static string Subject(CliEvent e) => e.Operation switch
+    {
+        Op.Compress or Op.Rename or Op.CopyTruncate or Op.Copy => $"{e.Src} -> {e.Dst}",
+        Op.Create => e.Dst ?? string.Empty,
+        _ => e.Src ?? string.Empty,
+    };
+
+    /// <summary>What happened, to what, and why - indented under the run that is reporting it.</summary>
+    public static string Describe(CliEvent e)
+    {
+        var job = e.Job is null ? "" : $"[{e.Job}] ";
         var why = e.Reason is null ? "" : $"  ({e.Reason})";
-        return $"  {job}{body}{why}";
+
+        return $"  {job}{$"{Action(e)} {Subject(e)}".TrimEnd()}{why}";
     }
 }
