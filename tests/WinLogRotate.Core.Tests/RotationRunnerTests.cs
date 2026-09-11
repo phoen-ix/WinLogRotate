@@ -573,4 +573,60 @@ public sealed class RotationRunnerTests : IDisposable
 
         reported.ShouldNotContain(d => d.Code == DiagnosticCode.NotDueYet);
     }
+
+    // ---- what the pruner ages off ------------------------------------------------------------
+
+    /// <summary>
+    /// Every sighting stamps LastSeen.
+    /// </summary>
+    /// <remarks>
+    /// The half that makes the pruner safe. A field nothing writes reads as "never seen" on every
+    /// row, so a prune keyed on it would forget every path on the machine after ninety days - the
+    /// reverse of the defect it was added to fix.
+    /// </remarks>
+    [Fact]
+    public void EverySightingStampsLastSeen()
+    {
+        var state = State();
+
+        Runner(state, new NoArchives())
+            .PlanRotation(Job(), [Live()], new RunOptions { DryRun = true }, Now, _ => { });
+
+        state.Get(@"C:\logs\app.log").ShouldNotBeNull().LastSeen.ShouldBe(Now);
+    }
+
+    /// <summary>
+    /// A log seen but deliberately not rotated still counts as seen.
+    /// </summary>
+    /// <remarks>
+    /// The case LastRotated cannot answer, and the reason the field exists: a notifempty or
+    /// minsize-suppressed log is matched every single night and rotated never, so ageing off
+    /// LastRotated would forget precisely the paths that are still being watched - including any
+    /// carrying a NUL-fill quarantine.
+    /// </remarks>
+    [Fact]
+    public void ALogHeldBackIsStillRecordedAsSeen()
+    {
+        var state = State();
+        state.Set(@"C:\logs\app.log", new PathState
+        {
+            Path = @"C:\logs\app.log",
+            LastRotated = Now - TimeSpan.FromDays(200),
+            LastSeen = Now - TimeSpan.FromDays(200),
+            FirstSeen = Now - TimeSpan.FromDays(200),
+        });
+
+        // notifempty with an empty file: matched, considered, and held back.
+        Runner(state, new NoArchives()).PlanRotation(
+            Job() with { NotIfEmpty = true },
+            [new MatchedFile { Path = @"C:\logs\app.log", Length = 0, LastWriteUtc = Now }],
+            new RunOptions { DryRun = true }, Now, _ => { });
+
+        var seen = state.Get(@"C:\logs\app.log").ShouldNotBeNull();
+        seen.LastSeen.ShouldBe(Now);
+        seen.LastRotated.ShouldBe(Now - TimeSpan.FromDays(200), "it was not rotated");
+
+        state.Prune(Now, TimeSpan.FromDays(StateStore.ForgetAfterDays))
+            .ShouldBe(0, "a log being watched every night must not be forgotten");
+    }
 }

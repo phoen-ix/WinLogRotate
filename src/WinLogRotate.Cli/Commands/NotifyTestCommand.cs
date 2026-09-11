@@ -31,7 +31,7 @@ internal static class NotifyTestCommand
     public static int Run(CommandContext ctx, string? target, string? configDir)
     {
         var paths = InstallPaths.Resolve(configDir);
-        var config = ConfigLoader.Load(paths, new PathGuard(new GuardOptions()), quarantineBadFiles: false);
+        var config = ConfigLoader.Load(paths, new PathGuard(new GuardOptions()), new UnknownSecretLookup(), quarantineBadFiles: false);
         var settings = config.Notify;
 
         if (settings.To.Count == 0)

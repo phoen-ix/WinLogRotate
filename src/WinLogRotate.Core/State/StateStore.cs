@@ -113,20 +113,54 @@ public sealed class StateStore
         return true;
     }
 
-    /// <summary>Forgets entries whose files no longer exist, so the file cannot grow forever.</summary>
-    public int Prune(Func<string, bool> stillExists)
+    /// <summary>How long a path goes unseen before its clock is forgotten.</summary>
+    /// <remarks>
+    /// Longer than the notification side's thirty days, because the cost of being wrong is
+    /// different: forgetting a notification repeats a message, forgetting a rotation clock
+    /// re-baselines a log. A quarterly job, or a machine switched off for a month, must survive.
+    /// </remarks>
+    public const int ForgetAfterDays = 90;
+
+    /// <summary>
+    /// Forgets paths no run has seen for a while, so the file cannot grow forever.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// By age, and deliberately not by absence. This took a <c>Func&lt;string, bool&gt;
+    /// stillExists</c> and had no production caller at all, which was the only reason it had never
+    /// done any damage: rename is the default strategy and a rotation emits the rename and the
+    /// recreate as two separate operations, so "the file is absent" is a state a run produces
+    /// about itself. <c>NotifyStateStore.Prune</c> already refuses absence as a criterion for a
+    /// weaker reason than this one.
+    /// </para>
+    /// <para>
+    /// <b>A confirmed NUL-fill is never forgotten, at any age.</b> That verdict means copytruncate
+    /// destroyed this log once already, its enum calls it permanent, and <c>LockChoice.Judge</c>
+    /// deliberately preserves it even when the file has gone - "the defect belongs to the writer
+    /// rather than to the inode". Ageing it out would silently re-enable, on a ninety-day timer,
+    /// the one operation known to corrupt this path. That set is therefore unbounded, and the
+    /// remedy for it is fixing the writer rather than quietly forgetting.
+    /// </para>
+    /// <para>
+    /// A row carrying no timestamp at all is kept rather than treated as infinitely old, so a
+    /// state file written before <c>LastSeen</c> existed is not emptied by its first prune.
+    /// </para>
+    /// </remarks>
+    public int Prune(DateTimeOffset now, TimeSpan keepFor)
     {
-        var gone = _document.Paths
-            .Where(kv => !stillExists(kv.Value.Path))
+        var stale = _document.Paths
+            .Where(kv => kv.Value.NulFill != NulFillVerdict.Confirmed)
+            .Where(kv => (kv.Value.LastSeen ?? kv.Value.LastRotated ?? kv.Value.FirstSeen)
+                is { } when && now - when > keepFor)
             .Select(kv => kv.Key)
             .ToArray();
 
-        foreach (var key in gone)
+        foreach (var key in stale)
         {
             _document.Paths.Remove(key);
         }
 
-        return gone.Length;
+        return stale.Length;
     }
 
     /// <summary>

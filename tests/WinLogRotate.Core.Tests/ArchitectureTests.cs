@@ -3,7 +3,9 @@ using System.Reflection;
 using System.Text.RegularExpressions;
 using Shouldly;
 using WinLogRotate.Contracts;
+using WinLogRotate.Core.Configuration;
 using WinLogRotate.Core.Safety;
+using WinLogRotate.Core.Secrets;
 using WinLogRotate.Hosting.Diagnostics;
 using Xunit;
 
@@ -495,5 +497,39 @@ public partial class ArchitectureTests
                         is not { HasDefaultValue: false })
             .Select(m => m.Name)
             .ShouldBeEmpty("location checks whose scope is missing or optional");
+    }
+
+    /// <summary>
+    /// Loading a configuration requires the caller to say whether it can check a secret.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// <c>ConfigLoader.Load</c> took an optional trailing <c>ISecretLookup?</c> from milestone 7,
+    /// and every production caller omitted it - so <c>LR9005</c> was declared, documented in
+    /// <c>docs/diagnostics.md</c> as "a configuration names a secret that is not stored", and
+    /// raised by the configuration validator exactly never. The guard was not merely unarmed: with
+    /// a null lookup its <c>when</c> clause evaluated <c>(bool?)null == false</c>, so it could not
+    /// have matched even if something had reached it.
+    /// </para>
+    /// <para>
+    /// A required parameter is the fix, because "nobody thought about it" stops being spellable. A
+    /// caller that genuinely cannot look passes <c>UnknownSecretLookup</c> and says why in a
+    /// comment - <c>doctor</c> does, and its own remarks explain that the GUI runs it on every tab
+    /// change. Restoring a default would make the silence available again.
+    /// </para>
+    /// </remarks>
+    [Fact]
+    public void LoadingAConfigurationRequiresAnAnswerAboutSecrets()
+    {
+        var load = typeof(ConfigLoader)
+            .GetMethods(BindingFlags.Public | BindingFlags.Static)
+            .Single(m => m.Name == nameof(ConfigLoader.Load));
+
+        var secrets = load.GetParameters()
+            .SingleOrDefault(p => p.ParameterType == typeof(ISecretLookup))
+            .ShouldNotBeNull("ConfigLoader.Load must still take a secret lookup");
+
+        secrets.HasDefaultValue.ShouldBeFalse(
+            "an optional lookup is how LR9005 stayed unreachable for nine milestones");
     }
 }

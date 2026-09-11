@@ -76,11 +76,15 @@ public sealed record LoadedConfig
 public static class ConfigLoader
 {
     /// <param name="secrets">
-    /// How to ask whether a named secret exists. Null means nobody asked and nothing is claimed -
-    /// see <see cref="ISecretLookup.Exists"/> for why that is a third answer rather than "no".
+    /// How to ask whether a named secret exists. Required, and third rather than last, so that
+    /// every caller has to state its answer: this was an optional trailing parameter for nine
+    /// milestones and every production caller omitted it, so <c>LR9005</c> was documented, wired,
+    /// and never once armed. A caller that genuinely cannot look passes
+    /// <see cref="UnknownSecretLookup"/> and says why - see <see cref="ISecretLookup.Exists"/> for
+    /// why "cannot tell" is a third answer rather than "no".
     /// </param>
     public static LoadedConfig Load(
-        InstallPaths paths, PathGuard guard, bool quarantineBadFiles = true, ISecretLookup? secrets = null)
+        InstallPaths paths, PathGuard guard, ISecretLookup secrets, bool quarantineBadFiles = true)
     {
         var diagnostics = new DiagnosticBag();
         var quarantined = new List<string>();
@@ -332,7 +336,7 @@ public static class ConfigLoader
     /// </remarks>
     private static void ValidateCredentials(
         IReadOnlyList<NotifyProvider> providers, string file,
-        DiagnosticBag diagnostics, ISecretLookup? secrets)
+        DiagnosticBag diagnostics, ISecretLookup secrets)
     {
         foreach (var provider in providers)
         {
@@ -349,7 +353,12 @@ public static class ConfigLoader
                                   + $"then set {field} = \"@secret:{SuggestSecretName(provider.Name, field)}\"");
                         break;
 
-                    case SecretSource.Store when secrets?.Exists(reference.Key!) == false:
+                    // Written out rather than as "secrets?.Exists(key) == false". That collapsed
+                    // the three-way answer this interface was designed to give into two: with a
+                    // null lookup it evaluated (bool?)null == false, which is false, so the arm
+                    // could never match - and every production caller passed null. The guard was
+                    // unreachable rather than merely unarmed.
+                    case SecretSource.Store when secrets.Exists(reference.Key!) is false:
                         // Warning, not error, and the two validators in this file must agree on
                         // that. An error here would mean that the moment a real secret lookup is
                         // passed in, one mistyped Pushover token name stops every rotation on

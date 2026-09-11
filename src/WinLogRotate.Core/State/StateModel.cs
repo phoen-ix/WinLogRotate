@@ -112,6 +112,19 @@ public sealed record PathState
     /// matching logrotate.</summary>
     public DateTimeOffset? FirstSeen { get; init; }
 
+    /// <summary>
+    /// When a run last matched this path, whether or not it rotated it.
+    /// </summary>
+    /// <remarks>
+    /// What <c>Prune</c> ages off, and it has to be this rather than <see cref="LastRotated"/>.
+    /// <c>RecordFirstSighting</c> sets LastRotated on the first sighting but it only advances on
+    /// an actual rotation, so a log held back every night by notifempty or minsize would look
+    /// untouched for ever - and that is precisely a path whose NUL-fill quarantine is worth
+    /// keeping. Nullable and additive, so a state file written before this existed simply lacks
+    /// it; see <see cref="StateDocument.Version"/>.
+    /// </remarks>
+    public DateTimeOffset? LastSeen { get; init; }
+
     public ProbeVerdict Probe { get; init; } = ProbeVerdict.Unknown;
     public ProbeIdentity ProbedAs { get; init; } = ProbeIdentity.Unknown;
     public DateTimeOffset? ProbedAt { get; init; }
@@ -170,8 +183,17 @@ public sealed record PathState
 /// <summary>The on-disk state document.</summary>
 public sealed record StateDocument
 {
-    /// <summary>Bumped only on a breaking change. A file from the future is refused rather
-    /// than misread, because misreading it would mean rotating on the wrong schedule.</summary>
+    /// <summary>
+    /// Bumped only on a breaking change. A file from the future is refused rather than misread,
+    /// because misreading it would mean rotating on the wrong schedule.
+    /// </summary>
+    /// <remarks>
+    /// Adding an optional property is not a breaking change and must not bump this. The document
+    /// is written with <c>WhenWritingNull</c>, so an older file simply lacks the new field and an
+    /// older build ignores it - whereas a bump would make that older build refuse the file
+    /// outright and re-baseline every log on the machine, which is a real cost for an additive
+    /// field. <c>PathState.LastSeen</c> was added exactly this way.
+    /// </remarks>
     public int Version { get; init; } = 1;
 
     public DateTimeOffset? Written { get; init; }

@@ -3,6 +3,7 @@ using WinLogRotate.Contracts;
 using WinLogRotate.Core;
 using WinLogRotate.Core.Configuration;
 using WinLogRotate.Core.Safety;
+using WinLogRotate.Core.Secrets;
 using Xunit;
 
 namespace WinLogRotate.Core.Tests;
@@ -51,6 +52,7 @@ public sealed class AllowDangerousTests : IDisposable
                 ProtectedRoots = [@"C:\Windows", @"C:\Program Files"],
                 Overrides = gate,
             }),
+            new UnknownSecretLookup(),
             quarantineBadFiles: false);
     }
 

@@ -157,7 +157,10 @@ internal static class DoctorCommand
     private static NotifyDoctorDto Network(CommandContext ctx, InstallPaths paths)
     {
         var config = ConfigLoader.Load(
-            paths, new PathGuard(new GuardOptions()), quarantineBadFiles: false);
+            paths, new PathGuard(new GuardOptions()),
+            // doctor's own remarks forbid it: "nothing here opens a socket, resolves a name or
+            // reads the secret store", because the GUI runs doctor --json on every tab change.
+            new UnknownSecretLookup(), quarantineBadFiles: false);
 
         var settings = config.Notify;
         var state = NotifyStateStore.Load(paths.NotifyStateFile);

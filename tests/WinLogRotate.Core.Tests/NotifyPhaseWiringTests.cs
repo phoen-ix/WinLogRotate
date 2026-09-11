@@ -3,6 +3,7 @@ using WinLogRotate.Contracts;
 using WinLogRotate.Core.Configuration;
 using WinLogRotate.Core.Engine;
 using WinLogRotate.Core.Safety;
+using WinLogRotate.Core.Secrets;
 using WinLogRotate.Core.State;
 using Xunit;
 
@@ -58,7 +59,8 @@ public sealed class NotifyPhaseWiringTests : IDisposable
     }
 
     private static LoadedConfig Load(Core.InstallPaths paths) =>
-        ConfigLoader.Load(paths, new PathGuard(new GuardOptions()), quarantineBadFiles: false);
+        ConfigLoader.Load(paths, new PathGuard(new GuardOptions()), new UnknownSecretLookup(),
+            quarantineBadFiles: false);
 
     private static (RecordingSink Sink, Cli.Commands.CommandContext Ctx) Context()
     {

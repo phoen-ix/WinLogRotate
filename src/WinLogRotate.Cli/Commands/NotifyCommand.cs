@@ -23,7 +23,7 @@ internal static class NotifyCommand
     public static int Show(CommandContext ctx, string? configDir)
     {
         var paths = InstallPaths.Resolve(configDir);
-        var config = ConfigLoader.Load(paths, new PathGuard(new GuardOptions()), quarantineBadFiles: false);
+        var config = ConfigLoader.Load(paths, new PathGuard(new GuardOptions()), new UnknownSecretLookup(), quarantineBadFiles: false);
         var settings = config.Notify;
 
         var targets = new List<NotifyTargetDto>();
@@ -147,7 +147,7 @@ internal static class NotifyCommand
         var paths = InstallPaths.Resolve(configDir);
         var path = paths.NotifyStateFile;
         var state = NotifyStateStore.Load(path);
-        var settings = ConfigLoader.Load(paths, new PathGuard(new GuardOptions()), quarantineBadFiles: false).Notify;
+        var settings = ConfigLoader.Load(paths, new PathGuard(new GuardOptions()), new UnknownSecretLookup(), quarantineBadFiles: false).Notify;
 
         var jobs = state.Jobs
             .OrderBy(kv => kv.Key, StringComparer.Ordinal)

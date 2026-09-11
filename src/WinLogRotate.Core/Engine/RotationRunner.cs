@@ -379,6 +379,16 @@ public sealed class RotationRunner(
         // failing job must not cause the healthy ones to re-rotate on every subsequent run.
         if (!options.DryRun)
         {
+            // Only on a run that looked at everything. A --job run has not seen the other paths,
+            // so ageing them off would forget a clock because of a filter - the same mistake
+            // NotifyStateStore.Prune's own remarks refuse to make about --job, in its state-file
+            // form. Nothing is reported: every row this can remove is a clock for a path no run
+            // has matched in three months, and the one row that would matter is never removed.
+            if (options.OnlyJob is null)
+            {
+                state.Prune(now, TimeSpan.FromDays(StateStore.ForgetAfterDays));
+            }
+
             state.Save(clock);
         }
 
@@ -545,6 +555,13 @@ public sealed class RotationRunner(
             // rotated that night has met this rule" - so a first sighting that skipped this would
             // leave the clock null for ever and the log would never become due at all.
             var first = state.RecordFirstSighting(file.Path, now);
+
+            // Every sighting, rotated or not. Prune ages off this rather than LastRotated, which
+            // only advances on an actual rotation - so a log held back every night by notifempty
+            // or minsize would otherwise look untouched for ever and be forgotten while still
+            // being watched. Not gated on --dry-run: state.Save is the single place that enforces
+            // a dry run changing nothing, and RecordFirstSighting above works the same way.
+            state.Update(file.Path, existing => existing with { LastSeen = now });
 
             // A log this machine has never seen is recorded, not rotated. Without that, the first
             // night after installing rotates every log on the server at once, purely because none

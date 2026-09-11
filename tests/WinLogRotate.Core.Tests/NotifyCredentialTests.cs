@@ -30,14 +30,14 @@ public sealed class NotifyCredentialTests : IDisposable
         public bool? Exists(string name) => names.Contains(name, StringComparer.OrdinalIgnoreCase);
     }
 
-    private LoadedConfig Load(string configToml, ISecretLookup? secrets)
+    private LoadedConfig Load(string configToml, ISecretLookup secrets)
     {
         File.WriteAllText(Path.Combine(_dir.FullName, "config.toml"), configToml);
         Directory.CreateDirectory(Path.Combine(_dir.FullName, "conf.d"));
 
         return ConfigLoader.Load(
             InstallPaths.Resolve(_dir.FullName), new PathGuard(new GuardOptions()),
-            quarantineBadFiles: false, secrets: secrets);
+            secrets, quarantineBadFiles: false);
     }
 
     private const string WithLiteral = """
@@ -146,13 +146,6 @@ public sealed class NotifyCredentialTests : IDisposable
         // missing secret on a perfectly healthy machine, to the person least able to evaluate
         // that claim.
         Load(WithReference, new UnknownSecretLookup())
-            .Diagnostics.ShouldNotContain(d => d.Code == DiagnosticCode.SecretMissing);
-    }
-
-    [Fact]
-    public void NoLookupAtAllReportsNothingEither()
-    {
-        Load(WithReference, secrets: null)
             .Diagnostics.ShouldNotContain(d => d.Code == DiagnosticCode.SecretMissing);
     }
 

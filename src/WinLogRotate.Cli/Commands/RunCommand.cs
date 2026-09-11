@@ -5,6 +5,7 @@ using WinLogRotate.Core.Configuration;
 using WinLogRotate.Core.Engine;
 using WinLogRotate.Core.Journaling;
 using WinLogRotate.Core.Safety;
+using WinLogRotate.Core.Secrets;
 using WinLogRotate.Core.State;
 using WinLogRotate.Hosting;
 
@@ -78,7 +79,10 @@ internal static class RunCommand
             });
         }
 
-        var config = ConfigLoader.Load(paths, guard);
+        // The machine that will need the credential tonight, and usually the one identity - SYSTEM -
+        // whose "no such secret" is worth trusting.
+        var config = ConfigLoader.Load(
+            paths, guard, new StoreSecretLookup(Senders.Platform(), paths.SecretsFile));
 
         foreach (var d in config.Diagnostics)
         {

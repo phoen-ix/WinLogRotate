@@ -3,6 +3,7 @@ using WinLogRotate.Contracts;
 using WinLogRotate.Core;
 using WinLogRotate.Core.Configuration;
 using WinLogRotate.Core.Safety;
+using WinLogRotate.Core.Secrets;
 
 namespace WinLogRotate.Cli.Commands;
 
@@ -97,7 +98,7 @@ internal static class ConfigCommand
         {
             Overrides = OverrideSupport.ForThisMachine(paths),
         });
-        return (ConfigLoader.Load(paths, guard, quarantine), paths);
+        return (ConfigLoader.Load(paths, guard, new StoreSecretLookup(Senders.Platform(), paths.SecretsFile), quarantine), paths);
     }
 
     private static ConfigDiagnosticDto Map(ConfigDiagnostic d) => new()

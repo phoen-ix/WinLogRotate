@@ -4,6 +4,7 @@ using WinLogRotate.Core;
 using WinLogRotate.Core.Configuration;
 using WinLogRotate.Core.Journaling;
 using WinLogRotate.Core.Safety;
+using WinLogRotate.Core.Secrets;
 using WinLogRotate.Core.State;
 using Xunit;
 
@@ -33,7 +34,7 @@ public sealed class NotifyOptOutTests : IDisposable
 
         return ConfigLoader.Load(
             InstallPaths.Resolve(_dir.FullName), new PathGuard(new GuardOptions()),
-            quarantineBadFiles: false);
+            new UnknownSecretLookup(), quarantineBadFiles: false);
     }
 
     private static string Job(string name, string extra = "") => $"""
