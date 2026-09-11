@@ -532,6 +532,12 @@ public sealed class RotationRunner(
         var due = new Dictionary<string, DueVerdict>(StringComparer.OrdinalIgnoreCase);
         var consider = new List<MatchedFile>(matched.Count);
 
+        // Per distinct archive directory, not per file. A relative olddir resolves against each
+        // log's own directory - matching logrotate - so a job can legitimately have several, while
+        // the ordinary case of forty logs sharing one pays a single Exists and a single guard call.
+        var oldDirs = new Dictionary<string, OldDirDecision>(StringComparer.OrdinalIgnoreCase);
+        var creates = new List<PlannedOp>();
+
         foreach (var file in matched)
         {
             // Always recorded, whatever --catchup says. RotationCriteria refuses a log with no
@@ -613,6 +619,49 @@ public sealed class RotationRunner(
                 }
             }
 
+            // Where the archive is going to land, before the strategy is resolved. A job that
+            // cannot write its archives should not pay a probe per file for a decision nobody will
+            // act on, and must not leave a probe verdict in state for a rotation that was never
+            // going to happen.
+            if (due[file.Path].Due && job.OldDir is { Length: > 0 })
+            {
+                var directory = ArchiveNaming.ResolveDirectory(job, file.Path);
+
+                if (!oldDirs.TryGetValue(directory, out var destination))
+                {
+                    // The guard first, then existence. Asked the other way round, createolddir
+                    // could make a directory somewhere we would then refuse to write to.
+                    destination = OldDirGate.Check(
+                        job, directory, Directory.Exists(directory),
+                        guard.CheckPath(directory, job.GuardScope));
+
+                    oldDirs[directory] = destination;
+
+                    if (destination.Diagnostic is { } news)
+                    {
+                        report(news);
+                    }
+
+                    if (destination.Create is { } mkdir)
+                    {
+                        creates.Add(mkdir);
+                    }
+                }
+
+                if (!destination.Usable)
+                {
+                    // Reported as not due, the way StrategyRefused is, so the planner's existing
+                    // Skip path carries the reason, the clock does not advance and the hooks do
+                    // not fire. The diagnostic above has already said what is wrong, once.
+                    due[file.Path] = new DueVerdict
+                    {
+                        Due = false,
+                        Reason = DueReason.DestinationUnusable,
+                        Explanation = $"nothing can be written to '{directory}'",
+                    };
+                }
+            }
+
             // Phase B - resolve the strategy, for a log that is actually going to move. Probing a
             // file nothing will touch is an open per file per run buying a decision nobody acts on.
             if (due[file.Path].Due)
@@ -652,6 +701,12 @@ public sealed class RotationRunner(
             }
         }
 
-        return RotateJobPlanner.Plan(job, LogSeries.Discover(job, consider, _archives), due, now);
+        var plan = RotateJobPlanner.Plan(job, LogSeries.Discover(job, consider, _archives), due, now);
+
+        // Prepended rather than threaded through the planner, which stays pure and knows nothing
+        // about the file system. A directory has to exist before anything is moved into it.
+        return creates.Count == 0
+            ? plan
+            : plan with { Operations = [.. creates, .. plan.Operations] };
     }
 }

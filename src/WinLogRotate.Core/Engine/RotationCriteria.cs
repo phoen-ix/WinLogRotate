@@ -24,6 +24,9 @@ public enum DueReason
 
     /// <summary>No strategy can touch this file, so nothing was planned for it.</summary>
     StrategyRefused,
+
+    /// <summary>Its olddir cannot be written to, so there is nowhere for the archive to go.</summary>
+    DestinationUnusable,
 }
 
 /// <summary>The verdict for one log file.</summary>

@@ -11,7 +11,14 @@ public enum PlannedAction
     CopyTruncate,
     Copy,
     Create,
-    MoveToOldDir,
+
+    /// <summary>Make a job's olddir, where createolddir asked for one.</summary>
+    /// <remarks>
+    /// Replaces MoveToOldDir, which was declared and handled in two places and emitted by no
+    /// planner - olddir has always been routed through the ordinary Rename and CopyTruncate
+    /// actions with the archive directory as the destination.
+    /// </remarks>
+    CreateDirectory,
 
     /// <summary>Considered and deliberately left alone. Carried in the plan rather than
     /// omitted, because "why was this file not touched?" is the most common question a

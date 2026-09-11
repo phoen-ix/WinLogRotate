@@ -195,6 +195,7 @@ internal static class RunCommand
                     PlannedAction.Skip => $"  skip      {op.Source}  ({op.Reason})",
                     PlannedAction.Compress => $"  {verb} zip  {op.Source}  ({op.Reason})",
                     PlannedAction.Delete => $"  {verb} del  {op.Source}  ({op.Reason})",
+                    PlannedAction.CreateDirectory => $"  {verb} mkdir {op.Source}  ({op.Reason})",
                     _ => $"  {verb} {op.Action}  {op.Source}  ({op.Reason})",
                 };
                 ctx.Output.Line(line);

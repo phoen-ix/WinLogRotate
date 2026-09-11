@@ -67,7 +67,12 @@ public static class Op
     public const string Compress = "compress";
     public const string Delete = "delete";
     public const string Create = "create";
-    public const string MoveOldDir = "moveolddir";
+    /// <summary>A job's olddir being made, where createolddir asked for one.</summary>
+    /// <remarks>
+    /// Replaces "moveolddir", which no journal on disk can contain because no planner ever emitted
+    /// it - so the wire contract is not being broken here, it was never made.
+    /// </remarks>
+    public const string CreateDir = "createdir";
 
     // Non-destructive
     public const string Hook = "hook";

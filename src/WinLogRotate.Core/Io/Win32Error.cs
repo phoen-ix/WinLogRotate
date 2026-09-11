@@ -57,7 +57,13 @@ public static class Win32Error
     /// <summary>Human wording for the codes an operator is likely to meet.</summary>
     public static string Describe(int code) => code switch
     {
-        FileNotFound or PathNotFound => "the file no longer exists",
+        FileNotFound => "the file no longer exists",
+
+        // Split from FileNotFound, which used to answer for both. A missing olddir produces this
+        // from MoveFileEx, and "the file no longer exists" was then rendered against the live log -
+        // a file that plainly did exist - which sent operators looking in exactly the wrong place.
+        PathNotFound => "a directory in the path does not exist",
+
         AccessDenied => "access was denied",
         SharingViolation => "another process has it open and did not permit sharing",
         LockViolation => "part of the file is locked by another process",

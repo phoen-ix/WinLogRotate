@@ -104,11 +104,12 @@ public static class FileOps
         // the offset we read to rather than at zero.
         var length = stream.Length;
 
-        var directory = WinPath.DirectoryName(destination);
-        if (directory.Length > 0)
-        {
-            Directory.CreateDirectory(directory);
-        }
+        // No Directory.CreateDirectory here, deliberately. It used to make a missing olddir -
+        // recursively, and regardless of createolddir - which meant the same configuration failed
+        // for ever under rename and silently succeeded under copytruncate, and that createolddir
+        // governed neither. Whether the directory exists is the planner's question now; see
+        // OldDirGate. FileOps.Create keeps its own call because its destination is always the live
+        // log's own directory, which is a different situation with a different answer.
 
         // Written aside, then moved. See the remarks: a retry that re-ran this after a partial
         // success used to overwrite a good archive with an empty one.
@@ -176,8 +177,21 @@ public static class FileOps
     }
 
     /// <summary>Recreates the log a rename moved away, so the writer finds it again.</summary>
+    /// <summary>Makes a directory, and every level above it that is missing.</summary>
+    /// <remarks>
+    /// Idempotent, so it is safe under <c>RetryPolicy</c>. This exists so that making a job's
+    /// olddir is a planned operation the executor carries out - journalled, guarded and visible in
+    /// a dry run - rather than something a file primitive does on the way past.
+    /// </remarks>
+    public static void CreateDirectory(string path) =>
+        Directory.CreateDirectory(WinPath.ToExtendedLength(WinPath.Normalize(path)));
+
     public static void Create(string path)
     {
+        // Kept, unlike CopyTruncate's. This path is always the live log's own directory
+        // (RotateJobPlanner sets Destination = live.Path), which existed a moment ago - so the
+        // call only fires in the race where the tree vanished mid-run, and its effect there is
+        // that the writer gets its file back instead of losing it.
         var directory = WinPath.DirectoryName(path);
         if (directory.Length > 0)
         {

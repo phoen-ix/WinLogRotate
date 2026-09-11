@@ -65,13 +65,24 @@ public static class Diagnose
     }
 
     /// <summary>A file operation that threw.</summary>
+    /// <param name="destination">
+    /// Where it was writing, when it was writing somewhere. Named in the message because the
+    /// failure is often about the destination and reads as if it were about the source: a missing
+    /// olddir made MoveFileEx return ERROR_PATH_NOT_FOUND, which was rendered against the live
+    /// log - a file that plainly existed. Taken from the plan rather than the exception, because
+    /// CopyTruncate stages through a ".part" sibling the operator has never heard of.
+    /// </param>
     public static CliDiagnostic Failure(
-        PlannedAction action, string path, Exception e, string? job = null)
+        PlannedAction action, string path, Exception e, string? job = null, string? destination = null)
     {
         var code = RetryPolicy.ErrorCode(e);
+        var where = destination is { Length: > 0 } to && !to.Equals(path, StringComparison.OrdinalIgnoreCase)
+            ? $"{path} -> {to}"
+            : path;
+
         var message = code == 0
-            ? $"{action} {path}: {e.Message}"
-            : $"{action} {path}: {Win32Error.Describe(code)}";
+            ? $"{action} {where}: {e.Message}"
+            : $"{action} {where}: {Win32Error.Describe(code)}";
 
         return new CliDiagnostic
         {

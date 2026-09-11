@@ -80,15 +80,29 @@ public sealed class PlanExecutor(
             // Against where the file REALLY is, not where it is spelled. The planner's check was
             // textual, so a directory swapped for a junction between planning and acting - or one
             // reached by an 8.3 name - would pass it and be deleted from anyway.
-            var decision = guard.CheckPath(Resolved(op.Source, resolved), job.GuardScope);
-            if (!decision.IsAllowed)
+            // Both ends. op.Destination was handed straight to FileOps and never guarded, so
+            // olddir = "C:/Windows/System32" was written to with the guard holding that very path
+            // in ProtectedRoots and never being asked about it. Resolved() caches per directory,
+            // so forty archives into one olddir still cost one open.
+            if (Refused(op.Source) || (op.Destination is { } to && Refused(to)))
             {
+                continue;
+            }
+
+            bool Refused(string path)
+            {
+                var decision = guard.CheckPath(Resolved(path, resolved), job.GuardScope);
+                if (decision.IsAllowed)
+                {
+                    return false;
+                }
+
                 failed++;
                 var refusal = Diagnose.Refusal(decision, plan.JobName);
                 errors.Add(refusal.Message);
                 diagnostics.Add(refusal);
                 Emit(plan, op, Phase.Apply, OpResult.Failed, refusal.Message, 0);
-                continue;
+                return true;
             }
 
             var started = clock.GetTimestamp();
@@ -121,7 +135,7 @@ public sealed class PlanExecutor(
                 e is IOException or UnauthorizedAccessException or System.Runtime.InteropServices.ExternalException)
             {
                 failed++;
-                var failure = Diagnose.Failure(op.Action, op.Source, e, plan.JobName);
+                var failure = Diagnose.Failure(op.Action, op.Source, e, plan.JobName, op.Destination);
                 errors.Add(failure.Message);
                 diagnostics.Add(failure);
                 Emit(plan, op, Phase.Apply, OpResult.Failed, failure.Message,
@@ -213,8 +227,12 @@ public sealed class PlanExecutor(
                 RetryPolicy.Execute(() => FileOps.Delete(op.Source), job.RetryCount, job.RetryIntervalMs);
                 return 0;
 
+            case PlannedAction.CreateDirectory:
+                RetryPolicy.Execute(
+                    () => FileOps.CreateDirectory(op.Source), job.RetryCount, job.RetryIntervalMs);
+                return 0;
+
             case PlannedAction.Rename:
-            case PlannedAction.MoveToOldDir:
                 RetryPolicy.Execute(
                     () => FileOps.Rename(op.Source, op.Destination!),
                     job.RetryCount, job.RetryIntervalMs);
@@ -270,7 +288,7 @@ public sealed class PlanExecutor(
                 PlannedAction.CopyTruncate => Op.CopyTruncate,
                 PlannedAction.Copy => Op.Copy,
                 PlannedAction.Create => Op.Create,
-                PlannedAction.MoveToOldDir => Op.MoveOldDir,
+                PlannedAction.CreateDirectory => Op.CreateDir,
                 _ => Op.Plan,
             },
             Phase = phase,

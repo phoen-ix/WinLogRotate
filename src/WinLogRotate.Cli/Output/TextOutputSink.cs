@@ -70,7 +70,7 @@ internal sealed class TextOutputSink(bool verbose, bool color) : IOutputSink
             Op.CopyTruncate => $"{verb} copytruncate {e.Src} -> {e.Dst}",
             Op.Copy => $"{verb} copy {e.Src} -> {e.Dst}",
             Op.Create => $"{verb} create {e.Dst}",
-            Op.MoveOldDir => $"{verb} move {e.Src} -> {e.Dst}",
+            Op.CreateDir => $"{verb} mkdir {e.Src}",
             Op.Hook => $"{verb} run hook {e.Src}",
             _ => $"{e.Operation} {e.Src}".TrimEnd(),
         };

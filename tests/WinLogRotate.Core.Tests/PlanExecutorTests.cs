@@ -207,6 +207,55 @@ public sealed class PlanExecutorTests : IDisposable
         refusal.Message.ShouldContain(@"C:\Windows");
     }
 
+    /// <summary>
+    /// A destination inside a protected location is refused, and named.
+    /// </summary>
+    /// <remarks>
+    /// The executor's only guard call passed op.Source. op.Destination went straight to FileOps -
+    /// so olddir = "C:/Windows/System32" was written to, with the guard holding that exact path in
+    /// ProtectedRoots and never once being asked about it. Under copytruncate the archive and its
+    /// ".part" sibling landed there with no diagnostic at all; under rename MoveFileEx put them
+    /// there too, gated only by NTFS permissions, and the service runs as SYSTEM.
+    /// </remarks>
+    [Fact]
+    public void ADestinationInsideAProtectedLocationIsRefused()
+    {
+        // Synthetic Windows paths, and no file on disk. The guard runs before any I/O, so the
+        // refusal is reached without one - and a real temp path would be refused as not-absolute
+        // by CheckPath on the Linux leg, which is the source arm answering, not the destination.
+        var plan = new JobPlan
+        {
+            JobName = "iis",
+            MatchedFiles = 1,
+            Operations =
+            [
+                new PlannedOp
+                {
+                    Action = PlannedAction.Rename,
+                    Source = @"C:\logs\app.log",
+                    Destination = @"C:\Windows\System32\app.log.1",
+                    Reason = "rotating",
+                },
+            ],
+        };
+
+        var result = new PlanExecutor(
+                _journal,
+                new PathGuard(new GuardOptions { ProtectedRoots = [@"C:\Windows"] }),
+                _clock)
+            .Execute(plan, Job(), dryRun: false);
+
+        result.Completed.ShouldBe(0);
+        result.Failed.ShouldBe(1);
+
+        // On the subject, not the count. The source is a permitted path, so the only thing that
+        // can refuse here is the destination check - and naming it in the assertion is what makes
+        // deleting that check turn this red rather than leaving it green for another reason.
+        var refusal = result.Diagnostics.ShouldHaveSingleItem();
+        refusal.Code.ShouldBe(DiagnosticCode.DangerousPathRefused);
+        refusal.Message.ShouldContain(@"C:\Windows\System32\app.log.1");
+    }
+
     /// <summary>A path that resolves to itself is not rewritten on its way to the guard.</summary>
     /// <remarks>
     /// The common case, and the one a rebuild would quietly break: nothing moved, so the guard

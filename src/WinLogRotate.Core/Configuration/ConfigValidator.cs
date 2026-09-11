@@ -50,6 +50,27 @@ public static class ConfigValidator
             }
         }
 
+        // Only when it is absolute, and deliberately without asking whether it exists. A relative
+        // olddir resolves against each matched log's own directory, so it cannot be known until
+        // plan time; and whether a directory exists is a fact about one machine at one moment,
+        // while config check is often run on another - the same argument CheckHooks makes below
+        // about the hook gate. OldDirGate asks the real question immediately before acting.
+        if (job.OldDir is { Length: > 0 } oldDir
+            && WinPath.IsAbsolute(WinPath.Normalize(oldDir))
+            && guard.CheckPath(WinPath.Normalize(oldDir), job.GuardScope) is { IsAllowed: false } where)
+        {
+            d.Error(file, DiagnosticCode.DangerousPathRefused,
+                where.Message ?? $"olddir '{oldDir}' was refused.", remedy: where.Remedy);
+        }
+
+        // olddir is read by ArchiveNaming, which ManageJobPlanner never calls.
+        if (job is { Kind: JobKind.Manage, OldDir.Length: > 0 })
+        {
+            d.Warn(file, DiagnosticCode.ConfigInvalid,
+                "olddir is ignored on a manage job: it never moves a log, so there is nothing to "
+                + "put anywhere else.");
+        }
+
         if (job.Rotate < -1)
         {
             d.Error(file, DiagnosticCode.ConfigInvalid,
