@@ -187,7 +187,10 @@ jobs:
   # contract, the hardened ACL as actually applied, the Event Log source, the scheduled task's
   # real settings, PATH, and the upgrade waiting for a rotation in progress.
   #
-  # It is also the only place anything in this product is EXECUTED on Windows.
+  # It is the only place the INSTALLED product is exercised end to end - the installer, the
+  # registered task, the hardened ACLs and the shipped binary together. Other jobs execute this
+  # code on Windows too: build runs the whole test suite, which drives the CLI in-process, and
+  # aot smokes the published executable.
   installer-smoke:
     runs-on: windows-2025
     env:
@@ -421,6 +424,36 @@ jobs:
           }
           "  journal:"; Get-ChildItem "$env:DATA_DIR\journal" | ForEach-Object { "    $($_.Name)" }
           & $exe journal | Select-Object -First 10 | Out-Host
+
+      # The gate exists so a second rotation is refused rather than running over the first, and it
+      # could not do that: the descriptor granted Everyone Synchronize and Modify while
+      # MutexAcl.Create asked for full control, so the second caller was refused BY the lock
+      # instead of being told the lock was held. Every part of that is Windows-only - the mutex,
+      # the ACL, the .NET API - so this is the only place the production name and the production
+      # descriptor are exercised together, through the shipped binary.
+      - name: 'Leg A: a second rotation is refused, and says so'
+        shell: pwsh
+        run: |
+          . .github/scripts/installer-smoke-helpers.ps1
+          $entry = Get-UninstallEntry -Scope machine
+          $exe = Join-Path $entry.InstallLocation 'winlogrotate.exe'
+
+          Invoke-WithHeldRotationGate -MutexName $env:ROTATION_MUTEX -HoldSeconds 12 -Body {
+            $out = & $exe run --json --no-notify | Out-String
+            $code = $LASTEXITCODE
+
+            "  second rotation exited $code" | Out-Host
+
+            if ($code -ne 3) {
+              $out | Out-Host
+              throw "Expected exit 3 because the gate was held; got $code."
+            }
+
+            $envelope = $out | ConvertFrom-Json
+            if ($envelope.verb -ne 'run') { throw "Expected verb 'run'; got '$($envelope.verb)'." }
+            if ($envelope.ok) { throw 'A run that did nothing reported ok = true.' }
+            if ($envelope.exitCode -ne 3) { throw "Envelope said exitCode $($envelope.exitCode)." }
+          }
 
       # LockProbe decides which strategy a rotation may use, its whole job is to answer a question
       # about a file somebody else is holding, and until milestone 14 it had never met one - on a

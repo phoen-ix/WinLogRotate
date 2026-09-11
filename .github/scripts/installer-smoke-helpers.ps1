@@ -264,6 +264,59 @@ function Measure-MutexHeldUpgrade {
     return $elapsed.TotalSeconds
 }
 
+function Invoke-WithHeldRotationGate {
+    <#
+        .SYNOPSIS
+        Holds the rotation gate exactly as the product creates it, and runs a script block.
+
+        .DESCRIPTION
+        The descriptor is the point, not just the name. Measure-MutexHeldUpgrade creates the
+        mutex with the caller's DEFAULT DACL, which grants this elevated runner FullControl - and
+        MutexAcl.Create asks for full control, so a second caller would succeed against it and a
+        step built on that helper would pass against the very code it exists to catch.
+
+        So this builds the product's own descriptor: one ACE, Everyone, Synchronize | Modify, and
+        nothing else. That pins the DACL from outside the product the same way the name is already
+        pinned - a widening in RotationGate.cs turns this red rather than silently making the gate
+        re-ACLable by any local account.
+    #>
+    param(
+        [Parameter(Mandatory)][string] $MutexName,
+        [Parameter(Mandatory)][scriptblock] $Body,
+        [int] $HoldSeconds = 30
+    )
+
+    $job = Start-Job -ScriptBlock {
+        param($name, $seconds)
+
+        # Cast back to the enum: -bor on two enum values yields an Int32 in PowerShell, and the
+        # MutexAccessRule constructor takes MutexRights.
+        $rights = [System.Security.AccessControl.MutexRights](
+            [int][System.Security.AccessControl.MutexRights]::Synchronize -bor
+            [int][System.Security.AccessControl.MutexRights]::Modify)
+        $everyone = New-Object System.Security.Principal.SecurityIdentifier(
+            [System.Security.Principal.WellKnownSidType]::WorldSid, $null)
+
+        $security = New-Object System.Security.AccessControl.MutexSecurity
+        $security.AddAccessRule((New-Object System.Security.AccessControl.MutexAccessRule(
+            $everyone, $rights, [System.Security.AccessControl.AccessControlType]::Allow)))
+
+        $created = $false
+        $m = [System.Threading.MutexAcl]::Create($true, $name, [ref] $created, $security)
+        if (-not $created) { throw "The gate already existed; this runner did not create it." }
+
+        Start-Sleep -Seconds $seconds
+        $m.ReleaseMutex()
+        $m.Dispose()
+    } -ArgumentList $MutexName, $HoldSeconds
+
+    # Let the job actually take the gate before the body runs.
+    Start-Sleep -Seconds 3
+
+    try     { & $Body }
+    finally { Receive-Job $job -Wait -AutoRemoveJob | Out-Null }
+}
+
 function Assert-TaskHardening {
     <#
         .SYNOPSIS
