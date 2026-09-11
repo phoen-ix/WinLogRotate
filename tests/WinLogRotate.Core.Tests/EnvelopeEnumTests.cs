@@ -80,7 +80,7 @@ public sealed class EnvelopeEnumTests
     [Fact]
     public void AJobsEnumsAreNamesTheGuiCanRead()
     {
-        var job = TestJob();
+        var job = Fixtures.Job();
 
         var json = Serialize(Envelope(new Cli.Output.ConfigShowResult
         {
@@ -140,41 +140,6 @@ public sealed class EnvelopeEnumTests
         }
     }
 
-    private static EffectiveJob TestJob() => new()
-    {
-        Name = "app",
-        Kind = JobKind.Manage,
-        Paths = [@"C:\logs\app.log"],
-        Enabled = true,
-        Schedule = Schedule.Daily,
-        Weekday = 0,
-        MonthDay = 0,
-        Rotate = 4,
-        Start = 1,
-        MaxAge = null,
-        MinAge = null,
-        MinSize = null,
-        MaxSize = null,
-        SizeThreshold = 1 << 20,
-        Compress = true,
-        CompressType = CompressType.Zip,
-        DelayCompress = false,
-        DateExt = false,
-        DateFormat = "-yyyyMMdd",
-        MissingOk = true,
-        NotIfEmpty = false,
-        OldDir = null,
-        CreateOldDir = false,
-        LockStrategy = LockStrategy.Rename,
-        LiveFiles = 1,
-        MaxFiles = 1000,
-        RetryCount = 5,
-        RetryIntervalMs = 100,
-        PreRotate = [],
-        PostRotate = [],
-        HookTimeout = TimeSpan.FromSeconds(60),
-        AllowDangerous = [],
-    };
 
     /// <summary>
     /// doctor's verdicts are enum names, including "we did not check".
@@ -241,5 +206,55 @@ public sealed class EnvelopeEnumTests
 
         typeof(Cli.Output.NotifyProviderDto).GetProperty("Kind")!
             .PropertyType.ShouldBe(typeof(Core.Notify.NotifyProviderKind));
+    }
+
+    /// <summary>
+    /// config check reports one severity vocabulary, not two.
+    /// </summary>
+    /// <remarks>
+    /// ConfigDiagnosticDto.Severity was a string built with .ToString().ToLowerInvariant(), so
+    /// one document carried "Error" at the top level and "error" one object deeper - the same
+    /// concept in two casings, a few bytes apart. The shape test cannot see this: both are
+    /// Strings. Only the casing distinguishes them, so the casing is what this asserts.
+    /// </remarks>
+    [Fact]
+    public void ConfigCheckReportsOneSeverityVocabulary()
+    {
+        var json = Serialize(Envelope(new Cli.Output.ConfigCheckResult
+        {
+            Root = @"C:\ProgramData\WinLogRotate",
+            Jobs = 1,
+            Errors = 1,
+            Warnings = 0,
+            Diagnostics =
+            [
+                new Cli.Output.ConfigDiagnosticDto
+                {
+                    Severity = Severity.Error,
+                    Code = DiagnosticCode.DangerousPathRefused,
+                    Message = "a message",
+                    File = "a.toml",
+                },
+            ],
+        }) with
+        {
+            Diagnostics =
+            [
+                new CliDiagnostic
+                {
+                    Severity = Severity.Error,
+                    Code = DiagnosticCode.DangerousPathRefused,
+                    Message = "a message",
+                },
+            ],
+        });
+
+        var outer = json.GetProperty("diagnostics")[0].GetProperty("severity").GetString();
+        var inner = json.GetProperty("result").GetProperty("diagnostics")[0]
+            .GetProperty("severity").GetString();
+
+        outer.ShouldBe("Error");
+        inner.ShouldBe("Error");
+        inner.ShouldBe(outer, "one document must not carry two spellings of one value");
     }
 }

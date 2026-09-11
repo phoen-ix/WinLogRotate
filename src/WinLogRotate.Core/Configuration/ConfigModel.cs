@@ -1,3 +1,4 @@
+using System.Text.Json.Serialization;
 using WinLogRotate.Core.Safety;
 
 namespace WinLogRotate.Core.Configuration;
@@ -329,7 +330,16 @@ public sealed record EffectiveJob
     /// <c>allowdangerous</c> was bound, merged, carried here and read by nothing, so the remedy
     /// the guard printed named a key that did nothing and the refusal it was meant to lift took
     /// every rotation on the machine down with it.
+    /// <para>
+    /// <b>Not serialised.</b> <c>ConfigShowResult.Jobs</c> is a list of these records, so the
+    /// domain model is the public JSON contract - and adding this property silently published it,
+    /// emitting <c>guardScope</c> alongside the <c>allowDangerous</c> and <c>maxFiles</c> fields
+    /// already on the same object. The same two values, twice, the second copy an internal type
+    /// nobody outside the guard has a reason to read. Nothing noticed, because until milestone 18
+    /// nothing asserted the envelope's shape.
+    /// </para>
     /// </remarks>
+    [JsonIgnore]
     public GuardScope GuardScope => new()
     {
         AllowDangerous = AllowDangerous,

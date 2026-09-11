@@ -113,7 +113,7 @@ internal static class ConfigCommand
 
     private static ConfigDiagnosticDto Map(ConfigDiagnostic d) => new()
     {
-        Severity = d.Severity.ToString().ToLowerInvariant(),
+        Severity = d.Severity,
         Code = d.Code,
         Message = d.Message,
         File = d.File,

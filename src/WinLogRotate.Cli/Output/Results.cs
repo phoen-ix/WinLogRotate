@@ -68,7 +68,7 @@ public sealed record JournalResult
 /// <summary>A config diagnostic in wire form, so the GUI can jump to file, line and column.</summary>
 public sealed record ConfigDiagnosticDto
 {
-    public required string Severity { get; init; }
+    public required Severity Severity { get; init; }
     public required string Code { get; init; }
     public required string Message { get; init; }
     public required string File { get; init; }
