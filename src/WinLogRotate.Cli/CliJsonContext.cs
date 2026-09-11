@@ -2,6 +2,12 @@ using System.Text.Json;
 using System.Text.Json.Serialization;
 using WinLogRotate.Cli.Output;
 using WinLogRotate.Contracts;
+using WinLogRotate.Core;
+using WinLogRotate.Core.Configuration;
+using WinLogRotate.Core.Notify;
+using WinLogRotate.Core.State;
+using WinLogRotate.Hosting.Hosts;
+using WinLogRotate.Hosting.Security;
 
 namespace WinLogRotate.Cli;
 

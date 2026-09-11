@@ -65,7 +65,7 @@ public sealed class SettingsPage : UserControl
             // command as SYSTEM.
             if (!payload.GetProperty("hooksAllowed").GetBoolean()
                 && payload.GetProperty("aclVerdict").GetString() is { } verdict
-                && verdict is not "Hardened" and not "not checked (Windows only)")
+                && verdict is not "Hardened" and not "NotApplicable")
             {
                 LrDialog.Show(this, DialogKind.Warning, "Permissions",
                     "The configuration directory can be written by an account that is not an "

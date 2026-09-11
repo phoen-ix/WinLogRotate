@@ -39,14 +39,14 @@ internal static class DoctorCommand
         ctx.Output.Line($"  journal       {paths.JournalDirectory} {Exists(Directory.Exists(paths.JournalDirectory))}");
         ctx.Output.Line("");
 
-        var aclVerdict = "not checked (Windows only)";
+        var aclVerdict = AclVerdict.NotApplicable;
         var hooksAllowed = false;
         string? aclFix = null;
 
         if (OperatingSystem.IsWindows())
         {
             var finding = ConfDirGuard.Verify(paths.ConfigDirectory, scope: paths.Scope);
-            aclVerdict = finding.Verdict.ToString();
+            aclVerdict = finding.Verdict;
             hooksAllowed = finding.HooksAllowed;
             aclFix = finding.FixCommand;
 
@@ -128,7 +128,7 @@ internal static class DoctorCommand
         var result = new DoctorResult
         {
             Version = ProductInfo.Version,
-            Scope = paths.Scope.ToString(),
+            Scope = paths.Scope,
             Root = paths.Root,
             ConfigExists = File.Exists(paths.ConfigFile),
             JobsDirectoryExists = Directory.Exists(paths.ConfigDirectory),
@@ -136,7 +136,7 @@ internal static class DoctorCommand
             AclVerdict = aclVerdict,
             HooksAllowed = hooksAllowed,
             AclFix = aclFix,
-            RunHost = hostKind.ToString(),
+            RunHost = hostKind,
             RunHostDetail = hostDetail,
             Notify = network,
         };

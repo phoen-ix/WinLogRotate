@@ -61,7 +61,7 @@ internal static class NotifyCommand
         var providers = config.NotifyProviders.Select(p => new NotifyProviderDto
         {
             Name = p.Name,
-            Kind = p.Kind.ToString().ToLowerInvariant(),
+            Kind = p.Kind,
             Enabled = p.Enabled,
             Target = Describe(p),
 
@@ -109,8 +109,8 @@ internal static class NotifyCommand
         return ctx.Output.Complete("notify show", ExitCode.Ok, new NotifyShowResult
         {
             Enabled = settings.Enabled,
-            On = settings.On.ToString().ToLowerInvariant(),
-            Threshold = settings.Threshold.ToString(),
+            On = settings.On,
+            Threshold = settings.Threshold,
             RemindAfter = settings.RemindAfter.ToString(),
             Budget = settings.Budget.ToString(),
             Retries = settings.Retries,
@@ -154,7 +154,7 @@ internal static class NotifyCommand
             .Select(kv => new NotifyJobStatusDto
             {
                 Job = kv.Key,
-                Outcome = kv.Value.Outcome.ToString(),
+                Outcome = kv.Value.Outcome,
                 NotifiedAt = kv.Value.NotifiedAt,
                 FailingSince = kv.Value.FailingSince,
             })
@@ -165,7 +165,7 @@ internal static class NotifyCommand
             .Select(kv => new NotifyChannelStatusDto
             {
                 Channel = kv.Key,
-                State = BreakerPolicy.Verdict(kv.Value, settings).ToString(),
+                State = BreakerPolicy.Verdict(kv.Value, settings),
                 ConsecutiveFailures = kv.Value.ConsecutiveFailures,
                 SkipRunsRemaining = kv.Value.SkipRunsRemaining,
                 LastError = kv.Value.LastError,

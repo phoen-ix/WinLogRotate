@@ -1,5 +1,10 @@
 using WinLogRotate.Contracts;
+using WinLogRotate.Core;
 using WinLogRotate.Core.Configuration;
+using WinLogRotate.Core.Notify;
+using WinLogRotate.Core.State;
+using WinLogRotate.Hosting.Hosts;
+using WinLogRotate.Hosting.Security;
 
 namespace WinLogRotate.Cli.Output;
 
@@ -120,15 +125,15 @@ public sealed record RunResult
 public sealed record DoctorResult
 {
     public required string Version { get; init; }
-    public required string Scope { get; init; }
+    public required InstallScope Scope { get; init; }
     public required string Root { get; init; }
     public required bool ConfigExists { get; init; }
     public required bool JobsDirectoryExists { get; init; }
     public required bool Elevated { get; init; }
-    public required string AclVerdict { get; init; }
+    public required AclVerdict AclVerdict { get; init; }
     public required bool HooksAllowed { get; init; }
     public string? AclFix { get; init; }
-    public required string RunHost { get; init; }
+    public required RunHostKind RunHost { get; init; }
     public required string RunHostDetail { get; init; }
 
     /// <summary>What notifications are configured to do. Reported without doing any of it.</summary>
@@ -212,6 +217,16 @@ public sealed record NotifyTargetDto
 
     /// <summary>Masked. A webhook URL's path is its credential.</summary>
     public required string Display { get; init; }
+
+    /// <summary>
+    /// How this target is reached: "smtp", "https", "eventlog", a provider kind, or "?".
+    /// </summary>
+    /// <remarks>
+    /// Deliberately a lowercase string and not an enum, unlike the neighbouring fields. It is
+    /// drawn from two vocabularies - a NotifyProviderKind for a named provider, a HookScheme for
+    /// a literal target - and carries "?" for one that would not parse. A single enum cannot say
+    /// all three, so this stays a display value with a stated set.
+    /// </remarks>
     public required string Scheme { get; init; }
     public required bool Usable { get; init; }
     public string? Problem { get; init; }
@@ -221,7 +236,7 @@ public sealed record NotifyTargetDto
 public sealed record NotifyProviderDto
 {
     public required string Name { get; init; }
-    public required string Kind { get; init; }
+    public required NotifyProviderKind Kind { get; init; }
     public required bool Enabled { get; init; }
     public required string Target { get; init; }
 
@@ -236,8 +251,8 @@ public sealed record NotifyProviderDto
 public sealed record NotifyShowResult
 {
     public required bool Enabled { get; init; }
-    public required string On { get; init; }
-    public required string Threshold { get; init; }
+    public required NotifyOn On { get; init; }
+    public required Severity Threshold { get; init; }
     public required string RemindAfter { get; init; }
     public required string Budget { get; init; }
     public required int Retries { get; init; }
@@ -292,7 +307,7 @@ public sealed record NotifyTestResult
 public sealed record NotifyJobStatusDto
 {
     public required string Job { get; init; }
-    public required string Outcome { get; init; }
+    public required NotifyOutcome Outcome { get; init; }
     public DateTimeOffset? NotifiedAt { get; init; }
     public DateTimeOffset? FailingSince { get; init; }
 }
@@ -301,7 +316,7 @@ public sealed record NotifyJobStatusDto
 public sealed record NotifyChannelStatusDto
 {
     public required string Channel { get; init; }
-    public required string State { get; init; }
+    public required BreakerVerdict State { get; init; }
     public required int ConsecutiveFailures { get; init; }
     public required int SkipRunsRemaining { get; init; }
     public string? LastError { get; init; }

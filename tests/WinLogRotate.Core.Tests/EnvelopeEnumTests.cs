@@ -175,4 +175,71 @@ public sealed class EnvelopeEnumTests
         HookTimeout = TimeSpan.FromSeconds(60),
         AllowDangerous = [],
     };
+
+    /// <summary>
+    /// doctor's verdicts are enum names, including "we did not check".
+    /// </summary>
+    /// <remarks>
+    /// aclVerdict held either an enum name or the sentence "not checked (Windows only)" - one
+    /// field on the wire carrying two kinds of value, in the place a security verdict is
+    /// reported, and the GUI compared against both. NotApplicable says the same thing in the
+    /// same vocabulary as everything else, and is distinct from Unknown, which means the check
+    /// ran and could not tell.
+    /// </remarks>
+    [Fact]
+    public void DoctorsVerdictsAreEnumNames()
+    {
+        var json = Serialize(Envelope(new Cli.Output.DoctorResult
+        {
+            Version = "0.0.0",
+            Scope = InstallScope.PerMachine,
+            Root = @"C:\ProgramData\WinLogRotate",
+            ConfigExists = true,
+            JobsDirectoryExists = true,
+            Elevated = false,
+            AclVerdict = Hosting.Security.AclVerdict.NotApplicable,
+            HooksAllowed = false,
+            RunHost = Hosting.Hosts.RunHostKind.Task,
+            RunHostDetail = "daily at 03:00",
+            Notify = new Cli.Output.NotifyDoctorDto
+            {
+                Enabled = false,
+                Targets = 0,
+                StoredCredentials = 0,
+                SuppressedChannels = 0,
+                CertificatePinned = false,
+            },
+        }));
+
+        var result = json.GetProperty("result");
+
+        result.GetProperty("scope").GetString().ShouldBe("PerMachine");
+        result.GetProperty("runHost").GetString().ShouldBe("Task");
+        result.GetProperty("aclVerdict").GetString().ShouldBe("NotApplicable");
+
+        // The sentence it replaced. SettingsPage compared against it by hand, so a partial
+        // migration would leave the GUI silently never warning.
+        result.GetProperty("aclVerdict").GetString().ShouldNotBeNull()
+            .ShouldNotContain("Windows only");
+    }
+
+    /// <summary>
+    /// A target's scheme stays a lowercase string, deliberately.
+    /// </summary>
+    /// <remarks>
+    /// It is the one field here that is not an enum: a NotifyProviderKind for a named provider,
+    /// a HookScheme for a literal target, and "?" for one that would not parse. Retyping it
+    /// would have forced two vocabularies and a sentinel into one enum. The neighbouring kind
+    /// IS an enum and is a name, so the two now differ in casing - that difference is the
+    /// signal, not an oversight.
+    /// </remarks>
+    [Fact]
+    public void ATargetsSchemeIsNotAnEnum()
+    {
+        var shown = typeof(Cli.Output.NotifyTargetDto).GetProperty("Scheme")!;
+        shown.PropertyType.ShouldBe(typeof(string));
+
+        typeof(Cli.Output.NotifyProviderDto).GetProperty("Kind")!
+            .PropertyType.ShouldBe(typeof(Core.Notify.NotifyProviderKind));
+    }
 }

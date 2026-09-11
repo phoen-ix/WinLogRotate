@@ -107,7 +107,9 @@ public sealed class NotificationsPage : UserControl
 
             var summary = new StringBuilder();
             summary.Append(would ? "Reporting is on" : "Nothing would be sent");
-            summary.Append(", ").Append(on).Append('.').AppendLine();
+            // Lowercased here, not on the wire. "on" is an enum name in the envelope - the
+            // contract's job is to be unambiguous, this sentence's job is to read like English.
+            summary.Append(", ").Append(on?.ToLowerInvariant()).Append('.').AppendLine();
             summary.Append("Threshold ").Append(payload.GetProperty("threshold").GetString())
                    .Append(" and above, reminder after ").Append(payload.GetProperty("remindAfter").GetString())
                    .Append('.').AppendLine();

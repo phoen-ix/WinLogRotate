@@ -20,7 +20,19 @@ public enum AclVerdict
     /// <summary>Owned by a non-administrator, who therefore holds implicit WRITE_DAC.</summary>
     LooseOwner,
 
+    /// <summary>Checked, and the answer could not be established.</summary>
     Unknown,
+
+    /// <summary>
+    /// Not checked, because this is not Windows.
+    /// </summary>
+    /// <remarks>
+    /// Distinct from <see cref="Unknown"/>, which means the check ran and could not tell.
+    /// <c>doctor</c> reported this as the sentence "not checked (Windows only)" in a field that
+    /// otherwise held enum names, so one value on the wire was prose and the rest were not - and
+    /// the GUI compared against both.
+    /// </remarks>
+    NotApplicable,
 }
 
 /// <summary>What the check found, and how to fix it.</summary>
