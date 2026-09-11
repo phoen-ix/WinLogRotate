@@ -235,6 +235,13 @@ caused it. It is what the GUI's History page shows and what `winlogrotate journa
 deliberately not Task Scheduler's Last Run Result, since the registered task exits 0 when a run
 overlaps and `0x0` therefore proves nothing.
 
+It holds **two lines per operation** where the console prints one, and that is deliberate. Each
+destructive step is journaled once as `plan` and once as `apply`, so a run killed between them
+leaves a readable record of an intention that was never carried out. A person watching wants the
+last word instead: told "would delete" and then nothing, you cannot tell a completed deletion
+from an abandoned one. So the console — and the `--json-stream` a watching program reads — gets
+the half that settles the matter, and the journal keeps both.
+
 **It rotates itself**, through the same manage-mode code that tidies IIS logs. That is not a
 coincidence: the journal is a directory of dated files written by a producer that rolls them
 itself and never cleans up, which is precisely the case manage mode exists for. If manage mode
@@ -283,12 +290,15 @@ installed to C:\Program Files\WinLogRotate
 ACL ok: O:BAG:SYD:PAI(A;OICI;FA;;;SY)(A;OICI;FA;;;BA)(A;OICI;0x1200a9;;;BU)
 task LastTaskResult = 0x0
   run.start  (dry run)
-  [smoke] job.start
-  [smoke] skip app-2026-09-07.log  (newest file - the application is still writing it)
-  [smoke] would delete app-2026-08-03.log  (rotate = 2 keeps 2 archive(s); this is number 3)
-  [smoke] would compress app-2026-08-05.log -> app-2026-08-05.log.zip  (compress = zip)
-  [smoke] job.end
-  run.end
+  [smoke] skip C:\smoke\logs\app-2026-09-07.log  (newest file - the application is still writing it)
+  [smoke] would delete C:\smoke\logs\app-2026-08-03.log  (rotate = 2 keeps 2 archive(s); this is number 3)
+  [smoke] would compress C:\smoke\logs\app-2026-08-05.log -> C:\smoke\logs\app-2026-08-05.log.zip  (compress = zip)
+dry run: 2 job(s), 5 operation(s) planned. Nothing was changed.
+  [smoke-rotate] did rename C:\smoke\rot\svc.log -> C:\smoke\rot\svc.log.1  (due; lockstrategy = rename)
+  [smoke-rotate] did create C:\smoke\rot\svc.log  (recreating the log the writer expects to find)
+  [smoke-rotate] did run hook C:\Windows\System32\cmd.exe /c echo ran> C:\smoke\rot\hook-ran.txt  (postrotate)
+  [smoke] did compress C:\smoke\logs\app-2026-08-05.log -> C:\smoke\logs\app-2026-08-05.log.zip  (compress = zip)
+2 job(s), 7 operation(s), 58.6 KB freed, 0 failure(s).
 upgrade took 18.3s
 ```
 
