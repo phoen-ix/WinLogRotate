@@ -77,6 +77,15 @@ public sealed class SchedulingPage : UserControl
         if (!result.Ok)
         {
             _current.Text = result.Describe();
+
+            // Exit 4 is the only code that says nothing about what was or was not done can be
+            // relied on, so it is the only one worth interrupting for - a configuration error is
+            // exit 2 and belongs in the line above.
+            if (result.IsDefect)
+            {
+                LrDialog.Error(this, "Scheduling", result.Describe(), result.Details);
+            }
+
             return;
         }
 

@@ -94,13 +94,25 @@ public sealed class RunPage : UserControl
                 Append(result.StdOut);
             }
 
-            if (result.Details.Length > 0)
+            // Hoisted: Details is computed from the two output streams, and this used to read it
+            // twice.
+            var details = result.Details;
+
+            if (details.Length > 0)
             {
-                Append(result.Details);
+                Append(details);
             }
 
             _status.Text = result.Describe();
             _status.ForeColor = result.Ok ? Theme.Current.Muted : Theme.Current.Danger;
+
+            // The pane already carries the diagnostic; this is the interruption. Exit 4 means
+            // nothing about what was or was not done can be relied on, and a rotation is not
+            // something to leave an operator guessing about.
+            if (result.IsDefect)
+            {
+                LrDialog.Error(this, "Rotate", result.Describe(), details);
+            }
         }
         finally
         {

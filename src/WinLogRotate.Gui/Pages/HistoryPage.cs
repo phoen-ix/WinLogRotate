@@ -68,6 +68,15 @@ public sealed class HistoryPage : UserControl
         {
             _status.ForeColor = Theme.Current.Danger;
             _status.Text = result.Describe();
+
+            // Exit 4 is the only code that says nothing about what was or was not done can be
+            // relied on, so it is the only one worth interrupting for - a configuration error is
+            // exit 2 and belongs in the status line underneath.
+            if (result.IsDefect)
+            {
+                LrDialog.Error(this, "History", result.Describe(), result.Details);
+            }
+
             return;
         }
 

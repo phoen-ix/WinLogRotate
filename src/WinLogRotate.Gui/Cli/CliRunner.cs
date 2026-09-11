@@ -100,9 +100,6 @@ public sealed class CliRunner(string executablePath)
                 ExitCode = process.ExitCode,
                 StdOut = await stdout.ConfigureAwait(false),
                 StdErr = written,
-
-                // The same thing here: this child had a stderr and wrote to it.
-                Details = written,
             };
         }
         catch (Win32Exception e) when (e.NativeErrorCode == 2)
@@ -205,7 +202,6 @@ public sealed class CliRunner(string executablePath)
                 // cannot have its pipes redirected, so there is no stderr to capture. What it
                 // would have written there is in the envelope instead.
                 StdErr = string.Empty,
-                Details = EnvelopeDetails.From(written),
             };
         }
         catch (Win32Exception e) when (e.NativeErrorCode == 1223)
@@ -252,10 +248,6 @@ public sealed class CliRunner(string executablePath)
             ExitCode = -1,
             StdOut = string.Empty,
             StdErr = string.Empty,
-
-            // Nothing ran, so there is nothing it said. Describe() is the whole explanation for
-            // these, which is why every one of its arms is now asserted.
-            Details = string.Empty,
             Failure = failure,
         };
 }

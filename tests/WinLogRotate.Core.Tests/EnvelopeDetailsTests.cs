@@ -193,6 +193,146 @@ public sealed class EnvelopeDetailsTests : IDisposable
     public void EverySeverityHasItsWord(Severity severity, string word) =>
         CliDiagnosticText.Label(severity).ShouldBe(word);
 
+    /// <summary>
+    /// An unelevated verb that crashes explains itself too.
+    /// </summary>
+    /// <remarks>
+    /// The defect. <c>EnvelopeDetails.From</c> was called from one place - the elevated path - so
+    /// milestone 21's LR1006 reached four call sites and was lost on the other twelve, where
+    /// Details was standard error and a <c>--json</c> verb writes nothing there. The operator got
+    /// "Something went wrong that WinLogRotate did not anticipate." above an empty expander,
+    /// which is the defect this type was written to remove, recreated for the new exit code.
+    /// </remarks>
+    [Fact]
+    public void AnUnelevatedJsonVerbThatCrashesExplainsItself()
+    {
+        var blocker = Path.Combine(_dir.FullName, "blocker");
+        File.WriteAllText(blocker, "not a directory");
+
+        // The crash fixture milestone 21 established: state is saved after the run is journaled,
+        // and saving creates the state file's directory.
+        File.WriteAllText(Path.Combine(_dir.FullName, "config.toml"), "schema = 1\n");
+        var confd = Directory.CreateDirectory(Path.Combine(_dir.FullName, "conf.d"));
+        File.WriteAllText(Path.Combine(confd.FullName, "a.toml"), """
+            schema = 1
+            [job]
+            name      = "app"
+            kind      = "manage"
+            paths     = ["C:/app/logs/*.log"]
+            missingok = true
+            """);
+
+        var parse = Cli.Commands.CommandTree.Build().Parse(
+            ["run", "--json", "--no-notify", "--no-event-log",
+             "--config-dir", _dir.FullName,
+             "--state", Path.Combine(blocker, "state.json")]);
+
+        parse.Errors.ShouldBeEmpty();
+
+        var before = Console.Out;
+        var captured = new StringWriter();
+
+        int exit;
+        try
+        {
+            Console.SetOut(captured);
+            exit = parse.Invoke();
+        }
+        finally
+        {
+            Console.SetOut(before);
+        }
+
+        exit.ShouldBe(ExitCode.InternalError);
+
+        // Exactly what the GUI's unelevated path builds from a completed process.
+        var result = new CliResult { ExitCode = exit, StdOut = captured.ToString(), StdErr = "" };
+
+        result.IsDefect.ShouldBeTrue();
+        result.Details.ShouldContain(DiagnosticCode.InternalError);
+    }
+
+    /// <summary>
+    /// And a text verb still says what it put on standard error.
+    /// </summary>
+    /// <remarks>
+    /// The fallback the envelope-first order depends on. Four of the GUI's invocations are text
+    /// mode, where there is no envelope at all and the diagnostics go to stderr - so preferring
+    /// the envelope must not mean ignoring the other channel.
+    /// </remarks>
+    [Fact]
+    public void ATextVerbStillSaysWhatItPutOnStandardError()
+    {
+        var result = new CliResult
+        {
+            ExitCode = ExitCode.ConfigInvalid,
+            StdOut = "some human-readable report",
+            StdErr = "error: something went wrong [LR1003]",
+        };
+
+        result.Details.ShouldBe("error: something went wrong [LR1003]");
+    }
+
+    /// <summary>
+    /// The last resort reaches the dialog too.
+    /// </summary>
+    /// <remarks>
+    /// The inverse case: <c>UnhandledReporter</c> runs when the guard itself was not reached, so
+    /// it writes to stderr and emits no envelope at all. Driven through the real reporter rather
+    /// than a hand-written string, so this is the product's own output.
+    /// </remarks>
+    [Fact]
+    public void TheLastResortReachesTheDialogToo()
+    {
+        var before = Console.Error;
+        var captured = new StringWriter();
+
+        int exit;
+        try
+        {
+            Console.SetError(captured);
+            exit = Cli.Output.UnhandledReporter.Report(new IOException("a torn thing"));
+        }
+        finally
+        {
+            Console.SetError(before);
+        }
+
+        var result = new CliResult { ExitCode = exit, StdOut = "", StdErr = captured.ToString() };
+
+        result.IsDefect.ShouldBeTrue();
+        result.Details.ShouldContain("IOException");
+    }
+
+    /// <summary>
+    /// Only a defect interrupts.
+    /// </summary>
+    /// <remarks>
+    /// A configuration with an error is exit 2 and belongs in a status line; turning that into a
+    /// dialog would put one in front of the operator on every visit to the Jobs page. And the
+    /// runner's own failures exit -1 - they are not the CLI's verdict on anything.
+    /// </remarks>
+    [Theory]
+    [InlineData(ExitCode.Ok, false)]
+    [InlineData(ExitCode.Errors, false)]
+    [InlineData(ExitCode.ConfigInvalid, false)]
+    [InlineData(ExitCode.LockHeld, false)]
+    [InlineData(ExitCode.InternalError, true)]
+    public void OnlyADefectInterrupts(int exitCode, bool expected)
+    {
+        new CliResult { ExitCode = exitCode, StdOut = "", StdErr = "" }
+            .IsDefect.ShouldBe(expected);
+
+        // Never the runner's own failures, whatever exit code they carry.
+        new CliResult
+        {
+            ExitCode = exitCode,
+            StdOut = "",
+            StdErr = "",
+            Failure = CliFailure.NotFound,
+        }.IsDefect.ShouldBeFalse();
+    }
+
     /// <summary>An empty details box is not a details box.</summary>
     /// <remarks>
     /// Asserted here rather than against LrDialog, which cannot be constructed on this leg.

@@ -92,6 +92,15 @@ public sealed class NotificationsPage : UserControl
         {
             _status.ForeColor = Theme.Current.Danger;
             _status.Text = result.Describe();
+
+            // Exit 4 is the only code that says nothing about what was or was not done can be
+            // relied on, so it is the only one worth interrupting for - a configuration error is
+            // exit 2 and belongs in the status line underneath.
+            if (result.IsDefect)
+            {
+                LrDialog.Error(this, "Notifications", result.Describe(), result.Details);
+            }
+
             return;
         }
 
@@ -329,14 +338,18 @@ public sealed class NotificationsPage : UserControl
             return;
         }
 
+        // Hoisted: Details is computed from the two output streams, and the expression below
+        // used to read it twice.
+        var details = result.Details;
+
         LrDialog.Error(this, "Set credential",
             outcome == SecretPipeOutcome.Delivered
                 ? "The value reached the helper, which could not store it."
                 : $"The value was not delivered ({outcome}), so nothing was stored.",
             // What the child said, where it said anything. The command line is the fallback it
             // has always shown - useful for running it yourself, but not an explanation.
-            result.Details.Length > 0
-                ? result.Details
+            details.Length > 0
+                ? details
                 : $"winlogrotate notify set-secret {asked.Provider} {asked.Field}");
     }
 }

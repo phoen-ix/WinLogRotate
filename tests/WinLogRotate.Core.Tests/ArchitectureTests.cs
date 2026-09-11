@@ -105,6 +105,49 @@ public partial class ArchitectureTests
     }
 
     /// <summary>
+    /// Every page that runs the CLI reports a defect.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// Milestone 21 gave the CLI a way to say "this is a bug in me, and nothing about what was or
+    /// was not done can be relied on": an LR1006 diagnostic and exit 4. Eleven of the twelve
+    /// unelevated call sites then set a status label and returned, or discarded the failure
+    /// outright - so the thing the CLI had gone to trouble to say arrived nowhere.
+    /// </para>
+    /// <para>
+    /// Scoped to <c>Pages/</c>. <c>MainForm</c> runs the CLI too, but its one invocation is the
+    /// identity probe, whose failures are already a banner; a dialog there would be a second
+    /// report of the same thing before the window has even finished opening.
+    /// </para>
+    /// <para>
+    /// A text scan, because a test project that references the GUI carries a
+    /// Microsoft.WindowsDesktop.App framework reference and cannot run on this leg.
+    /// </para>
+    /// </remarks>
+    [Fact]
+    public void EveryPageThatRunsTheCliReportsADefect()
+    {
+        var pages = Path.Combine(RepoRoot.Find().FullName, "src", "WinLogRotate.Gui", "Pages");
+
+        var runners = Directory
+            .EnumerateFiles(pages, "*.cs", SearchOption.AllDirectories)
+            .Where(f => File.ReadAllLines(f)
+                .Where(line => !line.TrimStart().StartsWith("//", StringComparison.Ordinal))
+                .Any(line =>
+                    line.Contains("RunAsync(", StringComparison.Ordinal)
+                    || line.Contains("RunElevatedAsync(", StringComparison.Ordinal)))
+            .ToArray();
+
+        // Self-check: a rule about the pages that run the CLI means nothing once none appear to.
+        runners.Length.ShouldBeGreaterThan(4);
+
+        runners
+            .Where(f => !File.ReadAllText(f).Contains("IsDefect", StringComparison.Ordinal))
+            .Select(Path.GetFileName)
+            .ShouldBeEmpty("a page that runs the CLI must say so when the CLI reports a defect");
+    }
+
+    /// <summary>
     /// Every claim that the GUI checks the contract schema names the code that does it.
     /// </summary>
     /// <remarks>

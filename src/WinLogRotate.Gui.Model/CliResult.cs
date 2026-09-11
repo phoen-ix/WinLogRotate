@@ -23,17 +23,40 @@ public sealed record CliResult
     /// What to show a person when this failed.
     /// </summary>
     /// <remarks>
-    /// StdErr where there was one. An elevated child has none - its console is hidden and is
-    /// destroyed with it - so for those this carries the diagnostics out of the envelope, which
-    /// is where that child put them. The distinction matters at the call sites: three dialogs
-    /// passed StdErr as their details and it was the empty string every single time, which built
-    /// an expander and a Copy button over nothing.
+    /// <para>
+    /// Computed, not assigned. It used to be set at each of the runner's three exit points, and
+    /// only one of them looked at the envelope - so a diagnostic reached the four elevated call
+    /// sites and was lost on the twelve unelevated ones, where this was standard error and a
+    /// <c>--json</c> verb writes nothing there. That recreated, for milestone 21's new exit code,
+    /// the empty-expander defect this type was written to remove.
+    /// </para>
+    /// <para>
+    /// Deriving it means a third entry point cannot repeat that. Deleting the setter is what
+    /// enforces it, and the enforcement lands on the Linux leg: <c>EnableWindowsTargeting</c>
+    /// puts the WinForms project through <c>linux-typecheck</c>, so an assignment left behind is
+    /// a compile error on the one leg that cannot otherwise see this code at all.
+    /// </para>
     /// </remarks>
-    public string Details { get; init; } = string.Empty;
+    public string Details => EnvelopeDetails.From(StdOut, StdErr);
 
     // Core.ExitCode is qualified because the property below shadows the type name inside
     // this record.
     public bool Ok => Failure == CliFailure.None && ExitCode == Core.ExitCode.Ok;
+
+    /// <summary>
+    /// The CLI reported a defect in itself, rather than a problem with the machine.
+    /// </summary>
+    /// <remarks>
+    /// <c>ExitCode.InternalError</c> is the only code that says nothing about what was or was not
+    /// done can be relied on, which is what makes it the only one worth interrupting for. A
+    /// configuration with an error is exit 2 and belongs in a status line; turning that into a
+    /// dialog would put one in front of the operator on every visit to the Jobs page.
+    /// <para>
+    /// <c>Failure</c> must be <c>None</c>: the runner's own failures exit -1 and are not the
+    /// CLI's verdict on anything.
+    /// </para>
+    /// </remarks>
+    public bool IsDefect => Failure == CliFailure.None && ExitCode == Core.ExitCode.InternalError;
 
     /// <summary>
     /// Plain wording for an exit code, so a dialog never shows a bare number.
