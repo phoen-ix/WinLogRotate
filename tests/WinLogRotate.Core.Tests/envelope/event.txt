@@ -1,0 +1,14 @@
+bytesAfter : Number
+bytesBefore : Number
+dst : String
+error : String
+job : String
+ms : Number
+operation : String
+phase : String
+reason : String
+result : String
+run : String
+src : String
+strategy : String
+ts : String

@@ -1,4 +1,5 @@
 using System.Globalization;
+using System.Text.Json;
 using Microsoft.Extensions.Time.Testing;
 using Shouldly;
 using WinLogRotate.Cli.Output;
@@ -358,6 +359,52 @@ public sealed class RunEventStreamTests : IDisposable
 
         Rendered(skip).ShouldBe(
             @"[app] skip C:\logs\app.log.3  (newest file - the application is still writing it)");
+    }
+
+    /// <summary>
+    /// A line read back off the wire renders as the event it was written from.
+    /// </summary>
+    /// <remarks>
+    /// There were two source-generated serializers for this one type, both internal, one for the
+    /// journal and one for the stream, and neither reachable from the party the contract exists
+    /// for. Two generators for one wire format can drift silently - a naming policy on one side
+    /// and not the other produces a line that parses into an object with every field empty. One
+    /// context now, and this is what says the writer and the reader are still the same one.
+    /// </remarks>
+    [Fact]
+    public void ALineRendersAsTheEventItWasWrittenFrom()
+    {
+        var e = Half(Phase.Apply, OpResult.Ok);
+        var line = JsonSerializer.Serialize(e, CliEventJson.Default.CliEvent);
+
+        CliEventText.Describe(line).ShouldBe(CliEventText.Describe(e));
+    }
+
+    /// <summary>
+    /// And so does a line off the journal, because they are the same format.
+    /// </summary>
+    /// <remarks>
+    /// Claimed by CliEvent's own summary - "the journal persists the same shape" - and until the
+    /// two serializers became one, claimed rather than enforced.
+    /// </remarks>
+    [Fact]
+    public void AJournalLineRendersAsTheSameSentence()
+    {
+        var e = Half(Phase.Apply, OpResult.Ok);
+        var journalDir = Path.Combine(_dir.FullName, "journal");
+
+        using (var journal = JournalWriter.Open(journalDir, _clock, maxSize: 1 << 20))
+        {
+            journal.Write(e with { Ts = _clock.GetUtcNow().ToString("O") });
+        }
+
+        var written = Directory.EnumerateFiles(journalDir, "*", SearchOption.AllDirectories)
+            .SelectMany(File.ReadAllLines)
+            .Where(l => l.Length > 0)
+            .ToList();
+
+        written.ShouldHaveSingleItem();
+        CliEventText.Describe(written[0]).ShouldBe(CliEventText.Describe(e));
     }
 
     // ---- the last word ------------------------------------------------------------------------

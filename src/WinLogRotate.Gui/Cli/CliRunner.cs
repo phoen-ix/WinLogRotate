@@ -1,6 +1,7 @@
 using System.ComponentModel;
 using System.Diagnostics;
 using System.Text;
+using WinLogRotate.Contracts;
 using WinLogRotate.Core;
 
 namespace WinLogRotate.Gui.Cli;
@@ -261,17 +262,30 @@ public sealed class CliRunner(string executablePath)
             return;
         }
 
+        // Rendered here, once, rather than by each page. The file is NDJSON and what was shown
+        // to the operator was NDJSON: {"ts":"2026-09-11T...","operation":"delete","phase":...}
+        // per line, in the pane of a button labelled "Rotate now". CliEventText is the same
+        // rendering the CLI's own text output uses, so the two cannot drift, and it answers null
+        // for the envelope that shares this file - which is a result, not a line of progress.
+        void Render(string line)
+        {
+            if (CliEventText.Describe(line) is { } sentence)
+            {
+                onLine(sentence);
+            }
+        }
+
         var offset = 0L;
 
         while (!process.HasExited && !cancellationToken.IsCancellationRequested)
         {
-            offset = ReadFrom(path, offset, onLine);
+            offset = ReadFrom(path, offset, Render);
             await Task.Delay(100, cancellationToken).ConfigureAwait(false);
         }
 
         // One last pass: the child may have written its final lines between our last poll and
         // its exit, and those are usually the ones that say what happened.
-        ReadFrom(path, offset, onLine);
+        ReadFrom(path, offset, Render);
     }
 
     private static long ReadFrom(string path, long offset, Action<string> onLine)

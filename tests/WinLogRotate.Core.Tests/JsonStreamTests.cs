@@ -1,5 +1,6 @@
 using System.Text.Json;
 using Shouldly;
+using WinLogRotate.Contracts;
 using WinLogRotate.Core;
 using Xunit;
 
@@ -130,6 +131,44 @@ public sealed class JsonStreamTests : IDisposable
 
         operations.ShouldContain("run.start", "the file the GUI tails held the envelope and nothing else");
         operations.ShouldContain("run.end");
+    }
+
+    /// <summary>
+    /// The file reads back as sentences, which is what the GUI does with it.
+    /// </summary>
+    /// <remarks>
+    /// The whole round trip, through the two halves that used to be strangers: the CLI writes
+    /// each event with the contract's serializer, and the contract's own renderer turns the line
+    /// back into the sentence the CLI's text output would have printed. Before this the GUI had
+    /// no way to read a line it had been handed, so it showed the operator the JSON - one object
+    /// per line, in the pane of a button labelled "Rotate now".
+    /// </remarks>
+    [Fact]
+    public void EveryStreamedLineIsEitherASentenceOrTheResult()
+    {
+        var lines = Stream("run", "--no-notify", "--config-dir", Config(Job("app", "\"C:/app/logs/*.log\"")))
+            .Where(l => l.Length > 0)
+            .Select(l => (Line: l, Text: CliEventText.Describe(l)))
+            .ToList();
+
+        lines.ShouldNotBeEmpty();
+
+        var sentences = lines.Where(l => l.Text is not null).ToList();
+        sentences.Count.ShouldBeGreaterThan(1, "the events must render as something a person reads");
+
+        foreach (var (line, text) in sentences)
+        {
+            text.ShouldNotBeNull().ShouldNotContain("{", Case.Sensitive, $"still JSON: {line}");
+            text.Trim().ShouldNotBeEmpty();
+        }
+
+        // What is left is the envelope, which is a result rather than a line of progress, and
+        // which the pane reports through its status label instead of its log.
+        foreach (var (line, _) in lines.Where(l => l.Text is null))
+        {
+            JsonDocument.Parse(line).RootElement.TryGetProperty("schema", out _)
+                .ShouldBeTrue($"an event failed to render: {line}");
+        }
     }
 
     /// <summary>

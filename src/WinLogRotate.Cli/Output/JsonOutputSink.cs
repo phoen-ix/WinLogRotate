@@ -33,7 +33,7 @@ internal sealed class JsonOutputSink(bool verbose, bool stream, TextWriter? stre
             return;
         }
 
-        _events.WriteLine(JsonSerializer.Serialize(e, CliJsonContext.Default.CliEvent));
+        _events.WriteLine(JsonSerializer.Serialize(e, CliEventJson.Default.CliEvent));
         _events.Flush();
     }
 

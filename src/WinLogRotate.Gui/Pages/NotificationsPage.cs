@@ -167,8 +167,15 @@ public sealed class NotificationsPage : UserControl
         }
     }
 
-    /// <summary>A property as text, treating absent and null alike. The GUI hand-walks the
-    /// envelope because it references neither the CLI nor Contracts.</summary>
+    /// <summary>
+    /// A property as text, treating absent and null alike.
+    /// </summary>
+    /// <remarks>
+    /// The envelope is hand-walked because <c>CliEnvelope&lt;T&gt;</c>'s result types are
+    /// registered only in the CLI's own serializer context, which is internal to it. Not because
+    /// Contracts is out of reach: it is referenced, and the run pane renders the event stream
+    /// through <see cref="WinLogRotate.Contracts.CliEventText"/>, which is shared on purpose.
+    /// </remarks>
     private static string Str(JsonElement element, string property) =>
         element.TryGetProperty(property, out var value) && value.ValueKind == JsonValueKind.String
             ? value.GetString() ?? string.Empty

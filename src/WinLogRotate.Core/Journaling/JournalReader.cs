@@ -126,7 +126,7 @@ public sealed class JournalReader(string journalDirectory)
             CliEvent? entry;
             try
             {
-                entry = JsonSerializer.Deserialize(line, JournalJsonContext.Default.CliEvent);
+                entry = JsonSerializer.Deserialize(line, CliEventJson.Default.CliEvent);
             }
             catch (JsonException)
             {

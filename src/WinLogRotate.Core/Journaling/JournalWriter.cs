@@ -86,7 +86,7 @@ public sealed class JournalWriter : IJournal
             Ts = entry.Ts.Length == 0 ? _clock.GetUtcNow().ToString("O") : entry.Ts,
         };
 
-        var line = JsonSerializer.Serialize(stamped, JournalJsonContext.Default.CliEvent);
+        var line = JsonSerializer.Serialize(stamped, CliEventJson.Default.CliEvent);
 
         // A newline embedded in a path would split one record into two unparseable ones. Paths
         // cannot legally contain one, but the journal is a forensic record and must stay

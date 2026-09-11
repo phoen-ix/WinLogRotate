@@ -59,7 +59,7 @@ internal sealed class TextOutputSink(bool verbose, bool color, TextWriter? to = 
         // scaffolding and always print.
         if (Verbose || !(IsBracket(e) || WasSent(e)))
         {
-            _out.WriteLine(Describe(e));
+            _out.WriteLine(CliEventText.Describe(e));
         }
     }
 
@@ -71,35 +71,6 @@ internal sealed class TextOutputSink(bool verbose, bool color, TextWriter? to = 
     public void Line(string text) => _out.WriteLine(text);
 
     public int Complete<T>(string verb, int exitCode, T? result) => exitCode;
-
-    private static string Describe(CliEvent e)
-    {
-        // Three states, not two. Until the tee existed the only events reaching a sink were
-        // notify's, which are never "failed to" in a way a human reads on this line - so "did
-        // delete" was printed for a delete that threw, with the truth left to the diagnostic
-        // underneath it.
-        var verb = e.Result == OpResult.Failed ? "failed to"
-            : e.Phase == Phase.Plan ? "would"
-            : "did";
-        var job = e.Job is null ? "" : $"[{e.Job}] ";
-        var body = e.Operation switch
-        {
-            // The only operation a skip is ever recorded as: PlanExecutor maps every action it
-            // can carry out to a named op, and PlannedAction.Skip is the one that is left.
-            Op.Plan => $"skip {e.Src}",
-            Op.Delete => $"{verb} delete {e.Src}",
-            Op.Compress => $"{verb} compress {e.Src} -> {e.Dst}",
-            Op.Rename => $"{verb} rename {e.Src} -> {e.Dst}",
-            Op.CopyTruncate => $"{verb} copytruncate {e.Src} -> {e.Dst}",
-            Op.Copy => $"{verb} copy {e.Src} -> {e.Dst}",
-            Op.Create => $"{verb} create {e.Dst}",
-            Op.CreateDir => $"{verb} mkdir {e.Src}",
-            Op.Hook => $"{verb} run hook {e.Src}",
-            _ => $"{e.Operation} {e.Src}".TrimEnd(),
-        };
-        var why = e.Reason is null ? "" : $"  ({e.Reason})";
-        return $"  {job}{body}{why}";
-    }
 
     private static string Paint(string label, Severity s) => s switch
     {

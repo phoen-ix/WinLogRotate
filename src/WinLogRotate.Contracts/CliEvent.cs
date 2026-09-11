@@ -1,13 +1,20 @@
 namespace WinLogRotate.Contracts;
 
 /// <summary>
-/// One line of the NDJSON stream a long-running verb writes to stdout under
-/// <c>--json-stream</c>. The GUI renders these live; the journal persists the same shape.
+/// One line of the NDJSON stream a long-running verb writes under <c>--json-stream</c>, to
+/// stdout or to the file <c>--output</c> names. The GUI renders these live; the journal
+/// persists the same shape.
 /// <para>
-/// Every destructive operation appears twice - once with <see cref="Phase"/> "plan" and once
-/// with "apply" - so a crash between them leaves a readable "planned, never applied" record.
-/// A dry run emits only the plan half, which is what makes <c>--dry-run</c> trustworthy:
-/// it is the same code path, stopped one step earlier.
+/// Every destructive operation appears twice in the journal - once with <see cref="Phase"/>
+/// "plan" and once with "apply" - so a crash between them leaves a readable "planned, never
+/// applied" record. A dry run emits only the plan half, which is what makes <c>--dry-run</c>
+/// trustworthy: it is the same code path, stopped one step earlier.
+/// </para>
+/// <para>
+/// A watcher is sent one of the two, not both: the last thing that will be said about that
+/// operation. Told "would delete" and then nothing, an operator cannot tell a completed
+/// deletion from an abandoned one - which is a question the journal exists to answer later and
+/// a live pane cannot answer at all.
 /// </para>
 /// </summary>
 public sealed record CliEvent
@@ -51,9 +58,11 @@ public sealed record CliEvent
 /// </summary>
 /// <remarks>
 /// <para>
-/// It used to say the GUI switches on these as well. It does not, and never has: the GUI runs
-/// the CLI with <c>--json-stream</c> and tails the file as raw lines without deserializing a
-/// single event.
+/// The GUI reads these too, as of the milestone that gave the stream anything to carry. It used
+/// to tail the file as raw lines without deserializing a single event - and show them to the
+/// operator that way, one object of JSON per line in the pane of a button labelled "Rotate now"
+/// - because nothing on that side of the wire could turn one into a sentence.
+/// <see cref="CliEventText"/> is where that now happens, for both sides.
 /// </para>
 /// <para>
 /// Every member here must be written by something. Eight of twenty were not - a journal that

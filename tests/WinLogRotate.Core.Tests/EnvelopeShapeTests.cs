@@ -89,11 +89,13 @@ public sealed class EnvelopeShapeTests
         return string.Join("\n", lines) + "\n";
     }
 
-    private static void ShouldMatchSnapshot<T>(CliEnvelope<T> envelope, string name)
-    {
-        var json = JsonSerializer.Serialize(
-            envelope, typeof(CliEnvelope<T>), Cli.CliJsonContext.Default);
+    private static void ShouldMatchSnapshot<T>(CliEnvelope<T> envelope, string name) =>
+        ShouldMatchSnapshot(
+            JsonSerializer.Serialize(envelope, typeof(CliEnvelope<T>), Cli.CliJsonContext.Default),
+            name);
 
+    private static void ShouldMatchSnapshot(string json, string name)
+    {
         var actual = Shape(JsonDocument.Parse(json).RootElement);
 
         var file = Path.Combine(
@@ -140,6 +142,40 @@ public sealed class EnvelopeShapeTests
             },
         ],
     };
+
+    /// <summary>
+    /// The event's shape, which is not an envelope's and is published just as hard.
+    /// </summary>
+    /// <remarks>
+    /// Every line of every journal on every machine is this shape, and the GUI now reads it back.
+    /// It went unpinned while the envelopes were pinned because it is not an envelope - and
+    /// because there were two serializers for it, symmetrical, so a change to both round-tripped
+    /// cleanly through anything that wrote and then read. What it would not survive is a journal
+    /// written by one version and read by the next.
+    /// </remarks>
+    [Fact]
+    public void TheEventKeepsItsShape() =>
+        ShouldMatchSnapshot(
+            JsonSerializer.Serialize(
+                new CliEvent
+                {
+                    Ts = "2026-09-11T03:00:00.0000000+00:00",
+                    Run = "01K4RJ5S8Q0000000000000000",
+                    Operation = Op.Compress,
+                    Phase = Phase.Apply,
+                    Result = OpResult.Ok,
+                    Job = "app",
+                    Src = @"C:\logs\app.log.1",
+                    Dst = @"C:\logs\app.log.1.zip",
+                    BytesBefore = 4096,
+                    BytesAfter = 512,
+                    Strategy = "rename",
+                    Reason = "compress = zip",
+                    Error = "a message",
+                    Ms = 12,
+                },
+                CliEventJson.Default.CliEvent),
+            "event");
 
     [Fact]
     public void ConfigShowKeepsItsShape() =>
