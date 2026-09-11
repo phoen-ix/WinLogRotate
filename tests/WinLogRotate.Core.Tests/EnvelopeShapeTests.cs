@@ -229,6 +229,28 @@ public sealed class EnvelopeShapeTests
             }),
             "run");
 
+    /// <summary>
+    /// The version payload's shape, which the window now depends on at start.
+    /// </summary>
+    /// <remarks>
+    /// Five envelopes had snapshots and this one did not - the one a GUI reads before it will do
+    /// anything else, and the one whose whole purpose is to say what wire format the other side
+    /// speaks. A version handshake whose own shape nothing guards is not much of a handshake.
+    /// </remarks>
+    [Fact]
+    public void VersionKeepsItsShape() =>
+        ShouldMatchSnapshot(
+            Envelope("version", new VersionResult
+            {
+                Product = "WinLogRotate",
+                Version = "0.0.0",
+                Schema = 1,
+                Runtime = ".NET 10.0.0",
+                Architecture = "X64",
+                Elevated = true,
+            }),
+            "version");
+
     [Fact]
     public void DoctorKeepsItsShape() =>
         ShouldMatchSnapshot(
