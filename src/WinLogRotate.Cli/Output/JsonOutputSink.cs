@@ -64,7 +64,14 @@ internal sealed class JsonOutputSink(bool verbose, bool stream, TextWriter? stre
                 "Add a [JsonSerializable] attribute for it.");
         }
 
-        Console.Out.WriteLine(JsonSerializer.Serialize(envelope, info));
+        // To _events, not Console.Out. Where --output was not given these are the same writer,
+        // so nothing changes for an ordinary --json caller. Where it was given, the caller is an
+        // elevated "runas" child whose console cannot be read by the process that started it -
+        // so writing the envelope there did not merely fail to reach the caller, it destroyed
+        // it with the hidden console. --output says it writes the stream "instead of stdout";
+        // until now it redirected the event half and left the result behind.
+        _events.WriteLine(JsonSerializer.Serialize(envelope, info));
+        _events.Flush();
         return exitCode;
     }
 }
