@@ -29,6 +29,41 @@ public sealed class RotationGateTests
     private static string Name() => $@"Global\WinLogRotate.Rotation.test-{Guid.NewGuid():N}";
 
     /// <summary>
+    /// Takes the gate on a thread of its own, and reports what it found.
+    /// </summary>
+    /// <remarks>
+    /// A Windows mutex is owned by a <i>thread</i>, and the owning thread may re-acquire it as
+    /// often as it likes - so two Enter calls in a row on the test's own thread both succeed and
+    /// prove nothing. "Another rotation is already running" is a statement about another thread
+    /// or another process, and the first version of these tests asserted it from the one place it
+    /// could never be true. Everything is read and disposed inside the thread, because releasing
+    /// a mutex is also the owning thread's job.
+    /// </remarks>
+    private static (bool Entered, GateOutcome Outcome, bool CreatedNew) EnterElsewhere(string name)
+    {
+        (bool Entered, GateOutcome Outcome, bool CreatedNew) seen = default;
+        Exception? failure = null;
+
+        var thread = new Thread(() =>
+        {
+            try
+            {
+                using var gate = RotationGate.Enter(name, TimeSpan.Zero);
+                seen = (gate.Entered, gate.Outcome, gate.CreatedNew);
+            }
+            catch (Exception e)
+            {
+                failure = e;
+            }
+        });
+
+        thread.Start();
+        thread.Join();
+
+        return failure is null ? seen : throw failure;
+    }
+
+    /// <summary>
     /// A second caller joins the gate rather than being refused by it.
     /// </summary>
     /// <remarks>
@@ -46,7 +81,7 @@ public sealed class RotationGateTests
         using var first = RotationGate.Enter(name, TimeSpan.Zero);
         first.Entered.ShouldBeTrue();
 
-        using var second = RotationGate.Enter(name, TimeSpan.Zero);
+        var second = EnterElsewhere(name);
 
         second.Entered.ShouldBeFalse("the first caller holds it");
         second.Outcome.ShouldBe(GateOutcome.Busy);
@@ -70,7 +105,7 @@ public sealed class RotationGateTests
         var name = Name();
 
         using var first = RotationGate.Enter(name, TimeSpan.Zero);
-        using var second = RotationGate.Enter(name, TimeSpan.Zero);
+        var second = EnterElsewhere(name);
 
         first.CreatedNew.ShouldBeTrue();
         second.CreatedNew.ShouldBeFalse("it joined the gate that was already there");
@@ -96,8 +131,18 @@ public sealed class RotationGateTests
             () => MutexAcl.OpenExisting(name, MutexRights.FullControl));
 
         // And the rights it does grant are enough to wait on it, which is the whole contract.
-        using var waiter = MutexAcl.OpenExisting(name, MutexRights.Synchronize | MutexRights.Modify);
-        waiter.WaitOne(TimeSpan.Zero).ShouldBeFalse("the gate is held");
+        // From another thread, because the thread holding a mutex may always re-enter it.
+        var waited = false;
+        var waiter = new Thread(() =>
+        {
+            using var opened = MutexAcl.OpenExisting(name, MutexRights.Synchronize | MutexRights.Modify);
+            waited = opened.WaitOne(TimeSpan.Zero);
+        });
+
+        waiter.Start();
+        waiter.Join();
+
+        waited.ShouldBeFalse("the gate is held, so waiting on it must not succeed");
     }
 
     /// <summary>
