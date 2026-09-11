@@ -18,18 +18,53 @@ namespace WinLogRotate.Cli.Commands;
 /// </remarks>
 internal static class HostCommand
 {
+    /// <summary>
+    /// Why this build cannot register the requested host, or null when it can.
+    /// </summary>
+    /// <remarks>
+    /// Honest rather than silently falling back to a task, which would leave the operator
+    /// believing they had chosen something they had not. Pure, and called before any side
+    /// effect, so "refuse without touching what is already registered" is a property a test can
+    /// hold rather than a comment somebody has to keep obeying.
+    /// </remarks>
+    internal static CliDiagnostic? Unsupported(RunHostKind wanted) =>
+        wanted != RunHostKind.Service
+            ? null
+            : new CliDiagnostic
+            {
+                Severity = Severity.Error,
+                Code = DiagnosticCode.HostRegistrationFailed,
+                Message = "The service host is not implemented in this build.",
+                Remedy = "Use 'winlogrotate host use task'. A scheduled task is the better fit for a log rotator anyway: nothing stays resident, and a run missed while the machine was off is caught up afterwards.",
+            };
+
     public static int Use(CommandContext ctx, string kind, string? configDir)
     {
-        if (!OperatingSystem.IsWindows())
-        {
-            return NotOnWindows(ctx, "host use");
-        }
-
         if (!Enum.TryParse<RunHostKind>(kind, ignoreCase: true, out var wanted))
         {
             ctx.Output.Line($"winlogrotate: '{kind}' is not a run model.");
             ctx.Output.Line("Use task, service, or none.");
             return ctx.Output.Complete<HostResult>("host use", ExitCode.ConfigInvalid, null);
+        }
+
+        // Before the platform guard, before the elevation check, and - the part that matters -
+        // before anything is uninstalled. Asking for a host this build does not have used to
+        // remove the working scheduled task first and refuse afterwards, so `host use service`
+        // left the machine with nothing running rotations at all. The GUI's Scheduling page
+        // offers it as a radio button, so it was one click away.
+        //
+        // Above the Windows guard deliberately: "not implemented in this build" is a fact about
+        // the build rather than the operating system, it is the more specific answer, and it is
+        // the same answer everywhere.
+        if (Unsupported(wanted) is { } unsupported)
+        {
+            ctx.Output.Diagnostic(unsupported);
+            return ctx.Output.Complete<HostResult>("host use", ExitCode.Errors, null);
+        }
+
+        if (!OperatingSystem.IsWindows())
+        {
+            return NotOnWindows(ctx, "host use");
         }
 
         if (!Privilege.IsElevated())
@@ -57,20 +92,6 @@ internal static class HostCommand
         {
             ctx.Output.Line("Nothing will run rotations now. Trigger them with 'winlogrotate run'.");
             return ctx.Output.Complete("host use", ExitCode.Ok, Describe(RunHostKind.None, paths));
-        }
-
-        if (wanted == RunHostKind.Service)
-        {
-            // Honest rather than silently falling back to a task, which would leave the
-            // operator believing they had chosen something they had not.
-            ctx.Output.Diagnostic(new CliDiagnostic
-            {
-                Severity = Severity.Error,
-                Code = DiagnosticCode.HostRegistrationFailed,
-                Message = "The service host is not implemented in this build.",
-                Remedy = "Use 'winlogrotate host use task'. A scheduled task is the better fit for a log rotator anyway: nothing stays resident, and a run missed while the machine was off is caught up afterwards.",
-            });
-            return ctx.Output.Complete<HostResult>("host use", ExitCode.Errors, null);
         }
 
         ctx.Output.Line("Registering the scheduled task...");

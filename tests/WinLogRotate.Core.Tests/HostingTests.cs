@@ -450,4 +450,62 @@ public class InstallerNamePinningTests
             Registered = actual != RunHostKind.None,
         }.Drifted.ShouldBe(drifted);
     }
+
+    /// <summary>
+    /// The service host is refused before anything already registered is removed.
+    /// </summary>
+    /// <remarks>
+    /// host use uninstalled whatever was registered first, unconditionally, and only then
+    /// checked what had been asked for - so `winlogrotate host use service` left the machine
+    /// with nothing running rotations at all, and the installer's wizard offered it as a radio
+    /// button one click away. The check is pure and called before any side effect, so this is a
+    /// property rather than a comment somebody has to keep obeying.
+    /// </remarks>
+    [Fact]
+    public void TheServiceHostIsRefusedAndTheOthersAreNot()
+    {
+        var refusal = Cli.Commands.HostCommand.Unsupported(RunHostKind.Service).ShouldNotBeNull();
+        refusal.Severity.ShouldBe(Contracts.Severity.Error);
+        refusal.Code.ShouldBe(Contracts.DiagnosticCode.HostRegistrationFailed);
+        refusal.Remedy.ShouldNotBeNull().ShouldContain("host use task");
+
+        Cli.Commands.HostCommand.Unsupported(RunHostKind.Task).ShouldBeNull();
+        Cli.Commands.HostCommand.Unsupported(RunHostKind.None).ShouldBeNull();
+    }
+
+    /// <summary>
+    /// The installer offers exactly the run models this build can register.
+    /// </summary>
+    /// <remarks>
+    /// It accepted /HOST= verbatim, wrote it to the uninstall key's HostKind, and only then
+    /// handed it to `host use` - reporting any failure with DetailPrint, which under /S goes to
+    /// a log nobody reads. So a silent /HOST=service install reported success, scheduled nothing,
+    /// and left "service" recorded as the machine's run model for ever. Binding the installer's
+    /// accepted set to the CLI's supported set means implementing the service host cannot leave
+    /// the two disagreeing in either direction.
+    /// </remarks>
+    [Fact]
+    public void TheInstallerOffersExactlyTheRunModelsThisBuildSupports()
+    {
+        var accepted = System.Text.RegularExpressions.Regex
+            // Only the accepting branches. The script also compares $R1 against "service" in
+            // order to refuse it, and matching that would read a refusal as an offer.
+            .Matches(Nsi(), @"\$\{(?:If|OrIf)\}\s+\$R1 == ""(\w+)""")
+            .Select(m => m.Groups[1].Value)
+            .ToHashSet(StringComparer.OrdinalIgnoreCase);
+
+        // A regex that stopped matching would make both assertions below vacuously true.
+        accepted.Count.ShouldBeGreaterThan(1);
+
+        var supported = Enum.GetValues<RunHostKind>()
+            .Where(k => Cli.Commands.HostCommand.Unsupported(k) is null)
+            .Select(k => k.ToString())
+            .ToArray();
+
+        supported.Where(k => !accepted.Contains(k))
+            .ShouldBeEmpty("run models the CLI supports and the installer will not accept");
+
+        accepted.Where(k => !supported.Contains(k, StringComparer.OrdinalIgnoreCase))
+            .ShouldBeEmpty("run models the installer accepts and the CLI would refuse");
+    }
 }

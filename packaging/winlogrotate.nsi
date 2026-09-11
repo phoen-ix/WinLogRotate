@@ -94,10 +94,10 @@ SetCompressor /SOLID lzma
 
 Var RealPrivileges
 Var DataDir
-Var HostChoice          ; task | service | none
+Var HostChoice          ; task | none
+Var PurgeData           ; 1 once the uninstaller has decided to remove the data directory
 Var HostPage
 Var HostTask
-Var HostService
 Var HostNone
 
 !define MUI_ICON   "winlogrotate.ico"
@@ -380,14 +380,13 @@ resident, missed runs are caught up after a reboot, and it is visible in Task Sc
   ${NSD_CreateLabel} 12u 42u 100% 10u "Runs daily as SYSTEM. No resident process."
   Pop $0
 
-  ${NSD_CreateRadioButton} 0 58u 100% 12u "Windows service"
-  Pop $HostService
-  ${NSD_CreateLabel} 12u 70u 100% 10u "A resident agent with its own timer."
-  Pop $0
-
-  ${NSD_CreateRadioButton} 0 86u 100% 12u "Neither - I will trigger it myself"
+  ; There is deliberately no "Windows service" option, and there was one until milestone 17.
+  ; This build cannot register a service host - `host use service` says so and refuses - so the
+  ; radio button offered a choice that removed the working scheduled task and then failed, one
+  ; click away, with the failure reported only to a log nobody reads.
+  ${NSD_CreateRadioButton} 0 58u 100% 12u "Neither - I will trigger it myself"
   Pop $HostNone
-  ${NSD_CreateLabel} 12u 98u 100% 10u "Install the tools only. Nothing will run on its own."
+  ${NSD_CreateLabel} 12u 70u 100% 10u "Install the tools only. Nothing will run on its own."
   Pop $0
 
   ${NSD_Check} $HostTask
@@ -398,11 +397,6 @@ Function HostPageLeave
   ${NSD_GetState} $HostTask $0
   ${If} $0 == ${BST_CHECKED}
     StrCpy $HostChoice "task"
-    Return
-  ${EndIf}
-  ${NSD_GetState} $HostService $0
-  ${If} $0 == ${BST_CHECKED}
-    StrCpy $HostChoice "service"
     Return
   ${EndIf}
   StrCpy $HostChoice "none"
@@ -603,11 +597,32 @@ Function .onInit
     Call MultiUser.InstallMode.AllUsers
   ${EndIf}
 
-  ; /HOST=task|service|none for unattended deployment.
+  ; /HOST=task|none for unattended deployment.
+  ;
+  ; Validated here rather than taken verbatim. It used to be copied straight into $HostChoice,
+  ; written to the uninstall key's HostKind, and only then handed to `host use` - so /HOST=banana
+  ; was recorded as the machine's run model and /HOST=service, which this build cannot register,
+  ; produced a silent install that reported success and scheduled nothing. Failing here is loud
+  ; and leaves nothing behind; failing later was quiet and left a lie in the registry.
   ClearErrors
   ${GetOptions} $R0 "/HOST=" $R1
   ${IfNot} ${Errors}
-    StrCpy $HostChoice $R1
+    ${If} $R1 == "task"
+    ${OrIf} $R1 == "none"
+      StrCpy $HostChoice $R1
+    ${ElseIf} $R1 == "service"
+      MessageBox MB_OK|MB_ICONSTOP \
+        "The service host is not implemented in this build.$\n$\n\
+Use /HOST=task. A scheduled task is the better fit for a log rotator anyway: nothing stays \
+resident, and a run missed while the machine was off is caught up afterwards." /SD IDOK
+      SetErrorLevel 2
+      Quit
+    ${Else}
+      MessageBox MB_OK|MB_ICONSTOP \
+        "'$R1' is not a run model.$\n$\nUse /HOST=task or /HOST=none." /SD IDOK
+      SetErrorLevel 2
+      Quit
+    ${EndIf}
   ${EndIf}
 
   ; Match an existing install's scope rather than creating a second copy beside it.
@@ -719,6 +734,7 @@ Section "Uninstall"
   ${un.GetParameters} $0
   ${un.GetOptions} $0 "/PURGEDATA" $1
   ${IfNot} ${Errors}
+    StrCpy $PurgeData 1
     RMDir /r "$DataDir"
     Goto data_done
   ${EndIf}
@@ -727,9 +743,21 @@ Section "Uninstall"
     "Remove the configuration, rotation history and job files in$\n$DataDir?$\n$\n\
 Choose No to keep them for a future install." \
     /SD IDNO IDNO data_done
+  StrCpy $PurgeData 1
   RMDir /r "$DataDir"
 
   data_done:
+
+  ; The secret store's per-install entropy, under the same opt-in as the data it protects.
+  ; MachineEntropy's own remarks say the installer "must never remove the key on upgrade, only
+  ; under /PURGEDATA" - the first half was implemented and the second was not, so a purge deleted
+  ; secrets.dat and left the 32 bytes that protected it on the machine for ever.
+  ;
+  ; Only for a machine-wide install: a per-user one never wrote it.
+  ${If} $PurgeData == 1
+  ${AndIf} $MultiUser.InstallMode == "AllUsers"
+    DeleteRegKey HKLM "SOFTWARE\WinLogRotate"
+  ${EndIf}
 
   Delete "$INSTDIR\uninstall.exe"
   RMDir "$INSTDIR"
