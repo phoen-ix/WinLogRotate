@@ -73,6 +73,43 @@ public partial class ArchitectureTests
     }
 
     /// <summary>
+    /// The rotation gate asks for exactly the rights it grants.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// It did not. The descriptor granted Everyone <c>Synchronize | Modify</c> and the create
+    /// asked for full control, which that grants to nobody - so the first caller made the gate
+    /// and every concurrent second caller was refused by it. One constant used by both sides is
+    /// what makes the two unable to disagree, and a second spelling of the rights anywhere in
+    /// the file is that disagreement coming back.
+    /// </para>
+    /// <para>
+    /// A text scan, and a proxy: the behaviour itself is asserted by
+    /// <c>RotationGateTests</c>, which needs <c>MutexAcl</c> and therefore real Windows. This is
+    /// the part of it that can be checked on the leg that runs everywhere.
+    /// </para>
+    /// </remarks>
+    [Fact]
+    public void TheRotationGateAsksForExactlyTheRightsItGrants()
+    {
+        var gate = File.ReadAllText(Path.Combine(
+            RepoRoot.Find().FullName, "src", "WinLogRotate.Hosting", "RotationGate.cs"));
+
+        // Self-check: a scan for a spelling that is no longer used anywhere would pass for the
+        // wrong reason the moment someone renamed it.
+        gate.ShouldContain("MutexRights.Synchronize | MutexRights.Modify");
+
+        gate.Split("MutexRights.Synchronize | MutexRights.Modify").Length.ShouldBe(
+            2,
+            "the rights belong in one constant, used by both the descriptor and the open");
+
+        gate.ShouldContain(
+            "TryOpenExisting",
+            Case.Sensitive,
+            "the gate must join an existing mutex rather than asking to create one it may not own");
+    }
+
+    /// <summary>
     /// Nothing marshals to the UI thread by hand.
     /// </summary>
     /// <remarks>

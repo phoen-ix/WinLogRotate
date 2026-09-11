@@ -32,6 +32,7 @@ namespace WinLogRotate.Core.Tests;
 /// - it was in whether anything was listening.
 /// </para>
 /// </remarks>
+[Collection(RotationGateCollection.Name)]
 public sealed class RunEventStreamTests : IDisposable
 {
     private readonly DirectoryInfo _dir = Directory.CreateTempSubdirectory("winlogrotate-stream-");

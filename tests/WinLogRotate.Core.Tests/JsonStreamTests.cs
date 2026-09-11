@@ -23,6 +23,7 @@ namespace WinLogRotate.Core.Tests;
 /// merely misplaced. The file is the whole channel.
 /// </para>
 /// </remarks>
+[Collection(RotationGateCollection.Name)]
 public sealed class JsonStreamTests : IDisposable
 {
     private readonly DirectoryInfo _dir = Directory.CreateTempSubdirectory("winlogrotate-stream-");

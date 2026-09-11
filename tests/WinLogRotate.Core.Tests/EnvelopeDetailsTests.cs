@@ -17,6 +17,7 @@ namespace WinLogRotate.Core.Tests;
 /// child cannot have its pipes redirected and has no stderr to read. The child said what was
 /// wrong in its envelope, in the file it was told to write, and nothing opened it.
 /// </remarks>
+[Collection(RotationGateCollection.Name)]
 public sealed class EnvelopeDetailsTests : IDisposable
 {
     private readonly DirectoryInfo _dir = Directory.CreateTempSubdirectory("winlogrotate-details-");
