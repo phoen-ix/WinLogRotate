@@ -74,8 +74,11 @@ public sealed class SettingsPage : UserControl
                     payload.TryGetProperty("aclFix", out var fix) ? fix.GetString() : null);
             }
         }
-        catch (JsonException)
+        catch (Exception e) when (e is JsonException or KeyNotFoundException or InvalidOperationException)
         {
+            // The report above is already on screen; this walk only decides whether to warn as
+            // well. Caught wider than JsonException so that a missing field cannot end the
+            // process from an async void handler.
         }
     }
 

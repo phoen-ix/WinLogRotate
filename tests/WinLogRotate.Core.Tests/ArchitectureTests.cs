@@ -73,6 +73,47 @@ public partial class ArchitectureTests
     }
 
     /// <summary>
+    /// A page that walks an envelope by hand catches every way that walk can fail.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// <c>GetProperty</c> throws <c>KeyNotFoundException</c> and <c>GetInt32</c> throws
+    /// <c>InvalidOperationException</c>. Neither is a <c>JsonException</c>, and every page but
+    /// one caught only that - so a response that parsed but was missing a field escaped from an
+    /// <c>async void</c> handler, in a process that installs no
+    /// <c>Application.ThreadException</c> handler at all. A CLI one version out of step is the
+    /// ordinary way to produce exactly that.
+    /// </para>
+    /// <para>
+    /// A text scan, because a test project that references the GUI carries a
+    /// Microsoft.WindowsDesktop.App framework reference and cannot run on the Linux leg. The
+    /// rule is deliberately narrow - it does not forbid hand-walking, which would force all five
+    /// pages' projections out at once - so it asks only that a page which does it says so in its
+    /// catch.
+    /// </para>
+    /// </remarks>
+    [Fact]
+    public void APageThatWalksAnEnvelopeCatchesEveryWayItCanFail()
+    {
+        var pages = Path.Combine(RepoRoot.Find().FullName, "src", "WinLogRotate.Gui", "Pages");
+
+        var walkers = Directory
+            .EnumerateFiles(pages, "*.cs", SearchOption.AllDirectories)
+            .Where(f => File.ReadAllText(f).Contains("GetProperty(", StringComparison.Ordinal))
+            .ToArray();
+
+        // Self-check: a rule about pages that hand-walk an envelope means nothing once none do.
+        walkers.Length.ShouldBeGreaterThan(2);
+
+        walkers
+            .Where(f => File.ReadAllText(f).Contains("catch (JsonException", StringComparison.Ordinal))
+            .Select(Path.GetFileName)
+            .ShouldBeEmpty(
+                "a page that walks an envelope by hand must also catch KeyNotFoundException and "
+                + "InvalidOperationException - see NotificationsPage for the filter");
+    }
+
+    /// <summary>
     /// Every capability must be reachable from the command line.
     /// <para>
     /// WinForms does not run on Server Core, which is where IIS is most often installed. One

@@ -93,10 +93,15 @@ public sealed class JobsPage : UserControl
                 ? "No jobs configured yet."
                 : $"{_grid.Rows.Count} job(s).";
         }
-        catch (JsonException e)
+        catch (Exception e) when (e is JsonException or KeyNotFoundException or InvalidOperationException)
         {
             // A malformed envelope means a version mismatch far more often than a bug, so say
             // something more useful than "unexpected character".
+            //
+            // Wider than JsonException, because GetProperty throws KeyNotFoundException and
+            // GetInt32 throws InvalidOperationException - so an envelope that parses but is
+            // missing a field escaped this into an async void handler, in a process that
+            // installs no unhandled-exception handler.
             _status.ForeColor = Theme.Current.Danger;
             _status.Text = "Could not read the response from winlogrotate.exe.";
             LrDialog.Error(this, "Unexpected response",
@@ -151,8 +156,11 @@ public sealed class JobsPage : UserControl
                 });
             }
         }
-        catch (JsonException)
+        catch (Exception e) when (e is JsonException or KeyNotFoundException or InvalidOperationException)
         {
+            // Opening a folder is a convenience and failing to work out which one is not worth a
+            // dialog. Caught at all only so that a missing field cannot end the process from an
+            // async void handler.
         }
     }
 }

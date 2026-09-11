@@ -95,8 +95,11 @@ public sealed class SchedulingPage : UserControl
                 _current.Text += "  -  nothing is running rotations, so the configuration will never be applied.";
             }
         }
-        catch (JsonException)
+        catch (Exception e) when (e is JsonException or KeyNotFoundException or InvalidOperationException)
         {
+            // GetProperty throws KeyNotFoundException and GetInt32 throws
+            // InvalidOperationException, neither of which a JsonException filter catches - so an
+            // envelope that parsed but was missing a field escaped into an async void handler.
             _current.Text = "Could not read the current status.";
         }
     }
