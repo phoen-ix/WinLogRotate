@@ -303,18 +303,44 @@ function Invoke-WithHeldRotationGate {
 
         $created = $false
         $m = [System.Threading.MutexAcl]::Create($true, $name, [ref] $created, $security)
-        if (-not $created) { throw "The gate already existed; this runner did not create it." }
+
+        if (-not $created) { 'existed'; return }
+        'held'
 
         Start-Sleep -Seconds $seconds
-        $m.ReleaseMutex()
+
+        # Releasing is the owning thread's job and a PowerShell job offers no promise about
+        # which thread runs which statement, so a complaint here is about the harness and not
+        # about the product. The handle goes when this process does either way.
+        try { $m.ReleaseMutex() } catch { }
         $m.Dispose()
     } -ArgumentList $MutexName, $HoldSeconds
 
-    # Let the job actually take the gate before the body runs.
-    Start-Sleep -Seconds 3
+    # Wait for the job to say it has the gate, rather than sleeping and hoping. A body that runs
+    # before the gate is held would assert nothing at all and pass.
+    $deadline = (Get-Date).AddSeconds(30)
+    $said = @()
 
-    try     { & $Body }
-    finally { Receive-Job $job -Wait -AutoRemoveJob | Out-Null }
+    while ((Get-Date) -lt $deadline -and $said.Count -eq 0) {
+        Start-Sleep -Milliseconds 200
+        $said = @(Receive-Job $job -Keep)
+    }
+
+    if ($said -notcontains 'held') {
+        Receive-Job $job -Wait -AutoRemoveJob -ErrorAction SilentlyContinue | Out-Null
+        throw "Could not take the rotation gate: $($said -join ', ')"
+    }
+
+    try
+    {
+        & $Body
+    }
+    finally
+    {
+        # SilentlyContinue: the body's verdict is the point, and a cleanup complaint from the
+        # holder must not be able to overwrite it.
+        Receive-Job $job -Wait -AutoRemoveJob -ErrorAction SilentlyContinue | Out-Null
+    }
 }
 
 function Assert-TaskHardening {
