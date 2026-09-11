@@ -198,7 +198,7 @@ public static class LogSeries
 }
 
 /// <summary>The real file system.</summary>
-public sealed class FileArchiveSource : IArchiveSource
+public sealed class FileArchiveSource(FileEnumerator enumerator) : IArchiveSource
 {
     public MatchedFile? Find(string path)
     {
@@ -223,5 +223,23 @@ public sealed class FileArchiveSource : IArchiveSource
         }
     }
 
-    public IReadOnlyList<MatchedFile> Glob(string pattern) => FileEnumerator.Resolve(pattern);
+    /// <summary>
+    /// Links refused while globbing for archives, for the caller to report.
+    /// </summary>
+    /// <remarks>
+    /// A side channel for <c>PlanExecutor.RecordTruncation</c>'s reason: this type is built in a
+    /// field initialiser that cannot see the runner's reporting lambda, so what it refuses is
+    /// collected here and drained where the job name is in scope. Near-silent in practice - the
+    /// archive directory is the log's own unless <c>olddir</c> says otherwise, and that directory
+    /// has already been walked - but it is the only path by which a linked <c>olddir</c> would be
+    /// noticed at all.
+    /// </remarks>
+    public List<GuardDecision> Refused { get; } = [];
+
+    public IReadOnlyList<MatchedFile> Glob(string pattern)
+    {
+        var found = enumerator.Resolve(pattern);
+        Refused.AddRange(found.Refusals);
+        return found.Files;
+    }
 }

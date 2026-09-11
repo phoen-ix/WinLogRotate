@@ -42,7 +42,8 @@ public sealed record ExecutionResult
 /// dry run emits only the first half - it is the same code path, stopped one step earlier,
 /// rather than a separate description that could drift from what the executor really does.
 /// </remarks>
-public sealed class PlanExecutor(IJournal journal, PathGuard guard, TimeProvider clock)
+public sealed class PlanExecutor(
+    IJournal journal, PathGuard guard, TimeProvider clock, ILinkResolver? links = null)
 {
     public ExecutionResult Execute(JobPlan plan, EffectiveJob job, bool dryRun)
     {
@@ -53,6 +54,9 @@ public sealed class PlanExecutor(IJournal journal, PathGuard guard, TimeProvider
         var errors = new List<string>();
         var diagnostics = new List<CliDiagnostic>();
         var rotated = new List<string>();
+
+        // For the life of this call. A plan touches a handful of directories and dozens of files.
+        var resolved = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
 
         foreach (var op in plan.Operations)
         {
@@ -72,7 +76,11 @@ public sealed class PlanExecutor(IJournal journal, PathGuard guard, TimeProvider
 
             // Re-check immediately before acting, not only at plan time. The plan may be
             // seconds old, and this is the last moment before something is destroyed.
-            var decision = guard.CheckPath(op.Source);
+            //
+            // Against where the file REALLY is, not where it is spelled. The planner's check was
+            // textual, so a directory swapped for a junction between planning and acting - or one
+            // reached by an 8.3 name - would pass it and be deleted from anyway.
+            var decision = guard.CheckPath(Resolved(op.Source, resolved));
             if (!decision.IsAllowed)
             {
                 failed++;
@@ -131,6 +139,39 @@ public sealed class PlanExecutor(IJournal journal, PathGuard guard, TimeProvider
             Diagnostics = diagnostics,
             Rotated = rotated,
         };
+    }
+
+    /// <summary>
+    /// The path as the file system sees it, with each directory resolved at most once.
+    /// </summary>
+    /// <remarks>
+    /// Per directory rather than per operation: a job of forty archives in one folder pays one
+    /// open, not forty. On the rare failure the spelled path is used, which is exactly what the
+    /// guard checked before this milestone - so an unresolvable path is no worse guarded than it
+    /// used to be, rather than being let through.
+    /// </remarks>
+    private string Resolved(string path, Dictionary<string, string> cache)
+    {
+        var directory = WinPath.DirectoryName(path);
+
+        if (directory.Length == 0)
+        {
+            return path;
+        }
+
+        if (!cache.TryGetValue(directory, out var real))
+        {
+            var target = (links ?? new LinkResolver()).Resolve(directory);
+            real = target.Resolved && target.FinalPath is { } final ? final : directory;
+            cache[directory] = real;
+        }
+
+        // Rebuilt only when the directory really moved. Recombining an unchanged path would put
+        // it through Combine and FileName for no reason, and those answer in Windows spelling -
+        // which is a needless way to change a path that nothing asked to change.
+        return WinPath.CanonicalKey(real) == WinPath.CanonicalKey(directory)
+            ? path
+            : WinPath.Combine(real, WinPath.FileName(path));
     }
 
     private long? Apply(PlannedOp op, EffectiveJob job)

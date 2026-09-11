@@ -90,8 +90,19 @@ in a config file requires, which in practice means a per-machine install.
 - **NUL-fill quarantine.** A writer that caches its own file offset does not seek back to zero
   after `copytruncate`, so NTFS zero-fills the gap and the "rotated" file instantly reappears at
   its old size. Once detected, `copytruncate` is permanently refused for that path.
-- **Reparse-point refusal.** Any user can create a junction with no privilege at all. While
-  elevated, WinLogRotate never follows one, and there is no override.
+- **Links are resolved, then judged.** Any user can create a junction with no privilege at all
+  (`mklink /J`), so a log directory somebody else controls could be aimed at `System32` and have a
+  SYSTEM-privileged retention pass delete files there. Every link is therefore resolved to where it
+  really leads, and that target is put through the same protected-location rule a path typed out in
+  full would face. A junction onto another volume — the ordinary way to relocate logs off a full
+  system drive — is followed. One that arrives somewhere we would have refused anyway is not, with
+  `LR9004` naming both the link and its target. **There is no override**, and resolving also closes
+  two holes a textual check never could: an 8.3 short name and a `subst`ed drive are different
+  spellings of the same directory.
+
+  Linked log *files* are still not rotated — `copytruncate` would empty the target while a rename
+  moves the link and leaves the target growing, so following them is a feature with semantics to
+  settle rather than a safety fix. What changed is that the skip is now reported instead of silent.
 
 ## Importing an existing config
 

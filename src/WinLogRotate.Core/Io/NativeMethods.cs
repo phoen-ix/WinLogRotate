@@ -72,6 +72,40 @@ internal static partial class NativeMethods
         internal uint FileIndexLow;
     }
 
+    /// <summary>
+    /// Both zero, which looks like a mistake and is not.
+    /// </summary>
+    /// <remarks>
+    /// <c>FILE_NAME_NORMALIZED</c> is what turns <c>PROGRA~1</c> back into
+    /// <c>Program Files</c>, and that is half the reason this call exists: the path guard
+    /// compares strings, and an 8.3 short name is a different string for the same directory.
+    /// </remarks>
+    internal const uint FileNameNormalized = 0x00000000;
+    internal const uint VolumeNameDos = 0x00000000;
+
+    /// <summary>For a volume with no drive letter - a mounted folder.</summary>
+    internal const uint VolumeNameGuid = 0x00000001;
+
+    /// <summary>
+    /// The real path behind a handle, with every component's link followed.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// <c>StringMarshalling.Utf16</c> is required even though no <c>string</c> appears: the
+    /// source generator refuses a bare <c>char</c> parameter without it.
+    /// </para>
+    /// <para>
+    /// The length contract is an off-by-one worth stating. On success the return <b>excludes</b>
+    /// the terminating NUL; when the buffer is too small it <b>includes</b> it. So success is
+    /// <c>0 &lt; len &lt; cch</c>, zero is failure, and <c>len &gt;= cch</c> means try again with
+    /// <c>len</c> characters.
+    /// </para>
+    /// </remarks>
+    [LibraryImport("kernel32.dll", EntryPoint = "GetFinalPathNameByHandleW",
+        StringMarshalling = StringMarshalling.Utf16, SetLastError = true)]
+    internal static partial uint GetFinalPathNameByHandle(
+        SafeFileHandle hFile, ref char lpszFilePath, uint cchFilePath, uint dwFlags);
+
     [LibraryImport("kernel32.dll", EntryPoint = "GetFileInformationByHandle", SetLastError = true)]
     [return: MarshalAs(UnmanagedType.Bool)]
     internal static partial bool GetFileInformationByHandle(

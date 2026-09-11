@@ -3,6 +3,7 @@ using Shouldly;
 using WinLogRotate.Contracts;
 using WinLogRotate.Core.Configuration;
 using WinLogRotate.Core.Engine;
+using WinLogRotate.Core.Io;
 using WinLogRotate.Core.Journaling;
 using WinLogRotate.Core.Safety;
 using Xunit;
@@ -165,5 +166,59 @@ public sealed class PlanExecutorTests : IDisposable
 
         result.Skipped.ShouldBe(1);
         _journal.Entries.ShouldContain(e => e.Result == OpResult.Skipped);
+    }
+
+    /// <summary>A resolver that claims every directory really lives somewhere else.</summary>
+    private sealed class Redirect(string to) : ILinkResolver
+    {
+        public LinkTarget Resolve(string path) => LinkTarget.At(to);
+    }
+
+    /// <summary>
+    /// The last-moment check asks where the file really is, not where it is spelled.
+    /// </summary>
+    /// <remarks>
+    /// Its comment has always said "the plan may be seconds old, and this is the last moment
+    /// before something is destroyed" - and it compared a string, so a directory swapped for a
+    /// junction between planning and acting passed it, as did one reached by an 8.3 name.
+    /// </remarks>
+    [Fact]
+    public void TheApplyTimeCheckLooksWhereTheFileReallyIs()
+    {
+        var plan = PlanDeleting("a.log.gz");
+
+        var executor = new PlanExecutor(
+            _journal,
+            new PathGuard(new GuardOptions { ProtectedRoots = [@"C:\Windows"] }),
+            _clock,
+            new Redirect(@"C:\Windows\System32"));
+
+        var result = executor.Execute(plan, Job(), dryRun: false);
+
+        result.Failed.ShouldBe(1);
+        result.Completed.ShouldBe(0);
+        File.Exists(Path.Combine(_dir.FullName, "a.log.gz")).ShouldBeTrue("and it was not deleted");
+
+        // Asserted on the REASON, not just on the refusal. CheckPath turns down a Unix path as
+        // not absolute, so on the Linux leg this executor refuses everything it is given - and a
+        // test that only counted failures would pass with the resolution deleted entirely.
+        var refusal = result.Diagnostics.ShouldHaveSingleItem();
+        refusal.Code.ShouldBe(DiagnosticCode.DangerousPathRefused);
+        refusal.Message.ShouldContain(@"C:\Windows");
+    }
+
+    /// <summary>A path that resolves to itself is not rewritten on its way to the guard.</summary>
+    /// <remarks>
+    /// The common case, and the one a rebuild would quietly break: nothing moved, so the guard
+    /// must see exactly the path the plan named.
+    /// </remarks>
+    [Fact]
+    public void AnOrdinaryPathIsUnaffectedByTheResolution()
+    {
+        Assert.SkipUnless(OperatingSystem.IsWindows(), "Applies a real plan, and CheckPath wants Windows paths.");
+
+        new PlanExecutor(_journal, new PathGuard(new GuardOptions()), _clock)
+            .Execute(PlanDeleting("a.log.gz"), Job(), dryRun: false)
+            .Completed.ShouldBe(1);
     }
 }

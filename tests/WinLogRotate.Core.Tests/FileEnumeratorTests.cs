@@ -1,5 +1,6 @@
 using Shouldly;
 using WinLogRotate.Core.Globbing;
+using WinLogRotate.Core.Safety;
 using Xunit;
 
 namespace WinLogRotate.Core.Tests;
@@ -26,6 +27,17 @@ public sealed class FileEnumeratorTests : IDisposable
         }
     }
 
+    /// <summary>
+    /// An enumerator with nothing protected, so these tests measure matching and not the guard.
+    /// </summary>
+    /// <remarks>
+    /// The default roots include real system directories, and a temp directory is not inside one -
+    /// but naming the roots here keeps these tests answering the question they are about, and
+    /// stops a change to the defaults reaching in and altering them.
+    /// </remarks>
+    private static FileEnumerator Enumerator() =>
+        new(new PathGuard(new GuardOptions { ProtectedRoots = [] }));
+
     private void Seed(string relative, string content = "x")
     {
         var path = Path.Combine(_dir.FullName, relative);
@@ -42,7 +54,7 @@ public sealed class FileEnumeratorTests : IDisposable
         Seed(@"logs\app.log.1");
         Seed(@"logs\something.logfile");   // the 8.3 over-match Win32 would have included
 
-        var matches = FileEnumerator.Resolve(Path.Combine(_dir.FullName, @"logs\*.log"));
+        var matches = Enumerator().Resolve(Path.Combine(_dir.FullName, @"logs\*.log")).Files;
 
         matches.Select(m => Path.GetFileName(m.Path)).ShouldBe(["app.log"]);
     }
@@ -56,7 +68,7 @@ public sealed class FileEnumeratorTests : IDisposable
         Seed(@"logs\a.log");
         Seed(@"logs\b.log");
 
-        var matches = FileEnumerator.Resolve(Path.Combine(_dir.FullName, @"logs\*.log"));
+        var matches = Enumerator().Resolve(Path.Combine(_dir.FullName, @"logs\*.log")).Files;
 
         // Windows enumeration order is unspecified and differs between NTFS, ReFS and SMB.
         // Retention decides which files die, so the order must not depend on the filesystem.
@@ -72,10 +84,10 @@ public sealed class FileEnumeratorTests : IDisposable
         Seed(@"logs\W3SVC1\a.log");
         Seed(@"logs\W3SVC1\deep\b.log");
 
-        var shallow = FileEnumerator.Resolve(Path.Combine(_dir.FullName, @"logs\*.log"));
+        var shallow = Enumerator().Resolve(Path.Combine(_dir.FullName, @"logs\*.log")).Files;
         shallow.Count.ShouldBe(1);
 
-        var deep = FileEnumerator.Resolve(Path.Combine(_dir.FullName, @"logs\**\*.log"));
+        var deep = Enumerator().Resolve(Path.Combine(_dir.FullName, @"logs\**\*.log")).Files;
         deep.Count.ShouldBe(3);
     }
 
@@ -89,13 +101,13 @@ public sealed class FileEnumeratorTests : IDisposable
 
         // .NET's EnumerationOptions defaults to skipping Hidden and System. A log we silently
         // skip is a log that grows forever, which is the worst failure this product can have.
-        FileEnumerator.Resolve(Path.Combine(_dir.FullName, @"logs\*.log")).Count.ShouldBe(1);
+        Enumerator().Resolve(Path.Combine(_dir.FullName, @"logs\*.log")).Files.Count.ShouldBe(1);
     }
 
     [Fact]
     public void AnAbsentDirectoryResolvesToNothingRatherThanThrowing()
     {
         Assert.SkipUnless(OperatingSystem.IsWindows(), "Resolves Windows paths.");
-        FileEnumerator.Resolve(Path.Combine(_dir.FullName, @"nope\*.log")).ShouldBeEmpty();
+        Enumerator().Resolve(Path.Combine(_dir.FullName, @"nope\*.log")).Files.ShouldBeEmpty();
     }
 }

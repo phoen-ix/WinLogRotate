@@ -278,6 +278,36 @@ public static class WinPath
             : @"\\?\" + p;
     }
 
+    /// <summary>
+    /// The inverse of <see cref="ToExtendedLength"/>: the spelling the rest of the product
+    /// compares and prints.
+    /// </summary>
+    /// <remarks>
+    /// <c>GetFinalPathNameByHandle</c> answers in the extended form - <c>\\?\C:\logs</c>, or
+    /// <c>\\?\UNC\server\share\logs</c> for a network path. Everything else here works in
+    /// ordinary paths, and a guard that compared <c>\\?\C:\Windows</c> against
+    /// <c>C:\Windows</c> would find them different - which is a refusal that silently becomes an
+    /// allow. A volume GUID path has no short form and is returned unchanged.
+    /// </remarks>
+    public static string FromExtendedLength(string path)
+    {
+        if (path.StartsWith(@"\\?\UNC\", StringComparison.Ordinal))
+        {
+            return @"\\" + path[8..];
+        }
+
+        // Deliberately after the UNC case, which shares this prefix. A volume GUID path -
+        // \\?\Volume{...}\ - falls through unchanged: it names a volume with no drive letter,
+        // and there is no shorter spelling to convert it to.
+        if (path.StartsWith(@"\\?\", StringComparison.Ordinal)
+            && !path.StartsWith(@"\\?\Volume{", StringComparison.OrdinalIgnoreCase))
+        {
+            return path[4..];
+        }
+
+        return path;
+    }
+
     private static string StripPrefix(string normalized, out bool isUnc)
     {
         var p = normalized;

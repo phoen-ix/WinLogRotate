@@ -88,4 +88,43 @@ public class WinPathTests
     [InlineData(@"\\?\C:\already", @"\\?\C:\already")]
     public void ExtendedLengthPrefixing(string input, string expected) =>
         WinPath.ToExtendedLength(WinPath.Normalize(input)).ShouldBe(expected);
+
+    /// <summary>
+    /// <c>FromExtendedLength</c> really inverts <c>ToExtendedLength</c>.
+    /// </summary>
+    /// <remarks>
+    /// The UNC case is the one that bites. <c>\\?\UNC\</c> replaces the two leading backslashes of
+    /// <c>\\server\share</c>, so undoing it by the wrong offset yields <c>\server\share</c> - not
+    /// UNC, not absolute, and equal to nothing. A guard handed that quietly stops matching the
+    /// root it was written to protect, and every test that does not use a network path stays green.
+    /// </remarks>
+    [Theory]
+    [InlineData(@"C:\logs\app")]
+    [InlineData(@"C:\")]
+    [InlineData(@"\\server\share\logs")]
+    [InlineData(@"\\server\share")]
+    public void ExtendedLengthRoundTrips(string path) =>
+        WinPath.FromExtendedLength(WinPath.ToExtendedLength(path)).ShouldBe(path);
+
+    [Fact]
+    public void FromExtendedLengthStripsThePrefixItIsGiven()
+    {
+        WinPath.FromExtendedLength(@"\\?\C:\logs").ShouldBe(@"C:\logs");
+        WinPath.FromExtendedLength(@"\\?\UNC\srv\share\logs").ShouldBe(@"\\srv\share\logs");
+    }
+
+    /// <summary>What it cannot shorten, it leaves alone.</summary>
+    /// <remarks>
+    /// A volume GUID path is what the final-path call answers for a mounted folder with no drive
+    /// letter. There is no shorter spelling, and inventing one would name a volume that does not
+    /// exist.
+    /// </remarks>
+    [Fact]
+    public void FromExtendedLengthLeavesWhatItCannotShorten()
+    {
+        WinPath.FromExtendedLength(@"C:\logs").ShouldBe(@"C:\logs");
+
+        const string volume = @"\\?\Volume{b75e2c83-0000-0000-0000-602f00000000}\logs";
+        WinPath.FromExtendedLength(volume).ShouldBe(volume);
+    }
 }

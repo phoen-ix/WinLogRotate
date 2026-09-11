@@ -97,7 +97,7 @@ same guard is a Warning. The **ID** never varies, which is what an alert rule sh
 | 190 | Error | The configuration directory is writable by a non-administrator | `LR9001` |
 | 191 | Error | A dangerous path was refused | `LR9002` |
 | 192 | Error | A hook was refused | `LR9003` |
-| 193 | Error | A reparse point was refused | `LR9004` |
+| 193 | Error | A link was not followed, because its target is somewhere we will not act | `LR9004` |
 | 194 | Error | A configuration names a secret that is not stored | `LR9005` |
 | 195 | Warning | A credential is written in a world-readable configuration file | `LR9006` |
 | 196 | Error | The secret store, or the key protecting it, is unsafe or was repaired | `LR9007` |

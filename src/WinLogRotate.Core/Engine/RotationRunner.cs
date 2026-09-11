@@ -139,7 +139,13 @@ public sealed class RotationRunner(
     /// code that decides which files the planner may delete - and that decision deserves tests
     /// that do not need a file system.
     /// </remarks>
-    private readonly IArchiveSource _archives = archiveSource ?? new FileArchiveSource();
+    /// <summary>
+    /// One enumerator for the run, so a link is resolved and reported once however many patterns
+    /// or jobs meet it.
+    /// </summary>
+    private readonly FileEnumerator _files = new(guard);
+
+    private readonly IArchiveSource _archives = archiveSource ?? new FileArchiveSource(new FileEnumerator(guard));
 
     public RunReport Run(LoadedConfig config, RunOptions options)
     {
@@ -218,7 +224,36 @@ public sealed class RotationRunner(
                     continue;
                 }
 
-                matched.AddRange(FileEnumerator.Resolve(pattern));
+                var found = _files.Resolve(pattern);
+
+                // A link we would not follow is named, every time. This used to be a bare
+                // `continue` inside the walk, so a junctioned log directory was never rotated and
+                // nothing anywhere said so.
+                foreach (var refusal in found.Refusals)
+                {
+                    var diagnostic = Diagnose.Refusal(refusal, job.Name);
+
+                    // On severity, not on "there was a refusal at all". The flag exists to stop a
+                    // single cause being counted twice, and a Warning is not a failure - so a
+                    // link we merely could not verify must still let "matched no files" through,
+                    // or a job that fails today would start exiting 0 in silence.
+                    refused |= diagnostic.Severity >= Severity.Error;
+                    Report(diagnostic);
+                }
+
+                matched.AddRange(found.Files);
+            }
+
+            // Whatever the archive glob refused, reported against this job and then cleared, so a
+            // later job cannot inherit it.
+            if (_archives is FileArchiveSource source)
+            {
+                foreach (var refusal in source.Refused)
+                {
+                    Report(Diagnose.Refusal(refusal, job.Name));
+                }
+
+                source.Refused.Clear();
             }
 
             var count = guard.CheckMatchCount(job.Name, matched.Count);

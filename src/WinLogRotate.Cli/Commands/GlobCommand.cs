@@ -1,6 +1,7 @@
 using WinLogRotate.Cli.Output;
 using WinLogRotate.Contracts;
 using WinLogRotate.Core;
+using WinLogRotate.Core.Engine;
 using WinLogRotate.Core.Globbing;
 using WinLogRotate.Core.Safety;
 
@@ -43,7 +44,20 @@ internal static class GlobCommand
             });
         }
 
-        var matches = FileEnumerator.Resolve(pattern);
+        var found = new FileEnumerator(guard).Resolve(pattern);
+        var matches = found.Files;
+
+        // Reported here rather than swallowed: "what would this match?" must not answer with a
+        // clean list and a zero exit while a junction into System32 was quietly declined.
+        var refused = false;
+        foreach (var refusal in found.Refusals)
+        {
+            var diagnostic = Diagnose.Refusal(refusal);
+            refused |= diagnostic.Severity >= Severity.Error;
+            ctx.Output.Diagnostic(diagnostic);
+            ctx.Output.Line($"refused: {diagnostic.Message}");
+        }
+
         var count = guard.CheckMatchCount(pattern, matches.Count);
 
         if (!count.IsAllowed)
@@ -73,12 +87,16 @@ internal static class GlobCommand
         {
             Pattern = pattern,
             Anchor = Glob.LiteralPrefix(WinPath.Normalize(pattern)),
+            ResolvedAnchor = found.ResolvedAnchor,
             Count = matches.Count,
             TotalBytes = matches.Sum(m => m.Length),
             Files = matches.Select(m => m.Path).ToArray(),
         };
 
-        return ctx.Output.Complete("glob", ExitCode.Ok, result);
+        // A clean list and a zero exit, after declining to look inside a junction aimed at a
+        // protected location, would be the wrong answer to the only question this verb asks.
+        return ctx.Output.Complete(
+            "glob", refused ? ExitCode.Errors : ExitCode.Ok, result);
     }
 
     internal static string Humanize(long bytes) => bytes switch

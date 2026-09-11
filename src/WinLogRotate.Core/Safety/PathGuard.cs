@@ -20,10 +20,19 @@ public enum GuardVerdict
     /// <summary>The path is malformed. See <see cref="GuardDecision.PathProblem"/>.</summary>
     InvalidPath,
 
-    /// <summary>A reparse point that would take us outside the configured root. Any user can
-    /// create a junction with no privilege at all, so following one while running as SYSTEM
-    /// hands them our privileges.</summary>
+    /// <summary>A link whose real target is somewhere we will not act. Any user can create a
+    /// junction with no privilege at all, so following one while running as SYSTEM hands them
+    /// our privileges.</summary>
     ReparsePoint,
+
+    /// <summary>
+    /// A link whose target could not be established.
+    /// </summary>
+    /// <remarks>
+    /// Not an accusation. We simply could not prove it safe, so nothing behind it was searched -
+    /// which is a different thing from finding something wrong, and is reported as such.
+    /// </remarks>
+    Unverifiable,
 }
 
 /// <summary>The guard's answer, with everything needed to explain it to a human.</summary>
@@ -38,6 +47,9 @@ public sealed record GuardDecision
     /// <summary>True when the verdict would have been a refusal but a scoped override
     /// permitted it. Always journaled - an override must never be quietly forgotten.</summary>
     public bool Overridden { get; init; }
+
+    /// <summary>The Win32 error behind the refusal, where one caused it.</summary>
+    public int NativeError { get; init; }
 
     public bool IsAllowed => Verdict == GuardVerdict.Allowed;
 }
@@ -62,9 +74,6 @@ public sealed record GuardOptions
     /// <summary>Refuse a pattern that resolves to more files than this. A pattern matching
     /// 40,000 files is a typo far more often than it is a plan.</summary>
     public int MaxMatches { get; init; } = 1000;
-
-    /// <summary>Never true while elevated; see <see cref="PathGuard"/>.</summary>
-    public bool FollowReparsePoints { get; init; }
 
     /// <summary>True when the current process holds an elevated token.</summary>
     public bool Elevated { get; init; }
@@ -184,22 +193,43 @@ public sealed class PathGuard(GuardOptions options)
         var normalized = WinPath.Normalize(path);
         var overridden = IsOverridden(normalized);
 
+        return ClassifyLocation(normalized) switch
+        {
+            (GuardVerdict.VolumeRoot, _) =>
+                Refuse(GuardVerdict.VolumeRoot, path, overridden, $"'{path}' is a volume root.", null),
+
+            (GuardVerdict.ProtectedLocation, var root) =>
+                Refuse(GuardVerdict.ProtectedLocation, path, overridden,
+                    $"'{path}' is inside the protected location '{root}'.", null),
+
+            _ => Allow(path, overridden),
+        };
+    }
+
+    /// <summary>
+    /// Where a normalised path sits, by location alone.
+    /// </summary>
+    /// <remarks>
+    /// Extracted so the link check runs literally the same rule, rather than a second copy of it
+    /// that can drift. A link is refused for exactly the reasons a path spelled out in full would
+    /// be, which is the whole of the new rule: resolve it, then ask the question already asked.
+    /// </remarks>
+    private (GuardVerdict Verdict, string? Root) ClassifyLocation(string normalized)
+    {
         if (WinPath.IsRoot(normalized))
         {
-            return Refuse(GuardVerdict.VolumeRoot, path, overridden,
-                $"'{path}' is a volume root.", null);
+            return (GuardVerdict.VolumeRoot, null);
         }
 
         foreach (var root in Options.ProtectedRoots)
         {
             if (IsWithin(normalized, root))
             {
-                return Refuse(GuardVerdict.ProtectedLocation, path, overridden,
-                    $"'{path}' is inside the protected location '{root}'.", null);
+                return (GuardVerdict.ProtectedLocation, root);
             }
         }
 
-        return Allow(path, overridden);
+        return (GuardVerdict.Allowed, null);
     }
 
     /// <summary>Checks the size of a resolved match set.</summary>
@@ -217,42 +247,105 @@ public sealed class PathGuard(GuardOptions options)
     }
 
     /// <summary>
-    /// Decides whether a reparse point may be traversed.
-    /// <para>
-    /// Junctions need no privilege to create - any user with write access to a directory can
-    /// point it anywhere. A low-privileged user who controls <c>C:\App\logs</c> can aim it at
-    /// <c>System32</c> and turn our maxage cleanup into their privilege escalation. So while
-    /// elevated we never follow one, and this is not overridable.
-    /// </para>
+    /// Decides whether a link may be followed, by asking where it actually leads.
     /// </summary>
-    public GuardDecision CheckReparsePoint(string path, string resolvedTarget, string configuredRoot)
+    /// <remarks>
+    /// <para>
+    /// Junctions need no privilege to create - any user with write access to a directory can point
+    /// it anywhere. A low-privileged user who controls <c>C:\App\logs</c> can aim it at
+    /// <c>System32</c> and turn our maxage cleanup into their privilege escalation.
+    /// </para>
+    /// <para>
+    /// The rule is the one <see cref="CheckPath"/> already applies, run against the resolved
+    /// target instead of the name. That is deliberately not "refuse every link": relocating a log
+    /// directory onto another volume when a system drive fills up is ordinary practice, and
+    /// <c>C:\inetpub\logs</c> pointing at <c>D:\logs\iis</c> is a path we would have permitted had
+    /// the operator typed it out. What is refused is a link that arrives somewhere we would have
+    /// refused anyway - which also closes two holes the textual check never could, since
+    /// <c>C:\PROGRA~1</c> and a <c>subst</c>ed drive are different strings for the same place.
+    /// </para>
+    /// <para>
+    /// <b>Never overridable.</b> Not by <c>allowdangerous</c>, not by anything. The destination is
+    /// reachable by naming it directly, which is explicit and auditable; and an override lives in
+    /// <c>conf.d</c>, whose whole <c>LR9001</c> machinery exists because a non-administrator may be
+    /// able to write there - so an override a local user can author would be the escalation rather
+    /// than the fix.
+    /// </para>
+    /// <para>
+    /// The severity does not soften when unelevated. A junction into <c>System32</c> is the same
+    /// finding whichever token this process holds, and one condition arriving at two severities is
+    /// how an alert threshold quietly stops matching.
+    /// </para>
+    /// </remarks>
+    public GuardDecision CheckLinkTarget(string linkPath, string resolvedTarget)
     {
-        if (Options.Elevated || !Options.FollowReparsePoints)
+        var normalized = WinPath.Normalize(resolvedTarget);
+
+        var (verdict, root) = ClassifyLocation(normalized);
+
+        if (verdict == GuardVerdict.Allowed)
         {
-            return new GuardDecision
-            {
-                Verdict = GuardVerdict.ReparsePoint,
-                Subject = path,
-                Message = $"'{path}' is a reparse point pointing at '{resolvedTarget}'; not following it.",
-                Remedy = Options.Elevated
-                    ? "Reparse points are never followed while running elevated. Any user can create a junction, so following one would hand them this process's privileges."
-                    : "Set followReparsePoints if this link is under your control.",
-            };
+            return Allow(linkPath, overridden: false);
         }
 
-        if (!IsWithin(resolvedTarget, configuredRoot))
-        {
-            return new GuardDecision
-            {
-                Verdict = GuardVerdict.ReparsePoint,
-                Subject = path,
-                Message = $"'{path}' resolves to '{resolvedTarget}', outside the configured root '{configuredRoot}'.",
-                Remedy = "A link may not be used to escape the directory the job is anchored at.",
-            };
-        }
+        var where = verdict == GuardVerdict.VolumeRoot
+            ? "a volume root"
+            : $"the protected location '{root}'";
 
-        return Allow(path, overridden: false);
+        return new GuardDecision
+        {
+            Verdict = GuardVerdict.ReparsePoint,
+            Subject = linkPath,
+
+            // Both paths, always. "Not followed" without saying what was aimed where leaves an
+            // operator nothing to act on and no way to tell a mistake from an attack.
+            Message = $"'{linkPath}' is a link to '{normalized}', which is {where}; not following it.",
+            Remedy = "A link is never followed anywhere its target would not be permitted, and "
+                   + "that is not overridable. If the target really is a log directory, name it "
+                   + "directly in this job's paths instead.",
+        };
     }
+
+    /// <summary>
+    /// A linked log file, whose target is fine and which is skipped anyway.
+    /// </summary>
+    /// <remarks>
+    /// Not a security refusal: the target passed. Files are left unfollowed because the three
+    /// actions disagree about what "the file" would mean - <c>copytruncate</c> would empty the
+    /// target, a rename moves the link and leaves the target growing, and a delete removes only
+    /// the link. Following them is a feature with semantics to settle, not a safety fix. What this
+    /// changes is that the skip is said out loud, because a log that is never rotated and never
+    /// mentioned is the worst outcome this product has.
+    /// </remarks>
+    public GuardDecision LinkedFileNotFollowed(string linkPath, string resolvedTarget) => new()
+    {
+        Verdict = GuardVerdict.Unverifiable,
+        Subject = linkPath,
+        Message = $"'{linkPath}' is a link to '{resolvedTarget}'. Linked log files are not "
+                + "rotated, so it was left alone.",
+        Remedy = "Name the target directly in this job's paths if it should be rotated.",
+    };
+
+    /// <summary>
+    /// A link whose target could not be established.
+    /// </summary>
+    /// <remarks>
+    /// Takes the operating system's own words rather than its error number, so the guard keeps
+    /// owning the sentence and the remedy without <c>Safety</c> acquiring a dependency on
+    /// <c>Io</c>.
+    /// </remarks>
+    public GuardDecision UnresolvableLink(string linkPath, string because, int nativeError) =>
+        new()
+        {
+            Verdict = GuardVerdict.Unverifiable,
+            Subject = linkPath,
+            NativeError = nativeError,
+            Message = $"'{linkPath}' is a link whose target could not be established: {because}. "
+                    + "Nothing behind it was searched.",
+            Remedy = "This is not a refusal - we could not prove it safe rather than finding it "
+                   + "unsafe. A link to a disconnected share or a deleted directory looks like "
+                   + "this; so does one pointing somewhere this account may not open.",
+        };
 
     /// <summary>
     /// True when <paramref name="candidate"/> is <paramref name="root"/> or sits beneath it.

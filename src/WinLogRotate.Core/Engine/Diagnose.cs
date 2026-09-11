@@ -43,6 +43,12 @@ public static class Diagnose
             // A malformed path is a mistake in the configuration, not a security event, and
             // labelling it one would train operators to ignore the band that matters.
             GuardVerdict.InvalidPath => (DiagnosticCode.ConfigInvalid, Severity.Error),
+
+            // Deliberately not in the security band, and deliberately not a failure. We could not
+            // prove a link safe, which is not the same as finding it unsafe - a disconnected share
+            // looks exactly like this. Reporting it as an escalation attempt would put the one
+            // Critical this product has in front of an operator whose network was briefly down.
+            GuardVerdict.Unverifiable => (DiagnosticCode.JobSkipped, Severity.Warning),
             _ => (DiagnosticCode.RotationFailed, Severity.Error),
         };
 
@@ -53,6 +59,7 @@ public static class Diagnose
             Message = decision.Message ?? $"{decision.Subject} was refused.",
             Path = decision.Subject,
             Job = job,
+            NativeError = decision.NativeError == 0 ? null : decision.NativeError,
             Remedy = decision.Remedy,
         };
     }

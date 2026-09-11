@@ -31,6 +31,17 @@ public sealed record GlobResult
     /// prefix. Shown because a surprising anchor is the usual cause of a surprising result.</summary>
     public required string Anchor { get; init; }
 
+    /// <summary>
+    /// Where the anchor really led, when a link took it somewhere else. Null otherwise.
+    /// </summary>
+    /// <remarks>
+    /// For <see cref="Anchor"/>'s reason, one step further on: a surprising anchor is the usual
+    /// cause of a surprising result, and an anchor that is a junction is the most surprising kind
+    /// there is - it is the one case where the directory being walked is not the one that was
+    /// typed.
+    /// </remarks>
+    public string? ResolvedAnchor { get; init; }
+
     public required int Count { get; init; }
     public required long TotalBytes { get; init; }
     public required IReadOnlyList<string> Files { get; init; }
