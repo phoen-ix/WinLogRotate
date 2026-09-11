@@ -49,9 +49,9 @@ internal static class CommandTree
         };
         root.Options.Add(version);
 
-        root.SetAction(parse => parse.GetValue(version)
-            ? VersionCommand.Run(CommandContext.From(parse))
-            : ShowBanner(CommandContext.From(parse)));
+        root.SetAction(parse => CommandContext.Guarded(parse, ctx => parse.GetValue(version)
+            ? VersionCommand.Run(ctx)
+            : ShowBanner(ctx)));
 
         return root;
     }
@@ -164,8 +164,8 @@ internal static class CommandTree
             SkipStateLock, WaitForStateLock, LockHeldExit, NoNotify, RunDeadline,
         };
         GlobalOptions.AddTo(run);
-        run.SetAction(parse => RunCommand.Run(
-            CommandContext.From(parse),
+        run.SetAction(parse => CommandContext.Guarded(parse, ctx => RunCommand.Run(
+            ctx,
             new RunOptions
             {
                 DryRun = parse.GetValue(DryRun),
@@ -182,7 +182,7 @@ internal static class CommandTree
                 Skip = parse.GetValue(SkipStateLock),
                 Wait = parse.GetValue(WaitForStateLock),
                 HeldExitCode = parse.GetValue(LockHeldExit),
-            }));
+            })));
         return run;
     }
 
@@ -193,7 +193,7 @@ internal static class CommandTree
         var path = new Argument<string>("path") { Description = "The log file to probe." };
         var probe = new Command("probe", "Report which locked-file strategies a path actually supports.") { path };
         GlobalOptions.AddTo(probe, configDir: false);  // probe takes the path it probes as an argument
-        probe.SetAction(parse => ProbeCommand.Run(CommandContext.From(parse), parse.GetRequiredValue(path)));
+        probe.SetAction(parse => CommandContext.Guarded(parse, ctx => ProbeCommand.Run(ctx, parse.GetRequiredValue(path))));
         return probe;
     }
 
@@ -204,7 +204,7 @@ internal static class CommandTree
             "Resolve a pattern and show what it matches, or why it was refused. Use this before trusting a pattern in a job.")
         { pattern };
         GlobalOptions.AddTo(glob, configDir: false);  // glob tests one pattern and builds its own guard
-        glob.SetAction(parse => GlobCommand.Run(CommandContext.From(parse), parse.GetRequiredValue(pattern)));
+        glob.SetAction(parse => CommandContext.Guarded(parse, ctx => GlobCommand.Run(ctx, parse.GetRequiredValue(pattern))));
         return glob;
     }
 
@@ -212,11 +212,11 @@ internal static class CommandTree
     {
         var check = new Command("check", "Validate the configuration and report problems with file, line and column.");
         GlobalOptions.AddTo(check);
-        check.SetAction(parse => ConfigCommand.Check(CommandContext.From(parse), parse.GetValue(GlobalOptions.ConfigDir)?.FullName));
+        check.SetAction(parse => CommandContext.Guarded(parse, ctx => ConfigCommand.Check(ctx, parse.GetValue(GlobalOptions.ConfigDir)?.FullName)));
 
         var show = new Command("show", "Print the effective configuration, with every default resolved.");
         GlobalOptions.AddTo(show);
-        show.SetAction(parse => ConfigCommand.Show(CommandContext.From(parse), parse.GetValue(GlobalOptions.ConfigDir)?.FullName));
+        show.SetAction(parse => CommandContext.Guarded(parse, ctx => ConfigCommand.Show(ctx, parse.GetValue(GlobalOptions.ConfigDir)?.FullName)));
 
         return new Command("config", "Inspect and validate the configuration.") { check, show };
     }
@@ -231,12 +231,12 @@ internal static class CommandTree
         };
         var journal = new Command("journal", "Read the record of everything that was compressed, moved or deleted.") { since, job, all };
         GlobalOptions.AddTo(journal);
-        journal.SetAction(parse => JournalCommand.Run(
-            CommandContext.From(parse),
+        journal.SetAction(parse => CommandContext.Guarded(parse, ctx => JournalCommand.Run(
+            ctx,
             parse.GetValue(since),
             parse.GetValue(job),
             parse.GetValue(GlobalOptions.ConfigDir)?.FullName,
-            parse.GetValue(all)));
+            parse.GetValue(all))));
         return journal;
     }
 
@@ -245,7 +245,7 @@ internal static class CommandTree
         var doctor = new Command("doctor",
             "Report every path, the conf.d ACL verdict, elevation state, long-path support and which run host is registered.");
         GlobalOptions.AddTo(doctor);
-        doctor.SetAction(parse => DoctorCommand.Run(CommandContext.From(parse), parse.GetValue(GlobalOptions.ConfigDir)?.FullName));
+        doctor.SetAction(parse => CommandContext.Guarded(parse, ctx => DoctorCommand.Run(ctx, parse.GetValue(GlobalOptions.ConfigDir)?.FullName)));
         return doctor;
     }
 
@@ -263,13 +263,13 @@ internal static class CommandTree
     {
         var show = new Command("show", "Print the notification configuration: targets, providers, proxy and certificate pinning.");
         GlobalOptions.AddTo(show);
-        show.SetAction(parse => NotifyCommand.Show(
-            CommandContext.From(parse), parse.GetValue(GlobalOptions.ConfigDir)?.FullName));
+        show.SetAction(parse => CommandContext.Guarded(parse, ctx => NotifyCommand.Show(
+            ctx, parse.GetValue(GlobalOptions.ConfigDir)?.FullName)));
 
         var status = new Command("status", "Report what was last said about each job, and which channels are suppressed.");
         GlobalOptions.AddTo(status);
-        status.SetAction(parse => NotifyCommand.Status(
-            CommandContext.From(parse), parse.GetValue(GlobalOptions.ConfigDir)?.FullName));
+        status.SetAction(parse => CommandContext.Guarded(parse, ctx => NotifyCommand.Status(
+            ctx, parse.GetValue(GlobalOptions.ConfigDir)?.FullName)));
 
         var channel = new Argument<string?>("channel")
         {
@@ -278,9 +278,9 @@ internal static class CommandTree
         };
         var reset = new Command("reset", "Close a suppressed channel, for when the thing it could not reach is fixed.") { channel };
         GlobalOptions.AddTo(reset);
-        reset.SetAction(parse => NotifyCommand.Reset(
-            CommandContext.From(parse), parse.GetValue(channel),
-            parse.GetValue(GlobalOptions.ConfigDir)?.FullName));
+        reset.SetAction(parse => CommandContext.Guarded(parse, ctx => NotifyCommand.Reset(
+            ctx, parse.GetValue(channel),
+            parse.GetValue(GlobalOptions.ConfigDir)?.FullName)));
 
         var only = new Argument<string?>("target")
         {
@@ -289,9 +289,9 @@ internal static class CommandTree
         };
         var test = new Command("test", "Send a real test message to every configured channel. Records nothing.") { only };
         GlobalOptions.AddTo(test);
-        test.SetAction(parse => NotifyTestCommand.Run(
-            CommandContext.From(parse), parse.GetValue(only),
-            parse.GetValue(GlobalOptions.ConfigDir)?.FullName));
+        test.SetAction(parse => CommandContext.Guarded(parse, ctx => NotifyTestCommand.Run(
+            ctx, parse.GetValue(only),
+            parse.GetValue(GlobalOptions.ConfigDir)?.FullName)));
 
         var setSecretProvider = new Argument<string>("provider")
         {
@@ -308,11 +308,11 @@ internal static class CommandTree
             setSecretProvider, setSecretField, FromPipe,
         };
         GlobalOptions.AddTo(setSecret);
-        setSecret.SetAction(parse => SecretCommand.SetForProvider(
-            CommandContext.From(parse), Input(parse, new ConsoleInputSource()),
+        setSecret.SetAction(parse => CommandContext.Guarded(parse, ctx => SecretCommand.SetForProvider(
+            ctx, Input(parse, new ConsoleInputSource()),
             SecretPlatform.ForThisMachine(),
             parse.GetRequiredValue(setSecretProvider), parse.GetRequiredValue(setSecretField),
-            parse.GetValue(GlobalOptions.ConfigDir)?.FullName));
+            parse.GetValue(GlobalOptions.ConfigDir)?.FullName)));
 
         return new Command("notify", "Inspect how failures are reported, and to whom.")
         {
@@ -345,29 +345,29 @@ internal static class CommandTree
 
         var set = new Command("set", "Store a secret, reading its value from standard input.") { name, fromFile, FromPipe };
         GlobalOptions.AddTo(set);
-        set.SetAction(parse => SecretCommand.Set(
-            CommandContext.From(parse), Input(parse, input), platform,
+        set.SetAction(parse => CommandContext.Guarded(parse, ctx => SecretCommand.Set(
+            ctx, Input(parse, input), platform,
             parse.GetRequiredValue(name), parse.GetValue(fromFile),
-            parse.GetValue(GlobalOptions.ConfigDir)?.FullName));
+            parse.GetValue(GlobalOptions.ConfigDir)?.FullName)));
 
         var list = new Command("list", "List stored secrets: names, when they were set and by whom. Never values.");
         GlobalOptions.AddTo(list);
-        list.SetAction(parse => SecretCommand.List(
-            CommandContext.From(parse), platform, parse.GetValue(GlobalOptions.ConfigDir)?.FullName));
+        list.SetAction(parse => CommandContext.Guarded(parse, ctx => SecretCommand.List(
+            ctx, platform, parse.GetValue(GlobalOptions.ConfigDir)?.FullName)));
 
         var removeName = new Argument<string>("name") { Description = "The secret to remove." };
         var remove = new Command("remove", "Delete a stored secret.") { removeName };
         GlobalOptions.AddTo(remove);
-        remove.SetAction(parse => SecretCommand.Remove(
-            CommandContext.From(parse), platform, parse.GetRequiredValue(removeName),
-            parse.GetValue(GlobalOptions.ConfigDir)?.FullName));
+        remove.SetAction(parse => CommandContext.Guarded(parse, ctx => SecretCommand.Remove(
+            ctx, platform, parse.GetRequiredValue(removeName),
+            parse.GetValue(GlobalOptions.ConfigDir)?.FullName)));
 
         var testName = new Argument<string>("name") { Description = "The secret to decrypt." };
         var test = new Command("test", "Confirm a secret decrypts on this machine, reporting its length and nothing else.") { testName };
         GlobalOptions.AddTo(test);
-        test.SetAction(parse => SecretCommand.Test(
-            CommandContext.From(parse), platform, parse.GetRequiredValue(testName),
-            parse.GetValue(GlobalOptions.ConfigDir)?.FullName));
+        test.SetAction(parse => CommandContext.Guarded(parse, ctx => SecretCommand.Test(
+            ctx, platform, parse.GetRequiredValue(testName),
+            parse.GetValue(GlobalOptions.ConfigDir)?.FullName)));
 
         var importFile = new Option<FileInfo?>("--from-file")
         {
@@ -375,9 +375,9 @@ internal static class CommandTree
         };
         var import = new Command("import", "Store several secrets from name=value lines, for unattended rollout.") { importFile };
         GlobalOptions.AddTo(import);
-        import.SetAction(parse => SecretCommand.Import(
-            CommandContext.From(parse), input, platform, parse.GetValue(importFile),
-            parse.GetValue(GlobalOptions.ConfigDir)?.FullName));
+        import.SetAction(parse => CommandContext.Guarded(parse, ctx => SecretCommand.Import(
+            ctx, input, platform, parse.GetValue(importFile),
+            parse.GetValue(GlobalOptions.ConfigDir)?.FullName)));
 
         return new Command("secret", "Store the credentials that notification providers authenticate with.")
         {
@@ -392,25 +392,25 @@ internal static class CommandTree
         var kind = new Argument<string>("kind") { Description = "task, service, or none." };
         var use = new Command("use", "Choose what runs rotations, switching freely from whatever is registered now.") { kind };
         GlobalOptions.AddTo(use);
-        use.SetAction(parse => HostCommand.Use(CommandContext.From(parse), parse.GetRequiredValue(kind), parse.GetValue(GlobalOptions.ConfigDir)?.FullName));
+        use.SetAction(parse => CommandContext.Guarded(parse, ctx => HostCommand.Use(ctx, parse.GetRequiredValue(kind), parse.GetValue(GlobalOptions.ConfigDir)?.FullName)));
 
         var status = new Command("status", "Report the configured run host, what is actually registered, and any drift between them.");
         GlobalOptions.AddTo(status);
-        status.SetAction(parse => HostCommand.Status(CommandContext.From(parse), parse.GetValue(GlobalOptions.ConfigDir)?.FullName));
+        status.SetAction(parse => CommandContext.Guarded(parse, ctx => HostCommand.Status(ctx, parse.GetValue(GlobalOptions.ConfigDir)?.FullName)));
 
         var acl = new Option<bool>("--acl") { Description = "Re-apply the hardened ACL to the configuration directory." };
         var repair = new Command("repair", "Put the run host and directory permissions back the way the installer left them.") { acl };
         GlobalOptions.AddTo(repair);
-        repair.SetAction(parse => HostCommand.Repair(CommandContext.From(parse), parse.GetValue(acl), parse.GetValue(GlobalOptions.ConfigDir)?.FullName));
+        repair.SetAction(parse => CommandContext.Guarded(parse, ctx => HostCommand.Repair(ctx, parse.GetValue(acl), parse.GetValue(GlobalOptions.ConfigDir)?.FullName)));
 
         var forDuration = new Option<string?>("--for") { Description = "How long to pause, e.g. 01:00:00." };
         var pause = new Command("pause", "Suspend rotations without unregistering the run host.") { forDuration };
         GlobalOptions.AddTo(pause);
-        pause.SetAction(parse => PauseCommand.Run(CommandContext.From(parse), parse.GetValue(forDuration), parse.GetValue(GlobalOptions.ConfigDir)?.FullName));
+        pause.SetAction(parse => CommandContext.Guarded(parse, ctx => PauseCommand.Run(ctx, parse.GetValue(forDuration), parse.GetValue(GlobalOptions.ConfigDir)?.FullName)));
 
         var exportTask = new Command("export-task", "Print the Scheduled Task XML, for deployment by GPO or DSC.");
         GlobalOptions.AddTo(exportTask);
-        exportTask.SetAction(parse => ExportTaskCommand.Run(CommandContext.From(parse), parse.GetValue(GlobalOptions.ConfigDir)?.FullName));
+        exportTask.SetAction(parse => CommandContext.Guarded(parse, ctx => ExportTaskCommand.Run(ctx, parse.GetValue(GlobalOptions.ConfigDir)?.FullName)));
 
         // Called by the installer rather than having NSIS edit PATH itself: stock makensis is
         // built with NSIS_MAX_STRLEN=1024 and silently truncates a longer PATH, and writing
@@ -425,13 +425,13 @@ internal static class CommandTree
 
         var pathAdd = new Command("path-add", "Add the install directory to PATH.") { machineScope };
         GlobalOptions.AddTo(pathAdd, configDir: false);  // path-add edits PATH, not configuration
-        pathAdd.SetAction(parse => HostCommand.Path(
-            CommandContext.From(parse), add: true, machine: parse.GetValue(machineScope)));
+        pathAdd.SetAction(parse => CommandContext.Guarded(parse, ctx => HostCommand.Path(
+            ctx, add: true, machine: parse.GetValue(machineScope))));
 
         var pathRemove = new Command("path-remove", "Remove the install directory from PATH.") { machineScope };
         GlobalOptions.AddTo(pathRemove, configDir: false);  // path-remove edits PATH, not configuration
-        pathRemove.SetAction(parse => HostCommand.Path(
-            CommandContext.From(parse), add: false, machine: parse.GetValue(machineScope)));
+        pathRemove.SetAction(parse => CommandContext.Guarded(parse, ctx => HostCommand.Path(
+            ctx, add: false, machine: parse.GetValue(machineScope))));
 
         return new Command("host", "Manage what runs rotations: a Scheduled Task, a Windows Service, or nothing.")
         {
@@ -447,7 +447,7 @@ internal static class CommandTree
         var outDir = new Option<DirectoryInfo?>("--out") { Description = "Where to write the converted job files." };
         var import = new Command("import", "Convert a Linux logrotate configuration. One way: what cannot be translated is commented, not guessed.") { source, outDir };
         GlobalOptions.AddTo(import);
-        import.SetAction(parse => ImportCommand.Run(CommandContext.From(parse), parse.GetRequiredValue(source), parse.GetValue(outDir)?.FullName, parse.GetValue(GlobalOptions.ConfigDir)?.FullName));
+        import.SetAction(parse => CommandContext.Guarded(parse, ctx => ImportCommand.Run(ctx, parse.GetRequiredValue(source), parse.GetValue(outDir)?.FullName, parse.GetValue(GlobalOptions.ConfigDir)?.FullName)));
         return import;
     }
 
@@ -455,7 +455,7 @@ internal static class CommandTree
     {
         var scan = new Command("scan", "Find log producers on this machine and say which ones rotate but never delete.");
         GlobalOptions.AddTo(scan, configDir: false);  // scan looks at the machine, not at a configuration
-        scan.SetAction(parse => ScanCommand.Run(CommandContext.From(parse)));
+        scan.SetAction(parse => CommandContext.Guarded(parse, ctx => ScanCommand.Run(ctx)));
         return scan;
     }
 
@@ -463,14 +463,14 @@ internal static class CommandTree
     {
         var check = new Command("check", "Report whether a newer release exists. Makes no changes.");
         GlobalOptions.AddTo(check, configDir: false);  // update check asks GitHub for a version
-        check.SetAction(parse => UpdateCommand.CheckAsync(CommandContext.From(parse)).GetAwaiter().GetResult());
+        check.SetAction(parse => CommandContext.Guarded(parse, ctx => UpdateCommand.CheckAsync(ctx).GetAwaiter().GetResult()));
 
         // No --yes, and the description says what the verb does rather than what it is named
         // after. Apply deliberately does not self-replace - see UpdateCommand.Apply - so a switch
         // offering to "install without asking" was attached to a verb that installs nothing.
         var apply = new Command("apply", "Explain how to install the newest release.");
         GlobalOptions.AddTo(apply, configDir: false);  // update apply prints where to download
-        apply.SetAction(parse => UpdateCommand.Apply(CommandContext.From(parse)));
+        apply.SetAction(parse => CommandContext.Guarded(parse, ctx => UpdateCommand.Apply(ctx)));
 
         return new Command("update", "Check for newer releases, and say how to install one.") { check, apply };
     }

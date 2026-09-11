@@ -16,6 +16,10 @@ public static class DiagnosticCode
     /// name would be a lie: no amount of elevation makes DPAPI exist on Linux.</summary>
     public const string NotSupportedHere = "LR1005";
 
+    /// <summary>An exception escaped a verb. This is a defect in the product, not a problem
+    /// with the machine or the configuration, and it is the only code that says so.</summary>
+    public const string InternalError = "LR1006";
+
     // 2xxx - a job or file was skipped
     public const string JobSkipped = "LR2001";
     public const string FileMissing = "LR2002";

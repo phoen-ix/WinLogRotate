@@ -2,7 +2,7 @@ namespace WinLogRotate.Core;
 
 /// <summary>
 /// Process exit codes. 0, 1 and 3 match logrotate exactly so existing monitoring and
-/// runbooks transfer; 2 is ours.
+/// runbooks transfer; 2 and 4 are ours.
 /// </summary>
 public static class ExitCode
 {
@@ -32,4 +32,20 @@ public static class ExitCode
     /// the Event Log all read the journal and never LastTaskResult.
     /// </para></summary>
     public const int LockHeld = 3;
+
+    /// <summary>The invocation ended in a way this product did not anticipate, and what was
+    /// and was not done is unknown.
+    /// <para>
+    /// Not a logrotate code, and deliberately not <see cref="Errors"/>. 1 promises that a run
+    /// happened and that state was written; this promises nothing at all, and it is returned
+    /// for a defect - an exception that escaped a verb - rather than for a log that could not
+    /// be rotated. Before it existed, System.CommandLine's default handler caught such an
+    /// escape, printed it to stderr and exited 1 - so a crash before the rotation gate was even
+    /// taken reported itself to monitoring as a rotation that had happened.
+    /// </para>
+    /// <para>
+    /// An alert rule should read this as "read the diagnostic, then file a bug", never as "some
+    /// files could not be rotated".
+    /// </para></summary>
+    public const int InternalError = 4;
 }

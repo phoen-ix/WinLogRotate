@@ -74,6 +74,7 @@ same guard is a Warning. The **ID** never varies, which is what an alert rule sh
 | 113 | Error | The configuration is invalid; nothing was attempted | `LR1003` |
 | 114 | Warning | No jobs are configured | `LR1004` |
 | 115 | Error | The verb needs a platform this is not | `LR1005` |
+| 116 | Error | The invocation ended unexpectedly; what was done is unknown | `LR1006` |
 | 120 | Warning | A job was skipped | `LR2001` |
 | 121 | Warning | A log file was missing | `LR2002` |
 | 122 | Info | A log was due but held back by `notifempty` | `LR2003` |

@@ -53,6 +53,7 @@ public sealed record CliResult
             Core.ExitCode.Errors => "Completed, but some files could not be rotated.",
             Core.ExitCode.ConfigInvalid => "The configuration has errors, so nothing was attempted.",
             Core.ExitCode.LockHeld => "Another rotation is already running.",
+            Core.ExitCode.InternalError => "Something went wrong that WinLogRotate did not anticipate.",
             _ => $"Exited with code {ExitCode}.",
         },
     };

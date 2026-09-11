@@ -73,6 +73,38 @@ public partial class ArchitectureTests
     }
 
     /// <summary>
+    /// Every verb in the tree is invoked through the guard.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// An exception escaping a verb used to reach System.CommandLine's default handler, which
+    /// returned exit 1 - the code that says a run happened and state was written - with no
+    /// envelope and the <c>--output</c> file still open. <c>CommandContext.Guarded</c> is what
+    /// makes that impossible, and it only helps the actions that go through it.
+    /// </para>
+    /// <para>
+    /// <c>CommandContext.From</c> being private means the compiler already enforces this, which
+    /// is the stronger guarantee. This is here for the case the compiler cannot see: an action
+    /// that builds no context at all, and so reports nothing when it throws.
+    /// </para>
+    /// </remarks>
+    [Fact]
+    public void EveryVerbInTheTreeIsInvokedThroughTheGuard()
+    {
+        var tree = File.ReadAllText(Path.Combine(
+            RepoRoot.Find().FullName, "src", "WinLogRotate.Cli", "Commands", "CommandTree.cs"));
+
+        var actions = tree.Split(".SetAction(", StringSplitOptions.None).Skip(1).ToArray();
+
+        // Self-check: a rule about the tree's actions means nothing if it stopped finding any.
+        actions.Length.ShouldBeGreaterThan(20);
+
+        actions
+            .Where(a => !a.StartsWith("parse => CommandContext.Guarded(", StringComparison.Ordinal))
+            .ShouldBeEmpty("every action must run inside CommandContext.Guarded");
+    }
+
+    /// <summary>
     /// The rotation gate asks for exactly the rights it grants.
     /// </summary>
     /// <remarks>

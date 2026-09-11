@@ -45,6 +45,21 @@ Added, not inherited. Upstream folds "your config has a typo" into exit 1. Windo
 keys off exit codes far harder than cron does, and *nothing was attempted* is genuinely a
 different condition from *we rotated forty logs and one was locked*.
 
+### Exit code 4
+
+Added, not inherited, and for a condition logrotate has no code for: an exception escaped a verb.
+Everything else this program returns is an outcome it meant to report. 4 means it did not mean
+anything - what was and was not done is unknown, and the accompanying `LR1006` diagnostic is a
+bug report rather than something to fix on the machine.
+
+It exists because the alternative was worse. Before it, an escaped exception was caught by the
+command-line library's default handler, which returned 1 - and 1 promises that a run happened and
+that state was written. A crash before the rotation lock was even taken reported itself to
+monitoring as a rotation that had happened.
+
+An alert rule should treat 4 as *read the diagnostic, then file a bug*, never as *some files could
+not be rotated*.
+
 ### `.zip` by default
 
 `gzip` is what logrotate produces and what log shippers expect; `.zip` is what an administrator

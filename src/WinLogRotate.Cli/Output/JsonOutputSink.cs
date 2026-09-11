@@ -25,15 +25,26 @@ internal sealed class JsonOutputSink(bool verbose, bool stream, TextWriter? stre
     /// <c>Console.Out</c>.
     /// </summary>
     /// <remarks>
-    /// Nothing closed it. <c>CommandContext.From</c> opens the file and is called inline at every
-    /// SetAction in the tree, so the handle stayed open for the life of the process. On Linux
-    /// nothing notices; on Windows a reader opening with the default <c>FileShare.Read</c> cannot
-    /// tolerate an outstanding write handle, so reading the file during a run is a sharing
-    /// violation. The GUI escaped it twice over - its tail shares write, and it reads the whole
-    /// file only after the child has exited - which is why tests running the CLI in-process are
-    /// what finally found it.
+    /// Nothing closed it at all once; then it was closed here, on the one path that reaches the
+    /// end of a verb. Both were incomplete for the same reason - an exception does not reach the
+    /// end of a verb - which is why <c>CommandContext.Guarded</c> now brackets the invocation and
+    /// this only has to be the ordinary case. On Windows a reader opening with the default
+    /// <c>FileShare.Read</c> cannot tolerate an outstanding write handle, so a leaked one turns
+    /// the next read of that file into a sharing violation.
     /// </remarks>
     private readonly TextWriter? _owned = streamTo;
+
+    /// <summary>
+    /// Whether the last word has been said.
+    /// </summary>
+    /// <remarks>
+    /// The guard calls Complete after a verb throws, and a verb can throw <i>after</i> it has
+    /// already emitted its envelope: every verb's disposals run as its method unwinds, which is
+    /// after its own Complete and still inside the guard's try. Two envelopes in one stream is
+    /// worse than none - a caller reads the first, sees a completed run, and never learns it did
+    /// not finish.
+    /// </remarks>
+    private bool _closed;
 
     public bool Verbose { get; } = verbose;
 
@@ -58,6 +69,11 @@ internal sealed class JsonOutputSink(bool verbose, bool stream, TextWriter? stre
 
     public int Complete<T>(string verb, int exitCode, T? result)
     {
+        if (_closed)
+        {
+            return exitCode;
+        }
+
         var envelope = new CliEnvelope<T>
         {
             Schema = ProductInfo.ContractSchema,
@@ -70,6 +86,11 @@ internal sealed class JsonOutputSink(bool verbose, bool stream, TextWriter? stre
             Diagnostics = _diagnostics.Items,
         };
 
+        // Resolved before anything is written and before anything is closed. This throw is a
+        // defect report, and it has to leave the sink able to report it: the guard catches it and
+        // calls Complete<EmptyResult>, which is registered, and that call writes the envelope and
+        // closes the file. Doing the lookup after a partial write, or after the dispose, would
+        // take that second chance away.
         if (CliJsonContext.Default.GetTypeInfo(typeof(CliEnvelope<T>)) is not JsonTypeInfo<CliEnvelope<T>> info)
         {
             // Reached only by a developer who added a verb and forgot to register its result
@@ -85,14 +106,20 @@ internal sealed class JsonOutputSink(bool verbose, bool stream, TextWriter? stre
         // so writing the envelope there did not merely fail to reach the caller, it destroyed
         // it with the hidden console. --output says it writes the stream "instead of stdout";
         // until now it redirected the event half and left the result behind.
-        _events.WriteLine(JsonSerializer.Serialize(envelope, info));
-        _events.Flush();
-
-        // Here, and not in a Dispose the caller would have to remember: Complete is the last
-        // thing every verb does, and the envelope above is the last thing written. Closing it
-        // makes the file readable by anything the instant the verb returns - which is the whole
-        // contract of a flag whose only caller is another program waiting to read it.
-        _owned?.Dispose();
+        try
+        {
+            _events.WriteLine(JsonSerializer.Serialize(envelope, info));
+            _events.Flush();
+        }
+        finally
+        {
+            // Closed even if the write failed. The file is readable by anything the instant the
+            // verb returns, which is the whole contract of a flag whose only caller is another
+            // program waiting to read it - and a half-written envelope that nobody can open is
+            // strictly worse than a half-written one they can.
+            _closed = true;
+            _owned?.Dispose();
+        }
 
         return exitCode;
     }

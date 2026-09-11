@@ -59,6 +59,7 @@ public static class EventIds
         DiagnosticCode.ConfigInvalid => 113,
         DiagnosticCode.NoJobsConfigured => 114,
         DiagnosticCode.NotSupportedHere => 115,
+        DiagnosticCode.InternalError => 116,
 
         // 2xxx - a job or file was skipped.
         DiagnosticCode.JobSkipped => 120,
