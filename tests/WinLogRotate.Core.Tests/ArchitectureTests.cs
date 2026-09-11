@@ -604,4 +604,57 @@ public partial class ArchitectureTests
 
         File.ReadAllText(binder).ShouldContain("docs/configuration.md");
     }
+
+    /// <summary>
+    /// Every journal operation the vocabulary declares is written by something.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// <c>Op</c> calls itself a closed set that <c>winlogrotate journal</c> is queried by, and
+    /// eight of its twenty members were written by nothing. A journal that answers a query for
+    /// <c>guard.override</c> with silence - not because no override happened, but because no line
+    /// was ever written - is worse than one that does not offer the query: it looks like an
+    /// answer. <c>GuardDecision.Overridden</c> meanwhile promised in its own doc comment that an
+    /// override "must never be quietly forgotten", which is precisely what happened to it.
+    /// </para>
+    /// <para>
+    /// Scoped to the <c>Op</c> class rather than the file. <c>CliEvent.cs</c> also declares
+    /// <c>Phase</c> and <c>OpResult</c>, and a reflection sweep over all three reports members
+    /// of the other two as dead ops - which is how an earlier count of this reached twelve.
+    /// </para>
+    /// <para>
+    /// <b>The allowlist is empty and should stay that way.</b> The fix for an operation nothing
+    /// writes is to write it or delete it, never to annotate it.
+    /// </para>
+    /// </remarks>
+    [Fact]
+    public void EveryJournalOpIsEmittedBySomethingUnderSrc()
+    {
+        var src = Path.Combine(RepoRoot.Find().FullName, "src");
+
+        // Comments stripped, and the declaring file excluded: CliEvent.cs names every member by
+        // construction, so counting it would make this vacuous.
+        var code = Directory
+            .EnumerateFiles(src, "*.cs", SearchOption.AllDirectories)
+            .Where(f => !f.Contains($"{Path.DirectorySeparatorChar}obj{Path.DirectorySeparatorChar}", StringComparison.Ordinal))
+            .Where(f => Path.GetFileName(f) != "CliEvent.cs")
+            .Select(f => string.Join(
+                '\n',
+                File.ReadAllLines(f)
+                    .Where(l => !l.TrimStart().StartsWith("//", StringComparison.Ordinal))
+                    .Where(l => !l.TrimStart().StartsWith('*'))))
+            .ToArray();
+
+        var ops = typeof(Op)
+            .GetFields(BindingFlags.Public | BindingFlags.Static)
+            .Where(f => f.IsLiteral && f.FieldType == typeof(string))
+            .Select(f => f.Name)
+            .ToArray();
+
+        ops.Length.ShouldBeGreaterThan(10);
+
+        ops
+            .Where(name => !code.Any(c => c.Contains($"Op.{name}", StringComparison.Ordinal)))
+            .ShouldBeEmpty("journal operations nothing under src/ ever writes");
+    }
 }

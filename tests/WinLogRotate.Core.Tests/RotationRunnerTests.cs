@@ -43,6 +43,29 @@ public sealed class RotationRunnerTests : IDisposable
         new(new NullJournal(), new PathGuard(new GuardOptions()), state, _clock,
             new NoArchives(), hookHost: null, hookGate: null, inspector);
 
+    /// <summary>A runner whose journal can be read back, for the events it is meant to write.</summary>
+    private RotationRunner Runner(
+        StateStore state, RecordingJournal journal, PathGuard? guard = null,
+        IWriterInspector? inspector = null) =>
+        new(journal, guard ?? new PathGuard(new GuardOptions()), state, _clock,
+            new NoArchives(), hookHost: null, hookGate: null, inspector);
+
+    /// <summary>The smallest LoadedConfig that will drive a real Run.</summary>
+    private LoadedConfig Config(params EffectiveJob[] jobs) => new()
+    {
+        Jobs = jobs,
+        Diagnostics = [],
+        Paths = InstallPaths.Resolve(_dir.FullName),
+        Quarantined = [],
+    };
+
+    private static PathGuard Guarding(OverrideGate gate) =>
+        new(new GuardOptions
+        {
+            ProtectedRoots = [@"C:\Windows", @"C:\Program Files"],
+            Overrides = gate,
+        });
+
     /// <summary>Nothing on disk; every rotation here is a decision, not an operation.</summary>
     private sealed class NoArchives : IArchiveSource
     {
@@ -628,5 +651,149 @@ public sealed class RotationRunnerTests : IDisposable
 
         state.Prune(Now, TimeSpan.FromDays(StateStore.ForgetAfterDays))
             .ShouldBe(0, "a log being watched every night must not be forgotten");
+    }
+
+    // ---- what the journal is supposed to record -----------------------------------------------
+
+    /// <summary>A job's operations are bracketed, the way a run's are.</summary>
+    /// <remarks>
+    /// Emitted through try/finally rather than before each exit, because the job body leaves four
+    /// different ways and a closing event that four separate paths have to remember is one
+    /// somebody eventually forgets. This asserts the quietest of those paths - a job that matched
+    /// nothing still opens and closes.
+    /// </remarks>
+    [Fact]
+    public void AJobIsBracketedInTheJournal()
+    {
+        var journal = new RecordingJournal();
+
+        Runner(State(), journal).Run(
+            Config(Job() with { MissingOk = true }), new RunOptions { DryRun = true });
+
+        journal.Entries.Select(e => e.Operation).ShouldContain(Op.JobStart);
+        journal.Entries.Select(e => e.Operation).ShouldContain(Op.JobEnd);
+        journal.Entries.Single(e => e.Operation == Op.JobStart).Job.ShouldBe("app");
+        journal.Entries.Single(e => e.Operation == Op.JobEnd).Result.ShouldBe(OpResult.Ok);
+    }
+
+    /// <summary>
+    /// An honoured dangerous-path override leaves a record.
+    /// </summary>
+    /// <remarks>
+    /// GuardDecision.Overridden has always claimed "Always journaled - an override must never be
+    /// quietly forgotten", and nothing journaled it. It became load-bearing in milestone 16, which
+    /// is the first release where an override could be honoured at all: this is the only durable
+    /// answer to "when did this machine start deleting inside a protected location, and who
+    /// permitted it".
+    /// </remarks>
+    [Fact]
+    public void AnHonouredOverrideIsJournalled()
+    {
+        var journal = new RecordingJournal();
+        var job = Job() with
+        {
+            Paths = [@"C:\Windows\Logs\CBS\*.log"],
+            AllowDangerous = [@"C:\Windows\Logs\CBS"],
+            MissingOk = true,
+        };
+
+        Runner(State(), journal, Guarding(OverrideGate.Open))
+            .Run(Config(job), new RunOptions { DryRun = true });
+
+        var entry = journal.Entries.Where(e => e.Operation == Op.GuardOverride).ShouldHaveSingleItem();
+        entry.Job.ShouldBe("app");
+        entry.Src.ShouldBe(@"C:\Windows\Logs\CBS\*.log");
+        entry.Reason.ShouldNotBeNull().ShouldContain("allowDangerous");
+    }
+
+    /// <summary>A refusal leaves a record too, and says what it refused.</summary>
+    [Fact]
+    public void ARefusedPatternIsJournalled()
+    {
+        var journal = new RecordingJournal();
+        var job = Job() with { Paths = [@"C:\Windows\System32\*.log"], MissingOk = true };
+
+        Runner(State(), journal, Guarding(OverrideGate.Open))
+            .Run(Config(job), new RunOptions { DryRun = true });
+
+        var entry = journal.Entries.Where(e => e.Operation == Op.GuardRefuse).ShouldHaveSingleItem();
+        entry.Result.ShouldBe(OpResult.Skipped);
+        entry.Src.ShouldBe(@"C:\Windows\System32\*.log");
+    }
+
+    /// <summary>An ordinary permitted pattern writes no guard line at all.</summary>
+    /// <remarks>
+    /// The journal is size-capped and rotated by this product's own maintenance pass, so a line
+    /// per permitted pattern per run would crowd out the operations it exists to record.
+    /// </remarks>
+    [Fact]
+    public void AnOrdinaryPatternIsNotJournalledAsAGuardDecision()
+    {
+        var journal = new RecordingJournal();
+
+        Runner(State(), journal).Run(
+            Config(Job() with { MissingOk = true }), new RunOptions { DryRun = true });
+
+        journal.Entries
+            .Where(e => e.Operation is Op.GuardOverride or Op.GuardRefuse)
+            .ShouldBeEmpty();
+    }
+
+    /// <summary>
+    /// A NUL-fill verdict is recorded where it can be found again.
+    /// </summary>
+    /// <remarks>
+    /// Confirmed means copytruncate destroyed this log once already and is refused for the path
+    /// from now on - one of the very few permanent, irreversible decisions this product makes.
+    /// It produced a diagnostic at the moment it happened and nothing queryable afterwards, so
+    /// "why did this log stop being truncated in March" had no answer.
+    /// </remarks>
+    [Fact]
+    public void AConfirmedNulFillIsJournalled()
+    {
+        var journal = new RecordingJournal();
+        var state = State();
+        state.Set(@"C:\logs\app.log", new PathState
+        {
+            Path = @"C:\logs\app.log",
+            LastTruncatedFrom = 2L << 20,
+            LastTruncatedTo = 0,
+        });
+
+        var inspector = new FakeInspector
+        {
+            Next = new WriterSample { Opened = true, Size = 2L << 20, BytesRead = 4096, NulRun = 4096 },
+        };
+
+        // Not a dry run: Settle is deliberately skipped under --dry-run, because a dry run must
+        // not record a verdict about a truncation it did not perform.
+        Runner(state, journal, inspector: inspector)
+            .PlanRotation(Job(), [Live()], new RunOptions(), Now, _ => { });
+
+        var entry = journal.Entries.Where(e => e.Operation == Op.NulFill).ShouldHaveSingleItem();
+        entry.Result.ShouldBe(OpResult.Failed, "a confirmed NUL-fill is a corrupted log");
+        entry.Src.ShouldBe(@"C:\logs\app.log");
+        entry.Reason.ShouldBe(nameof(NulFillEvidence.NulSignature));
+    }
+
+    /// <summary>A dry run records no verdict, because it performed no truncation.</summary>
+    [Fact]
+    public void ADryRunJournalsNoNulFillVerdict()
+    {
+        var journal = new RecordingJournal();
+        var state = State();
+        state.Set(@"C:\logs\app.log", new PathState
+        {
+            Path = @"C:\logs\app.log",
+            LastTruncatedFrom = 2L << 20,
+            LastTruncatedTo = 0,
+        });
+
+        Runner(state, journal, inspector: new FakeInspector
+        {
+            Next = new WriterSample { Opened = true, Size = 2L << 20, BytesRead = 4096, NulRun = 4096 },
+        }).PlanRotation(Job(), [Live()], new RunOptions { DryRun = true }, Now, _ => { });
+
+        journal.Entries.Where(e => e.Operation == Op.NulFill).ShouldBeEmpty();
     }
 }

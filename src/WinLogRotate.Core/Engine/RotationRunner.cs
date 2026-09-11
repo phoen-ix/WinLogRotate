@@ -212,158 +212,203 @@ public sealed class RotationRunner(
                 continue;
             }
 
-            var matched = new List<MatchedFile>();
-            var refused = false;
-            foreach (var pattern in job.Paths)
+            // Brackets the job's operations, the way run.start/run.end bracket the run.
+            // Emitted after the enabled and --job filters, so the journal does not record a job
+            // this invocation was never going to look at.
+            journal.Write(new CliEvent
             {
-                var decision = guard.CheckPattern(pattern, job.GuardScope);
-                if (!decision.IsAllowed)
+                Ts = string.Empty,
+                Run = string.Empty,
+                Operation = Op.JobStart,
+                Phase = options.DryRun ? Phase.Plan : Phase.Apply,
+                Job = job.Name,
+            });
+
+            // Counted before the job runs so the closing event can say whether this job failed,
+            // rather than whether anything had failed by the time it finished.
+            var failedBefore = failed;
+
+            // try/finally rather than an emit before each exit: the body leaves four different
+            // ways - a refused pattern, a refused count, no files matched, an abandoned
+            // prerotate - and a closing event that four separate returns have to remember is one
+            // somebody eventually forgets.
+            try
+            {
+                var matched = new List<MatchedFile>();
+                var refused = false;
+                foreach (var pattern in job.Paths)
                 {
-                    refused = true;
-                    Report(Diagnose.Refusal(decision, job.Name));
+                    var decision = guard.CheckPattern(pattern, job.GuardScope);
+
+                    // Journaled either way. A refusal is a security decision and an override is a
+                    // security exception, and until now both left nothing behind but a console
+                    // line that scrolls away - while GuardDecision.Overridden's own doc comment
+                    // promised "always journaled". Six months later, "when did this machine start
+                    // deleting inside System32, and who permitted it" had no answer anywhere.
+                    JournalGuard(job.Name, decision);
+
+                    if (!decision.IsAllowed)
+                    {
+                        refused = true;
+                        Report(Diagnose.Refusal(decision, job.Name));
+                        continue;
+                    }
+
+                    var found = _files.Resolve(pattern);
+
+                    // A link we would not follow is named, every time. This used to be a bare
+                    // `continue` inside the walk, so a junctioned log directory was never rotated and
+                    // nothing anywhere said so.
+                    foreach (var refusal in found.Refusals)
+                    {
+                        JournalGuard(job.Name, refusal);
+
+                        var diagnostic = Diagnose.Refusal(refusal, job.Name);
+
+                        // On severity, not on "there was a refusal at all". The flag exists to stop a
+                        // single cause being counted twice, and a Warning is not a failure - so a
+                        // link we merely could not verify must still let "matched no files" through,
+                        // or a job that fails today would start exiting 0 in silence.
+                        refused |= diagnostic.Severity >= Severity.Error;
+                        Report(diagnostic);
+                    }
+
+                    matched.AddRange(found.Files);
+                }
+
+                // Whatever the archive glob refused, reported against this job and then cleared, so a
+                // later job cannot inherit it.
+                if (_archives is FileArchiveSource source)
+                {
+                    foreach (var refusal in source.Refused)
+                    {
+                        Report(Diagnose.Refusal(refusal, job.Name));
+                    }
+
+                    source.Refused.Clear();
+                }
+
+                var count = guard.CheckMatchCount(job.Name, matched.Count, job.GuardScope);
+                if (!count.IsAllowed)
+                {
+                    Report(Diagnose.Refusal(count, job.Name));
                     continue;
                 }
 
-                var found = _files.Resolve(pattern);
-
-                // A link we would not follow is named, every time. This used to be a bare
-                // `continue` inside the walk, so a junctioned log directory was never rotated and
-                // nothing anywhere said so.
-                foreach (var refusal in found.Refusals)
+                // Not "&& !refused": a pattern the guard turned down has already been reported, with
+                // the actual reason and the actual fix. Adding "matched no files" on top describes
+                // the consequence as if it were a second, separate problem - which doubles the
+                // failure count and puts two lines in front of an operator for one cause.
+                if (matched.Count == 0 && !job.MissingOk && !refused)
                 {
-                    var diagnostic = Diagnose.Refusal(refusal, job.Name);
-
-                    // On severity, not on "there was a refusal at all". The flag exists to stop a
-                    // single cause being counted twice, and a Warning is not a failure - so a
-                    // link we merely could not verify must still let "matched no files" through,
-                    // or a job that fails today would start exiting 0 in silence.
-                    refused |= diagnostic.Severity >= Severity.Error;
-                    Report(diagnostic);
+                    Report(new CliDiagnostic
+                    {
+                        Severity = Severity.Error,
+                        Code = DiagnosticCode.FileMissing,
+                        Message = $"[{job.Name}] matched no files and missingok is not set.",
+                        Job = job.Name,
+                        Remedy = "Set missingok = true if this job's logs are not always present.",
+                    });
+                    continue;
                 }
 
-                matched.AddRange(found.Files);
-            }
+                var plan = job.Kind == JobKind.Manage
+                    ? ManageJobPlanner.Plan(job, matched, now)
+                    : PlanRotation(job, matched, options, now, Report);
 
-            // Whatever the archive glob refused, reported against this job and then cleared, so a
-            // later job cannot inherit it.
-            if (_archives is FileArchiveSource source)
-            {
-                foreach (var refusal in source.Refused)
+                // Only when a live log is actually moving. A job whose plan is "compress an archive
+                // from last month" has not rotated anything, and a reload hook that fired for it would
+                // signal a service on a night nothing happened.
+                var rotating = plan.RotatesALiveLog;
+                var started = options.Started ?? now;
+
+                if (rotating)
                 {
-                    Report(Diagnose.Refusal(refusal, job.Name));
+                    var pre = _hooks.Run(
+                        job.Name, HookStage.PreRotate, job.PreRotate, job.HookTimeout,
+                        options.DryRun, started, options.RunDeadline, job.SourceFile);
+
+                    foreach (var d in pre.Diagnostics)
+                    {
+                        Report(d);
+                    }
+
+                    // logrotate's asymmetry, and the reason the two stages are not one loop: a
+                    // prerotate hook is the job's precondition. If the service did not stop or the
+                    // buffer was not flushed, rotating anyway does the exact damage the hook was
+                    // written to prevent - so nothing is touched, and the diagnostic above says so.
+                    if (!pre.Ok)
+                    {
+                        // Reported as what happened rather than as what was intended. Adding the
+                        // original plan here would print "did rename C:\logs\app.log" for a file
+                        // that was never touched - the plan is the engine's intention, and once the
+                        // job is abandoned the intention is not what an operator needs to read.
+                        plans.Add(Abandoned(plan, "the prerotate hook did not succeed"));
+                        jobsRun++;
+                        continue;
+                    }
                 }
 
-                source.Refused.Clear();
-            }
+                plans.Add(plan);
+                jobsRun++;
 
-            var count = guard.CheckMatchCount(job.Name, matched.Count, job.GuardScope);
-            if (!count.IsAllowed)
-            {
-                Report(Diagnose.Refusal(count, job.Name));
-                continue;
-            }
+                var result = executor.Execute(plan, job, options.DryRun);
+                completed += result.Completed;
+                failed += result.Failed;
+                freed += result.BytesFreed;
+                errors.AddRange(result.Errors);
+                diagnostics.AddRange(result.Diagnostics);
 
-            // Not "&& !refused": a pattern the guard turned down has already been reported, with
-            // the actual reason and the actual fix. Adding "matched no files" on top describes
-            // the consequence as if it were a second, separate problem - which doubles the
-            // failure count and puts two lines in front of an operator for one cause.
-            if (matched.Count == 0 && !job.MissingOk && !refused)
-            {
-                Report(new CliDiagnostic
+                // The clock advances from what the executor actually did, never from what was
+                // planned. A dry run reports no moves and so writes no state, which is what makes
+                // --dry-run safe against production: it cannot change when anything next rotates.
+                foreach (var path in result.Rotated)
                 {
-                    Severity = Severity.Error,
-                    Code = DiagnosticCode.FileMissing,
-                    Message = $"[{job.Name}] matched no files and missingok is not set.",
+                    state.Update(path, existing => existing with { LastRotated = now });
+                }
+
+                // From what the executor did, not from what was planned - except under --dry-run,
+                // where nothing was done and the plan is the only thing there is to describe. A
+                // postrotate hook that ran after every rename failed on a share violation would be
+                // reporting a rotation that did not happen.
+                if (rotating && (options.DryRun || result.Rotated.Count > 0))
+                {
+                    var post = _hooks.Run(
+                        job.Name, HookStage.PostRotate, job.PostRotate, job.HookTimeout,
+                        options.DryRun, started, options.RunDeadline, job.SourceFile);
+
+                    // The other half of the asymmetry. The files have already moved, so there is
+                    // nothing to undo and nothing to skip: the rotation stands and the failure is
+                    // reported against the job. Rolling a rotation back because a reload script
+                    // exited 1 would be much the more surprising of the two.
+                    foreach (var d in post.Diagnostics)
+                    {
+                        Report(d);
+                    }
+                }
+
+                // After the hook, deliberately. service:paramchange: is the Windows kill -HUP: it
+                // tells the writer to reopen, which is precisely the remedy for a cached offset.
+                // Looking before it would quarantine a path whose hook fixes it every single night.
+                foreach (var (path, outcome) in truncated)
+                {
+                    Verify(job, path, outcome, now, Report);
+                }
+
+                truncated.Clear();
+            }
+            finally
+            {
+                journal.Write(new CliEvent
+                {
+                    Ts = string.Empty,
+                    Run = string.Empty,
+                    Operation = Op.JobEnd,
+                    Phase = options.DryRun ? Phase.Plan : Phase.Apply,
                     Job = job.Name,
-                    Remedy = "Set missingok = true if this job's logs are not always present.",
+                    Result = failed > failedBefore ? OpResult.Failed : OpResult.Ok,
                 });
-                continue;
             }
-
-            var plan = job.Kind == JobKind.Manage
-                ? ManageJobPlanner.Plan(job, matched, now)
-                : PlanRotation(job, matched, options, now, Report);
-
-            // Only when a live log is actually moving. A job whose plan is "compress an archive
-            // from last month" has not rotated anything, and a reload hook that fired for it would
-            // signal a service on a night nothing happened.
-            var rotating = plan.RotatesALiveLog;
-            var started = options.Started ?? now;
-
-            if (rotating)
-            {
-                var pre = _hooks.Run(
-                    job.Name, HookStage.PreRotate, job.PreRotate, job.HookTimeout,
-                    options.DryRun, started, options.RunDeadline, job.SourceFile);
-
-                foreach (var d in pre.Diagnostics)
-                {
-                    Report(d);
-                }
-
-                // logrotate's asymmetry, and the reason the two stages are not one loop: a
-                // prerotate hook is the job's precondition. If the service did not stop or the
-                // buffer was not flushed, rotating anyway does the exact damage the hook was
-                // written to prevent - so nothing is touched, and the diagnostic above says so.
-                if (!pre.Ok)
-                {
-                    // Reported as what happened rather than as what was intended. Adding the
-                    // original plan here would print "did rename C:\logs\app.log" for a file
-                    // that was never touched - the plan is the engine's intention, and once the
-                    // job is abandoned the intention is not what an operator needs to read.
-                    plans.Add(Abandoned(plan, "the prerotate hook did not succeed"));
-                    jobsRun++;
-                    continue;
-                }
-            }
-
-            plans.Add(plan);
-            jobsRun++;
-
-            var result = executor.Execute(plan, job, options.DryRun);
-            completed += result.Completed;
-            failed += result.Failed;
-            freed += result.BytesFreed;
-            errors.AddRange(result.Errors);
-            diagnostics.AddRange(result.Diagnostics);
-
-            // The clock advances from what the executor actually did, never from what was
-            // planned. A dry run reports no moves and so writes no state, which is what makes
-            // --dry-run safe against production: it cannot change when anything next rotates.
-            foreach (var path in result.Rotated)
-            {
-                state.Update(path, existing => existing with { LastRotated = now });
-            }
-
-            // From what the executor did, not from what was planned - except under --dry-run,
-            // where nothing was done and the plan is the only thing there is to describe. A
-            // postrotate hook that ran after every rename failed on a share violation would be
-            // reporting a rotation that did not happen.
-            if (rotating && (options.DryRun || result.Rotated.Count > 0))
-            {
-                var post = _hooks.Run(
-                    job.Name, HookStage.PostRotate, job.PostRotate, job.HookTimeout,
-                    options.DryRun, started, options.RunDeadline, job.SourceFile);
-
-                // The other half of the asymmetry. The files have already moved, so there is
-                // nothing to undo and nothing to skip: the rotation stands and the failure is
-                // reported against the job. Rolling a rotation back because a reload script
-                // exited 1 would be much the more surprising of the two.
-                foreach (var d in post.Diagnostics)
-                {
-                    Report(d);
-                }
-            }
-
-            // After the hook, deliberately. service:paramchange: is the Windows kill -HUP: it
-            // tells the writer to reopen, which is precisely the remedy for a cached offset.
-            // Looking before it would quarantine a path whose hook fixes it every single night.
-            foreach (var (path, outcome) in truncated)
-            {
-                Verify(job, path, outcome, now, Report);
-            }
-
-            truncated.Clear();
         }
 
         journal.Write(new CliEvent
@@ -473,7 +518,7 @@ public sealed class RotationRunner(
             return;
         }
 
-        Settle(path, judged, now);
+        Settle(job.Name, path, judged, now);
 
         if (judged.Diagnostic is { } d)
         {
@@ -482,7 +527,72 @@ public sealed class RotationRunner(
     }
 
     /// <summary>Writes a reached verdict, and the numbers that reached it.</summary>
-    private void Settle(string path, NulFillJudgement judged, DateTimeOffset now) =>
+    /// <summary>
+    /// Records what the guard decided about a path, where it decided anything.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// Allowed-and-unremarkable is not written: the journal is size-capped and rotated by this
+    /// product's own maintenance pass, and a line per permitted pattern per run would crowd out
+    /// the operations it exists to record. What is written is the two answers somebody may have
+    /// to account for later - we refused to touch something, or we touched something we would
+    /// normally refuse.
+    /// </para>
+    /// <para>
+    /// The subject rather than the pattern, because a link refusal names the link and a pattern
+    /// refusal names the pattern, and in both cases that is the thing an operator has to go and
+    /// look at.
+    /// </para>
+    /// </remarks>
+    private void JournalGuard(string job, GuardDecision decision)
+    {
+        if (decision.IsAllowed && !decision.Overridden)
+        {
+            return;
+        }
+
+        journal.Write(new CliEvent
+        {
+            Ts = string.Empty,
+            Run = string.Empty,
+            Operation = decision.Overridden ? Op.GuardOverride : Op.GuardRefuse,
+            Phase = Phase.Plan,
+            Result = decision.Overridden ? OpResult.Ok : OpResult.Skipped,
+            Job = job,
+            Src = decision.Subject,
+            Reason = decision.Message,
+        });
+    }
+
+    /// <param name="job">
+    /// For the journal line. A NUL-fill verdict is permanent for the path, so it is one of the
+    /// few decisions this product makes that somebody may have to account for months later -
+    /// and until now it produced a diagnostic at the time and nothing queryable afterwards.
+    /// </param>
+    private void Settle(string job, string path, NulFillJudgement judged, DateTimeOffset now)
+    {
+        if (judged.Verdict is { } reached)
+        {
+            journal.Write(new CliEvent
+            {
+                Ts = string.Empty,
+                Run = string.Empty,
+                Operation = Op.NulFill,
+                Phase = Phase.Apply,
+
+                // Confirmed means a log was destroyed once already and copytruncate is refused
+                // for this path from now on. Clean is the ordinary answer and is recorded too,
+                // because "we looked and it was fine" is what makes the absence of a Confirmed
+                // line mean something.
+                Result = reached == NulFillVerdict.Confirmed ? OpResult.Failed : OpResult.Ok,
+                Job = job,
+                Src = path,
+                Reason = judged.Evidence.ToString(),
+                BytesBefore = judged.SizeBefore ?? 0,
+                BytesAfter = judged.SizeAfter,
+            });
+        }
+
         state.Update(path, existing => existing with
         {
             NulFill = judged.Verdict ?? existing.NulFill,
@@ -494,6 +604,7 @@ public sealed class RotationRunner(
             LastTruncatedTo = judged.ClearBaseline ? null : existing.LastTruncatedTo,
             TruncationChecks = judged.ClearBaseline ? 0 : existing.TruncationChecks + 1,
         });
+    }
 
     /// <summary>
     /// The same plan, restated as the nothing that actually happened.
@@ -627,7 +738,7 @@ public sealed class RotationRunner(
 
                 if (!options.DryRun)
                 {
-                    Settle(file.Path, judged, now);
+                    Settle(job.Name, file.Path, judged, now);
                 }
 
                 if (judged.Diagnostic is { } verdictNews)

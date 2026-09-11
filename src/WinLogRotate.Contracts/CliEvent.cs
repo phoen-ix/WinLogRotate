@@ -46,9 +46,22 @@ public sealed record CliEvent
 }
 
 /// <summary>
-/// The <see cref="CliEvent.Operation"/> vocabulary. Closed set: the GUI switches on these,
-/// and the journal is queried by them.
+/// The <see cref="CliEvent.Operation"/> vocabulary. A closed set, queried by
+/// <c>winlogrotate journal</c>.
 /// </summary>
+/// <remarks>
+/// <para>
+/// It used to say the GUI switches on these as well. It does not, and never has: the GUI runs
+/// the CLI with <c>--json-stream</c> and tails the file as raw lines without deserializing a
+/// single event.
+/// </para>
+/// <para>
+/// Every member here must be written by something. Eight of twenty were not - a journal that
+/// answers a query for <c>guard.override</c> with nothing, not because no override happened but
+/// because no line was ever written, is worse than one that does not offer the query at all.
+/// <c>EveryJournalOpIsEmittedBySomethingUnderSrc</c> keeps that from recurring.
+/// </para>
+/// </remarks>
 public static class Op
 {
     public const string RunStart = "run.start";
@@ -63,7 +76,6 @@ public static class Op
     public const string Rename = "rename";
     public const string CopyTruncate = "copytruncate";
     public const string Copy = "copy";
-    public const string Truncate = "truncate";
     public const string Compress = "compress";
     public const string Delete = "delete";
     public const string Create = "create";
@@ -76,8 +88,6 @@ public static class Op
 
     // Non-destructive
     public const string Hook = "hook";
-    public const string Probe = "probe";
-    public const string Import = "import";
 
     /// <summary>A stored credential was added, replaced or removed. The NAME only - never a
     /// value, and never anything derived from one. An operator asking "who changed that
