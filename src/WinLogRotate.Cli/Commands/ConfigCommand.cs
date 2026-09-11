@@ -89,7 +89,14 @@ internal static class ConfigCommand
     private static (LoadedConfig, InstallPaths) Load(string? configDir, bool quarantine)
     {
         var paths = InstallPaths.Resolve(configDir);
-        var guard = new PathGuard(new GuardOptions());
+        // config check takes the verdict too, unlike the hook gate which ConfigValidator
+        // deliberately leaves open. A hook refusal is a warning there; an override refusal
+        // decides whether a job runs at all, and "your configuration is fine" is the worst
+        // available answer to the operator who ran this to find out why run refused.
+        var guard = new PathGuard(new GuardOptions
+        {
+            Overrides = OverrideSupport.ForThisMachine(paths),
+        });
         return (ConfigLoader.Load(paths, guard, quarantine), paths);
     }
 

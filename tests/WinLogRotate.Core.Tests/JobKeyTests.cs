@@ -20,6 +20,13 @@ public sealed class JobKeyTests
         return (ConfigBinder.BindJob(file, bag), bag);
     }
 
+    private static DiagnosticBag BindDefaults(string body)
+    {
+        var bag = new DiagnosticBag();
+        ConfigBinder.BindDefaults(TomlFile.Parse("schema = 1\n[defaults]\n" + body, "config.toml"), bag);
+        return bag;
+    }
+
     private static ConfigDiagnostic Only(DiagnosticBag bag, string code) =>
         bag.Items.ShouldHaveSingleItem(
             $"expected exactly one {code}, got: {string.Join("; ", bag.Items.Select(i => i.Message))}");
@@ -203,4 +210,60 @@ public sealed class JobKeyTests
 
         bag.Items.ShouldBeEmpty(string.Join("; ", bag.Items.Select(i => i.Message)));
     }
+
+    // ---- [defaults], which reported nothing at all -------------------------------------------
+
+    /// <summary>
+    /// A misspelled key in <c>[defaults]</c> is reported.
+    /// </summary>
+    /// <remarks>
+    /// <c>[defaults]</c> ran the same BindSettings as a job and never the unknown-key loop, so
+    /// <c>compres</c> and <c>postrotae</c> were discarded there in silence - in the one table the
+    /// installer writes by hand. Exactly the defect this file exists to prevent, one table over.
+    /// </remarks>
+    [Fact]
+    public void AMisspelledDefaultsKeyIsReported()
+    {
+        var d = Only(BindDefaults("compres = true\n"), DiagnosticCode.ConfigInvalid);
+
+        d.Severity.ShouldBe(Severity.Warning);
+        d.Message.ShouldContain("compres");
+        d.Remedy.ShouldNotBeNull().ShouldContain("compress");
+    }
+
+    /// <summary>Every key a job may carry, except the ones that describe a particular job.</summary>
+    [Theory]
+    [InlineData("daily = true\n")]
+    [InlineData("rotate = 7\n")]
+    [InlineData("compress = true\n")]
+    [InlineData("postrotate = [\"C:/tools/x.exe\"]\n")]
+    public void AnInheritableSettingIsAcceptedInDefaults(string body) =>
+        BindDefaults(body).Items.ShouldBeEmpty();
+
+    /// <summary>
+    /// allowdangerous in <c>[defaults]</c> is reported, and told why it is not inheritable.
+    /// </summary>
+    /// <remarks>
+    /// It was parsed, discarded and silent: SettingsMerge takes AllowDangerous straight from the
+    /// job, bypassing the merge entirely. An operator who wrote it here got a configuration that
+    /// looked like it had an override and behaved like it had none - and then a refusal telling
+    /// them to add the override they had already added.
+    /// </remarks>
+    [Fact]
+    public void AllowdangerousInDefaultsIsReportedRatherThanSilentlyDropped()
+    {
+        var d = Only(BindDefaults("allowdangerous = [\"C:/Windows/Logs/CBS\"]\n"),
+            DiagnosticCode.ConfigInvalid);
+
+        d.Severity.ShouldBe(Severity.Warning);
+        d.Message.ShouldContain("per job");
+        d.Remedy.ShouldNotBeNull().ShouldContain("Put it in the job that needs it");
+    }
+
+    /// <summary>The structural keys are refused in defaults, not silently inherited.</summary>
+    [Theory]
+    [InlineData("name = \"x\"\n")]
+    [InlineData("paths = [\"C:/logs/*.log\"]\n")]
+    public void AKeyThatNamesOneJobIsNotADefault(string body) =>
+        BindDefaults(body).Items.ShouldHaveSingleItem().Severity.ShouldBe(Severity.Warning);
 }

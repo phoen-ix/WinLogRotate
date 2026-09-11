@@ -32,7 +32,10 @@ public sealed class AllowDangerousTests : IDisposable
         try { _dir.Delete(recursive: true); } catch (IOException) { }
     }
 
-    private LoadedConfig Load(params (string File, string Toml)[] jobs)
+    private LoadedConfig Load(params (string File, string Toml)[] jobs) =>
+        Load(OverrideGate.Open, jobs);
+
+    private LoadedConfig Load(OverrideGate gate, params (string File, string Toml)[] jobs)
     {
         File.WriteAllText(Path.Combine(_dir.FullName, "config.toml"), "schema = 1\n");
         var confd = Directory.CreateDirectory(Path.Combine(_dir.FullName, "conf.d"));
@@ -46,6 +49,7 @@ public sealed class AllowDangerousTests : IDisposable
             new PathGuard(new GuardOptions
             {
                 ProtectedRoots = [@"C:\Windows", @"C:\Program Files"],
+                Overrides = gate,
             }),
             quarantineBadFiles: false);
     }
@@ -136,7 +140,11 @@ public sealed class AllowDangerousTests : IDisposable
             "allowdangerous = [\"C:/Windows/Logs/CBS\"]")))
             .Jobs.ShouldHaveSingleItem();
 
-        var guard = new PathGuard(new GuardOptions { ProtectedRoots = [@"C:\Windows"] });
+        var guard = new PathGuard(new GuardOptions
+        {
+            ProtectedRoots = [@"C:\Windows"],
+            Overrides = OverrideGate.Open,
+        });
 
         guard.CheckPath(@"C:\Windows\Logs\CBS\CbsPersist.log.3.zip", job.GuardScope)
             .IsAllowed.ShouldBeTrue();
@@ -180,6 +188,28 @@ public sealed class AllowDangerousTests : IDisposable
         config.Diagnostics
             .ShouldContain(d => d.Severity == Severity.Warning
                 && d.Message.Contains("Permitted by", StringComparison.Ordinal));
+    }
+
+    /// <summary>
+    /// An override is ignored on a machine whose conf.d anyone can write.
+    /// </summary>
+    /// <remarks>
+    /// The job is skipped rather than run: an override this machine will not honour leaves the
+    /// pattern refused exactly as if it had never been written, which is the whole point.
+    /// </remarks>
+    [Fact]
+    public void AnOverrideIsIgnoredWhenTheConfigurationDirectoryIsLoose()
+    {
+        var config = Load(
+            OverrideGate.Shut("conf.d can be written by an ordinary user"),
+            ("cbs.toml", Job("cbs", "\"C:/Windows/Logs/CBS/*.log\"",
+                "allowdangerous = [\"C:/Windows/Logs/CBS\"]")));
+
+        config.Jobs.ShouldBeEmpty();
+        config.SkippedJobs.ShouldHaveSingleItem().ShouldBe("cbs");
+
+        config.Diagnostics.ShouldHaveSingleItem()
+            .Message.ShouldContain("was not honoured because");
     }
 
     /// <summary>

@@ -22,7 +22,13 @@ internal static class RunCommand
         var started = TimeProvider.System.GetUtcNow();
 
         var paths = InstallPaths.Resolve(configDir);
-        var guard = new PathGuard(new GuardOptions());
+
+        // Taken here, before the configuration is read, and not with the hook gate 130 lines
+        // below. See OverrideSupport: this qualifies the read, that one qualifies the execution.
+        var guard = new PathGuard(new GuardOptions
+        {
+            Overrides = OverrideSupport.ForThisMachine(paths),
+        });
 
         // Honour a pause before doing anything. Exit 0, not an error: pausing is a deliberate
         // operator action, and a scheduled task logging a daily failure because somebody opened

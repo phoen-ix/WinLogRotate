@@ -6,11 +6,20 @@ namespace WinLogRotate.Core.Tests;
 
 public class PathGuardTests
 {
+    /// <summary>
+    /// A guard on a machine whose conf.d is safe to read an override from.
+    /// </summary>
+    /// <remarks>
+    /// Stated, not defaulted: GuardOptions.Overrides defaults to Unknown, which refuses. That is
+    /// the right default - a gate that opens when nobody asked is indistinguishable from no gate -
+    /// and it means every test below that exercises an override has to say which machine it is on.
+    /// </remarks>
     private static PathGuard Guard(int maxMatches = 1000) =>
         new(new GuardOptions
         {
             ProtectedRoots = [@"C:\Windows", @"C:\Windows\System32", @"C:\Program Files"],
             MaxMatches = maxMatches,
+            Overrides = OverrideGate.Open,
         });
 
     /// <summary>One job's overrides. There is deliberately no machine-wide equivalent.</summary>
@@ -229,6 +238,47 @@ public class PathGuardTests
 
         remedy.ShouldContain("no allowdangerous entry can permit it");
         remedy.ShouldNotContain("add \"");
+    }
+
+    /// <summary>
+    /// An override written in a directory the machine does not trust is not honoured.
+    /// </summary>
+    /// <remarks>
+    /// LR9001 has always told operators that a writable conf.d refuses "all hooks and all
+    /// dangerous-path overrides". Hooks honoured that; overrides had nothing to honour, so a local
+    /// user who could write one file in conf.d could have a SYSTEM-privileged process delete from
+    /// a protected location. That is the escalation LR9001 exists to describe, arriving through
+    /// the door LR9001 claimed was shut.
+    /// </remarks>
+    [Fact]
+    public void AnOverrideIsNotHonouredWhenTheGateIsShut()
+    {
+        var guard = new PathGuard(new GuardOptions
+        {
+            ProtectedRoots = [@"C:\Windows"],
+            Overrides = OverrideGate.Shut("conf.d can be written by an ordinary user", "icacls ..."),
+        });
+
+        var decision = guard.CheckPattern(
+            @"C:\Windows\Logs\CBS\*.log", Allowing(@"C:\Windows\Logs\CBS"));
+
+        decision.IsAllowed.ShouldBeFalse();
+
+        // Said out loud. Otherwise the operator reads a refusal, looks at the entry they already
+        // wrote, and cannot tell that it was read and discarded rather than never noticed.
+        decision.Message.ShouldNotBeNull()
+            .ShouldContain("conf.d can be written by an ordinary user");
+        decision.Remedy.ShouldBe("icacls ...");
+    }
+
+    /// <summary>An unasked gate refuses, rather than quietly permitting.</summary>
+    [Fact]
+    public void AnOverrideIsNotHonouredWhenNobodyEstablishedTheVerdict()
+    {
+        var guard = new PathGuard(new GuardOptions { ProtectedRoots = [@"C:\Windows"] });
+
+        guard.CheckPattern(@"C:\Windows\Logs\CBS\*.log", Allowing(@"C:\Windows\Logs\CBS"))
+            .IsAllowed.ShouldBeFalse("GuardOptions.Overrides defaults to Unknown, which refuses");
     }
 
     [Fact]

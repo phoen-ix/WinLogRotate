@@ -73,6 +73,17 @@ public sealed record GuardOptions
     // this product says it does not have - so it lives on GuardScope, per job, per call.
 
     /// <summary>
+    /// Whether this machine permits the configuration to relax a rule at all.
+    /// </summary>
+    /// <remarks>
+    /// The config proposes and the machine disposes: a <see cref="GuardScope"/> carries what the
+    /// file asked for, this carries what the machine will allow. Keeping the second here rather
+    /// than on the scope means no call site can forget to ask the question, because it is not
+    /// asked at a call site.
+    /// </remarks>
+    public OverrideGate Overrides { get; init; } = OverrideGate.Unknown;
+
+    /// <summary>
     /// The default protected set. Resolved from the running system where possible so a machine
     /// with Windows on D: is still protected, with literals as a fallback for non-Windows test
     /// runs.
@@ -218,7 +229,8 @@ public sealed class PathGuard(GuardOptions options)
         // Asked about the anchor rather than the pattern, so the question matches the one
         // CheckPath asks about a concrete file: is the directory this touches one the job
         // unlocked? A pattern and the files it finds must not get different answers.
-        var overridden = scope.Allows(anchor);
+        var wanted = scope.Allows(anchor);
+        var overridden = wanted && Options.Overrides.Honoured;
 
         if (string.IsNullOrEmpty(anchor) || WinPath.IsRoot(anchor))
         {
@@ -231,6 +243,17 @@ public sealed class PathGuard(GuardOptions options)
         {
             if (IsWithin(anchor, root))
             {
+                // An override this machine would not honour is said out loud here. Otherwise the
+                // operator reads a refusal, looks at the entry they already wrote, and has no way
+                // to tell that it was read and discarded rather than never noticed.
+                if (wanted && !Options.Overrides.Honoured)
+                {
+                    return Refuse(GuardVerdict.ProtectedLocation, pattern, overridden: false,
+                        $"'{pattern}' resolves inside '{root}', and this job's allowdangerous "
+                        + $"entry was not honoured because {Options.Overrides.Reason}.",
+                        Options.Overrides.Remedy);
+                }
+
                 // The remedy names something CheckOverrideEntry would actually accept. It used
                 // to say "add the exact pattern to allowDangerous", which was advice to type a
                 // key that reached nothing - and, once it did reach something, would have been
@@ -336,7 +359,7 @@ public sealed class PathGuard(GuardOptions options)
         }
 
         var normalized = WinPath.Normalize(path);
-        var overridden = scope.Allows(normalized);
+        var overridden = scope.Allows(normalized) && Options.Overrides.Honoured;
 
         return ClassifyLocation(normalized) switch
         {

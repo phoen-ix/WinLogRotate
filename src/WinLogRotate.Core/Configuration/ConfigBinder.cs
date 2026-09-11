@@ -25,7 +25,60 @@ public static class ConfigBinder
         CheckSchema(file, diagnostics);
 
         var table = FindTable(file.Document, "defaults");
-        return table is null ? null : BindSettings(table, file.Path, diagnostics);
+        if (table is null)
+        {
+            return null;
+        }
+
+        ReportUnknownDefaultsKeys(table, file.Path, diagnostics);
+        return BindSettings(table, file.Path, diagnostics);
+    }
+
+    /// <summary>
+    /// Reports a key in <c>[defaults]</c> that is not a setting.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// <c>[defaults]</c> reported nothing at all until milestone 16 - not a misspelling, not a job
+    /// key that cannot be inherited, nothing. It is the one table the installer writes by hand,
+    /// and the identical defect one table over is what <c>JobKeyTests</c> exists to prevent.
+    /// </para>
+    /// <para>
+    /// <c>allowdangerous</c> gets its own sentence rather than the generic one, the way
+    /// <c>BindNotify</c> special-cases <c>insecure</c>: an operator who wrote it there has a
+    /// specific misunderstanding, and "not a setting" would not correct it.
+    /// </para>
+    /// </remarks>
+    private static void ReportUnknownDefaultsKeys(TableSyntaxBase table, string file, DiagnosticBag d)
+    {
+        foreach (var kv in table.Items.OfType<KeyValueSyntax>())
+        {
+            var key = KeyName(kv);
+
+            if (DefaultsKeys.Contains(key, StringComparer.OrdinalIgnoreCase))
+            {
+                continue;
+            }
+
+            if (key.Equals("allowdangerous", StringComparison.OrdinalIgnoreCase))
+            {
+                d.Warn(file, DiagnosticCode.ConfigInvalid,
+                    "allowdangerous is per job and is deliberately not inheritable, so an entry "
+                    + "here is ignored.",
+                    LineOf(kv), ColumnOf(kv),
+                    remedy: "Put it in the job that needs it. A file-wide override is the switch "
+                          + "everyone flips once during an incident and never flips back, which "
+                          + "is why it does not exist.");
+                continue;
+            }
+
+            d.Warn(file, DiagnosticCode.ConfigInvalid,
+                $"'{key}' is not a [defaults] setting, and is ignored.",
+                LineOf(kv), ColumnOf(kv),
+                remedy: Suggest(key) is { } near
+                    ? $"Did you mean '{near}'?"
+                    : "Remove it, or check it against docs/configuration.md.");
+        }
     }
 
     /// <summary>Binds the <c>[journal]</c> table from <c>config.toml</c>.</summary>
@@ -455,6 +508,23 @@ public static class ConfigBinder
         // Hooks.
         "prerotate", "postrotate", "hook_timeout",
     ];
+
+    /// <summary>Keys that name or scope one job, and so mean nothing file-wide.</summary>
+    private static readonly string[] Structural =
+        ["name", "paths", "kind", "enabled", "allowdangerous"];
+
+    /// <summary>
+    /// Every key <c>[defaults]</c> may carry: the job keys, minus the ones that describe a
+    /// particular job rather than how any job behaves.
+    /// </summary>
+    /// <remarks>
+    /// Derived from <see cref="JobKeys"/> rather than listed again, so a key added to one is never
+    /// missing from the other. It has to be declared after both of them: static initialisers run
+    /// in declaration order, and the compiler's nullable analysis is what caught this reading them
+    /// while they were still null.
+    /// </remarks>
+    internal static readonly string[] DefaultsKeys =
+        [.. JobKeys.Except(Structural, StringComparer.OrdinalIgnoreCase)];
 
     /// <summary>
     /// Reports a key in <c>[job]</c> that is not a setting.
