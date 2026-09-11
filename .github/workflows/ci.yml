@@ -696,10 +696,11 @@ jobs:
                    ($r.diagnostics.code -join ', '))
           }
 
-          # Severity is an integer on the wire - CliJsonContext registers no string converter -
-          # so Critical is 3 and comparing against 'Critical' would silently never match.
-          if ($refusals[0].severity -ne 3) {
-            throw "LR9004 came back at severity $($refusals[0].severity), expected 3 (Critical)."
+          # Severity is a name on the wire. It was an integer until milestone 18, so this
+          # asserted 3 and carried a comment translating it - the assertion it was always
+          # trying to make, written the only way the envelope then allowed.
+          if ($refusals[0].severity -ne 'Critical') {
+            throw "LR9004 came back at severity $($refusals[0].severity), expected Critical."
           }
 
           foreach ($needle in @('junc-bad', 'System32')) {

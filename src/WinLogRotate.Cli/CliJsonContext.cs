@@ -18,6 +18,7 @@ namespace WinLogRotate.Cli;
 [JsonSourceGenerationOptions(
     PropertyNamingPolicy = JsonKnownNamingPolicy.CamelCase,
     DefaultIgnoreCondition = JsonIgnoreCondition.WhenWritingNull,
+    UseStringEnumConverter = true,
     WriteIndented = false)]
 [JsonSerializable(typeof(CliEnvelope<EmptyResult>))]
 [JsonSerializable(typeof(CliEnvelope<VersionResult>))]
