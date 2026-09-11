@@ -93,11 +93,16 @@ public sealed class CliRunner(string executablePath)
 
             await process.WaitForExitAsync(cancellationToken).ConfigureAwait(false);
 
+            var written = await stderr.ConfigureAwait(false);
+
             return new CliResult
             {
                 ExitCode = process.ExitCode,
                 StdOut = await stdout.ConfigureAwait(false),
-                StdErr = await stderr.ConfigureAwait(false),
+                StdErr = written,
+
+                // The same thing here: this child had a stderr and wrote to it.
+                Details = written,
             };
         }
         catch (Win32Exception e) when (e.NativeErrorCode == 2)
@@ -187,11 +192,20 @@ public sealed class CliRunner(string executablePath)
             await tail.ConfigureAwait(false);
             await started.ConfigureAwait(false);
 
+            var written = File.Exists(eventFile)
+                ? await File.ReadAllTextAsync(eventFile, cancellationToken).ConfigureAwait(false)
+                : string.Empty;
+
             return new CliResult
             {
                 ExitCode = process.ExitCode,
-                StdOut = File.Exists(eventFile) ? await File.ReadAllTextAsync(eventFile, cancellationToken).ConfigureAwait(false) : "",
+                StdOut = written,
+
+                // Genuinely empty, and not a stand-in for "we did not look": a runas child
+                // cannot have its pipes redirected, so there is no stderr to capture. What it
+                // would have written there is in the envelope instead.
                 StdErr = string.Empty,
+                Details = EnvelopeDetails.From(written),
             };
         }
         catch (Win32Exception e) when (e.NativeErrorCode == 1223)
@@ -233,5 +247,15 @@ public sealed class CliRunner(string executablePath)
     }
 
     private static CliResult Failed(CliFailure failure) =>
-        new() { ExitCode = -1, StdOut = string.Empty, StdErr = string.Empty, Failure = failure };
+        new()
+        {
+            ExitCode = -1,
+            StdOut = string.Empty,
+            StdErr = string.Empty,
+
+            // Nothing ran, so there is nothing it said. Describe() is the whole explanation for
+            // these, which is why every one of its arms is now asserted.
+            Details = string.Empty,
+            Failure = failure,
+        };
 }

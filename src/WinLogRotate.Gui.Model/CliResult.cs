@@ -19,6 +19,18 @@ public sealed record CliResult
     public required string StdErr { get; init; }
     public CliFailure Failure { get; init; }
 
+    /// <summary>
+    /// What to show a person when this failed.
+    /// </summary>
+    /// <remarks>
+    /// StdErr where there was one. An elevated child has none - its console is hidden and is
+    /// destroyed with it - so for those this carries the diagnostics out of the envelope, which
+    /// is where that child put them. The distinction matters at the call sites: three dialogs
+    /// passed StdErr as their details and it was the empty string every single time, which built
+    /// an expander and a Copy button over nothing.
+    /// </remarks>
+    public string Details { get; init; } = string.Empty;
+
     // Core.ExitCode is qualified because the property below shadows the type name inside
     // this record.
     public bool Ok => Failure == CliFailure.None && ExitCode == Core.ExitCode.Ok;

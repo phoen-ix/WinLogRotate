@@ -90,7 +90,7 @@ public sealed class SettingsPage : UserControl
         }
         else if (result.Failure != CliFailure.UacDeclined)
         {
-            LrDialog.Error(this, "Permissions", result.Describe(), result.StdErr);
+            LrDialog.Error(this, "Permissions", result.Describe(), result.Details);
         }
 
         await LoadAsync().ConfigureAwait(true);

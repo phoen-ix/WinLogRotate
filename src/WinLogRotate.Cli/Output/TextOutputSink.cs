@@ -28,25 +28,12 @@ internal sealed class TextOutputSink(bool verbose, bool color, TextWriter? to = 
         }
 
         var writer = d.Severity >= Severity.Warning ? Console.Error : _out;
-        var label = d.Severity switch
-        {
-            Severity.Critical => "critical",
-            Severity.Error => "error",
-            Severity.Warning => "warning",
-            _ => "info",
-        };
 
-        var where = d.Path is null ? "" :
-            d.Line is null ? $"{d.Path}: " : $"{d.Path}({d.Line},{d.Column ?? 1}): ";
-
-        writer.WriteLine(color
-            ? $"{Paint(label, d.Severity)} {where}{d.Message} [{d.Code}]"
-            : $"{label}: {where}{d.Message} [{d.Code}]");
-
-        if (d.Remedy is not null)
-        {
-            writer.WriteLine($"        {d.Remedy}");
-        }
+        // The colour is this sink's business and the wording is the contract's. Passing the
+        // painted label in is the whole of the difference between a terminal and the dialog the
+        // GUI shows for the same diagnostic.
+        writer.WriteLine(CliDiagnosticText.Describe(
+            d, color ? Paint(CliDiagnosticText.Label(d.Severity), d.Severity) : null));
     }
 
     public void Event(CliEvent e)

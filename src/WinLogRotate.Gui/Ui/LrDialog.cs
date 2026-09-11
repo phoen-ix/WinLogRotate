@@ -51,6 +51,17 @@ public static partial class LrDialog
         Show(owner, DialogKind.Question, title, message,
             buttons: MessageBoxButtons.YesNo, affirmativeNeedsAdmin: needsAdmin) == DialogResult.Yes;
 
+    /// <summary>
+    /// Whether there is anything to expand.
+    /// </summary>
+    /// <remarks>
+    /// Empty and absent are the same thing to a reader, and were not the same thing here: three
+    /// call sites passed the elevated path's StdErr, which is the empty string because a runas
+    /// child has no readable console - so a dialog opened an expander and a Copy button over
+    /// nothing at all.
+    /// </remarks>
+    private static bool Absent(string? details) => string.IsNullOrWhiteSpace(details);
+
     private static Form Build(
         DialogKind kind, string title, string message, string? details,
         MessageBoxButtons buttons, bool affirmativeNeedsAdmin)
@@ -64,7 +75,7 @@ public static partial class LrDialog
             StartPosition = FormStartPosition.CenterParent,
             MinimizeBox = false,
             MaximizeBox = false,
-            ClientSize = new Size(460, details is null ? 150 : 180),
+            ClientSize = new Size(460, Absent(details) ? 150 : 180),
             BackColor = colors.Window,
             ForeColor = colors.Text,
         };
@@ -81,7 +92,7 @@ public static partial class LrDialog
         form.Controls.Add(label);
 
         TextBox? detailBox = null;
-        if (details is not null)
+        if (!Absent(details))
         {
             detailBox = new TextBox
             {

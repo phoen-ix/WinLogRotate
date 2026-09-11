@@ -333,6 +333,10 @@ public sealed class NotificationsPage : UserControl
             outcome == SecretPipeOutcome.Delivered
                 ? "The value reached the helper, which could not store it."
                 : $"The value was not delivered ({outcome}), so nothing was stored.",
-            $"winlogrotate notify set-secret {asked.Provider} {asked.Field}");
+            // What the child said, where it said anything. The command line is the fallback it
+            // has always shown - useful for running it yourself, but not an explanation.
+            result.Details.Length > 0
+                ? result.Details
+                : $"winlogrotate notify set-secret {asked.Provider} {asked.Field}");
     }
 }

@@ -27,3 +27,20 @@ namespace WinLogRotate.Contracts;
     WriteIndented = false)]
 [JsonSerializable(typeof(CliEvent))]
 public sealed partial class CliEventJson : JsonSerializerContext;
+
+/// <summary>
+/// The same, for <see cref="CliDiagnostic"/>.
+/// </summary>
+/// <remarks>
+/// Its own context rather than another type on the one above, so each stays named for what it
+/// serializes. The GUI reads these one element at a time out of an envelope's diagnostics array:
+/// it cannot deserialize the envelope itself, whose result types are registered only in the
+/// CLI's internal context.
+/// </remarks>
+[JsonSourceGenerationOptions(
+    PropertyNamingPolicy = JsonKnownNamingPolicy.CamelCase,
+    DefaultIgnoreCondition = JsonIgnoreCondition.WhenWritingNull,
+    UseStringEnumConverter = true,
+    WriteIndented = false)]
+[JsonSerializable(typeof(CliDiagnostic))]
+public sealed partial class CliDiagnosticJson : JsonSerializerContext;

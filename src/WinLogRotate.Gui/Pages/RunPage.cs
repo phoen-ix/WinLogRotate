@@ -86,14 +86,17 @@ public sealed class RunPage : UserControl
                 ? await _cli.RunAsync(arguments).ConfigureAwait(true)
                 : await _cli.RunElevatedAsync(arguments, Append).ConfigureAwait(true);
 
-            if (result.StdOut.Length > 0)
+            // The elevated path has already appended every line as it arrived, and its StdOut is
+            // the whole NDJSON file those lines came from - so appending it here printed the run
+            // a second time, as JSON, under the readable copy. Invisible while both were empty.
+            if (dryRun && result.StdOut.Length > 0)
             {
                 Append(result.StdOut);
             }
 
-            if (result.StdErr.Length > 0)
+            if (result.Details.Length > 0)
             {
-                Append(result.StdErr);
+                Append(result.Details);
             }
 
             _status.Text = result.Describe();

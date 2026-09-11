@@ -123,7 +123,7 @@ public sealed class SchedulingPage : UserControl
 
             if (!result.Ok && result.Failure != CliFailure.UacDeclined)
             {
-                LrDialog.Error(this, "Could not change the schedule", result.Describe(), result.StdErr);
+                LrDialog.Error(this, "Could not change the schedule", result.Describe(), result.Details);
             }
 
             await RefreshStatusAsync().ConfigureAwait(true);
