@@ -1,0 +1,19 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+
+    <!-- The namespace the GUI already uses. The split is a testability seam, not a
+         re-architecture: a project that references WinLogRotate.Gui inherits
+         Microsoft.WindowsDesktop.App and cannot run on the Linux leg at all, so the logic
+         with nothing Windows about it - tailing a file, wording an exit code - had no way
+         to be tested despite being the part most likely to be wrong. Keeping the namespace
+         means the GUI does not notice. -->
+    <RootNamespace>WinLogRotate.Gui.Cli</RootNamespace>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="../WinLogRotate.Core/WinLogRotate.Core.csproj" />
+  </ItemGroup>
+
+</Project>

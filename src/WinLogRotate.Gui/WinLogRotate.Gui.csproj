@@ -36,6 +36,7 @@
 
   <ItemGroup>
     <ProjectReference Include="../WinLogRotate.Core/WinLogRotate.Core.csproj" />
+    <ProjectReference Include="../WinLogRotate.Gui.Model/WinLogRotate.Gui.Model.csproj" />
     <ProjectReference Include="../WinLogRotate.Hosting/WinLogRotate.Hosting.csproj" />
   </ItemGroup>
 

@@ -1,48 +1,9 @@
 using System.ComponentModel;
 using System.Diagnostics;
 using System.Text;
-using WinLogRotate.Contracts;
 using WinLogRotate.Core;
 
 namespace WinLogRotate.Gui.Cli;
-
-/// <summary>Why an invocation did not produce a result.</summary>
-public enum CliFailure
-{
-    None,
-    NotFound,
-    UacDeclined,
-    Timeout,
-}
-
-/// <summary>What one invocation produced.</summary>
-public sealed record CliResult
-{
-    public required int ExitCode { get; init; }
-    public required string StdOut { get; init; }
-    public required string StdErr { get; init; }
-    public CliFailure Failure { get; init; }
-
-    // Core.ExitCode is qualified because the property below shadows the type name inside
-    // this record.
-    public bool Ok => Failure == CliFailure.None && ExitCode == Core.ExitCode.Ok;
-
-    /// <summary>Plain wording for an exit code, so a dialog never shows a bare number.</summary>
-    public string Describe() => Failure switch
-    {
-        CliFailure.NotFound => "winlogrotate.exe could not be found.",
-        CliFailure.UacDeclined => "Elevation was cancelled. Nothing was changed.",
-        CliFailure.Timeout => "The operation took too long and was stopped.",
-        _ => ExitCode switch
-        {
-            Core.ExitCode.Ok => "Completed.",
-            Core.ExitCode.Errors => "Completed, but some files could not be rotated.",
-            Core.ExitCode.ConfigInvalid => "The configuration has errors, so nothing was attempted.",
-            Core.ExitCode.LockHeld => "Another rotation is already running.",
-            _ => $"Exited with code {ExitCode}.",
-        },
-    };
-}
 
 /// <summary>
 /// Runs the command-line engine on the GUI's behalf.
@@ -215,7 +176,8 @@ public sealed class CliRunner(string executablePath)
                 return Failed(CliFailure.NotFound);
             }
 
-            var tail = TailAsync(eventFile, onLine, process, cancellationToken);
+            var tail = EventTail.FollowAsync(
+                eventFile, onLine, () => process.HasExited, cancellationToken);
 
             var started = onStarted is null
                 ? Task.CompletedTask
@@ -251,73 +213,6 @@ public sealed class CliRunner(string executablePath)
         finally
         {
             TryCleanUp(workDirectory);
-        }
-    }
-
-    private static async Task TailAsync(
-        string path, Action<string>? onLine, Process process, CancellationToken cancellationToken)
-    {
-        if (onLine is null)
-        {
-            return;
-        }
-
-        // Rendered here, once, rather than by each page. The file is NDJSON and what was shown
-        // to the operator was NDJSON: {"ts":"2026-09-11T...","operation":"delete","phase":...}
-        // per line, in the pane of a button labelled "Rotate now". CliEventText is the same
-        // rendering the CLI's own text output uses, so the two cannot drift, and it answers null
-        // for the envelope that shares this file - which is a result, not a line of progress.
-        void Render(string line)
-        {
-            if (CliEventText.Describe(line) is { } sentence)
-            {
-                onLine(sentence);
-            }
-        }
-
-        var offset = 0L;
-
-        while (!process.HasExited && !cancellationToken.IsCancellationRequested)
-        {
-            offset = ReadFrom(path, offset, Render);
-            await Task.Delay(100, cancellationToken).ConfigureAwait(false);
-        }
-
-        // One last pass: the child may have written its final lines between our last poll and
-        // its exit, and those are usually the ones that say what happened.
-        ReadFrom(path, offset, Render);
-    }
-
-    private static long ReadFrom(string path, long offset, Action<string> onLine)
-    {
-        if (!File.Exists(path))
-        {
-            return offset;
-        }
-
-        try
-        {
-            using var stream = new FileStream(
-                path, FileMode.Open, FileAccess.Read,
-                FileShare.ReadWrite | FileShare.Delete);
-
-            stream.Seek(offset, SeekOrigin.Begin);
-            using var reader = new StreamReader(stream);
-
-            while (reader.ReadLine() is { } line)
-            {
-                if (line.Length > 0)
-                {
-                    onLine(line);
-                }
-            }
-
-            return stream.Position;
-        }
-        catch (IOException)
-        {
-            // The child is mid-write. Try again on the next poll.
-            return offset;
         }
     }
 

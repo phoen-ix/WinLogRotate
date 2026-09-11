@@ -31,6 +31,10 @@
     <ProjectReference Include="../../src/WinLogRotate.Core/WinLogRotate.Core.csproj" />
     <ProjectReference Include="../../src/WinLogRotate.Hosting/WinLogRotate.Hosting.csproj" />
     <ProjectReference Include="../../src/WinLogRotate.Cli/WinLogRotate.Cli.csproj" />
+
+    <!-- The GUI's own logic, in the one shape that can be tested: a project referencing
+         WinLogRotate.Gui would inherit Microsoft.WindowsDesktop.App and not run here. -->
+    <ProjectReference Include="../../src/WinLogRotate.Gui.Model/WinLogRotate.Gui.Model.csproj" />
   </ItemGroup>
 
 </Project>
