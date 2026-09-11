@@ -235,12 +235,16 @@ caused it. It is what the GUI's History page shows and what `winlogrotate journa
 deliberately not Task Scheduler's Last Run Result, since the registered task exits 0 when a run
 overlaps and `0x0` therefore proves nothing.
 
-It holds **two lines per operation** where the console prints one, and that is deliberate. Each
-destructive step is journaled once as `plan` and once as `apply`, so a run killed between them
-leaves a readable record of an intention that was never carried out. A person watching wants the
-last word instead: told "would delete" and then nothing, you cannot tell a completed deletion
-from an abandoned one. So the console — and the `--json-stream` a watching program reads — gets
-the half that settles the matter, and the journal keeps both.
+It **records two lines per operation and reports one**, and both halves of that are deliberate.
+Each destructive step is journaled once as `plan` and once as `apply`, so a run killed between
+them leaves a readable record of an intention that was never carried out. A person reading it
+wants the last word instead: told "would delete" and then nothing, you cannot tell a completed
+deletion from an abandoned one.
+
+So `winlogrotate journal` reports one line per operation — the half that settled it, or the
+plan half where nothing ever did, which is exactly how a run that died mid-operation shows
+itself. Nothing is hidden by that, which is why it is the default; `--all` shows the record as
+it was written, for auditing whether the record itself is well formed.
 
 **It rotates itself**, through the same manage-mode code that tidies IIS logs. That is not a
 coincidence: the journal is a directory of dated files written by a producer that rolls them

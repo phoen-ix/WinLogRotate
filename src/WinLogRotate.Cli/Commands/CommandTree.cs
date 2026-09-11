@@ -225,13 +225,18 @@ internal static class CommandTree
     {
         var since = new Option<string?>("--since") { Description = "Only entries at or after this time." };
         var job = new Option<string?>("--job") { Description = "Only this job." };
-        var journal = new Command("journal", "Read the record of everything that was compressed, moved or deleted.") { since, job };
+        var all = new Option<bool>("--all")
+        {
+            Description = "Show the journal as it was written - both halves of every operation.",
+        };
+        var journal = new Command("journal", "Read the record of everything that was compressed, moved or deleted.") { since, job, all };
         GlobalOptions.AddTo(journal);
         journal.SetAction(parse => JournalCommand.Run(
             CommandContext.From(parse),
             parse.GetValue(since),
             parse.GetValue(job),
-            parse.GetValue(GlobalOptions.ConfigDir)?.FullName));
+            parse.GetValue(GlobalOptions.ConfigDir)?.FullName,
+            parse.GetValue(all)));
         return journal;
     }
 
