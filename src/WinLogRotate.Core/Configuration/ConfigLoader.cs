@@ -38,7 +38,30 @@ public sealed record LoadedConfig
     /// </remarks>
     public JournalSettings Journal { get; init; } = JournalSettings.Default;
 
-    public bool HasErrors => Diagnostics.Any(d => d.Severity >= Severity.Error);
+    /// <summary>
+    /// Jobs that will not run, because validating them produced an error.
+    /// </summary>
+    /// <remarks>
+    /// Named so the caller can say so and exit non-zero. A job silently absent from
+    /// <see cref="Jobs"/> would be a log that stops being rotated with nobody told, which is the
+    /// worst outcome this product has.
+    /// </remarks>
+    public IReadOnlyList<string> SkippedJobs { get; init; } = [];
+
+    /// <summary>
+    /// True when the configuration as a whole is unusable, so nothing should be attempted.
+    /// </summary>
+    /// <remarks>
+    /// Errors that belong to one job are deliberately excluded. They cost that job - it is in
+    /// <see cref="SkippedJobs"/> and reported - and they leave every other job on the machine
+    /// rotating. A refused path in one file used to set this and return <c>ExitCode.ConfigInvalid</c>
+    /// with nothing attempted anywhere, which turned one operator's typo into a disk-space
+    /// incident; <c>ConfigValidator.CheckHooks</c> had already written that argument out in full
+    /// for hooks, and it applies here word for word. What still stops everything is a fault with
+    /// no single job to blame: an unparseable config.toml, a broken [notify] table, a duplicate
+    /// job name.
+    /// </remarks>
+    public bool HasErrors => Diagnostics.Any(d => d.Severity >= Severity.Error && d.Job is null);
 }
 
 /// <summary>
@@ -86,6 +109,7 @@ public static class ConfigLoader
         }
 
         var jobs = new List<EffectiveJob>();
+        var skipped = new List<string>();
 
         if (!Directory.Exists(paths.ConfigDirectory))
         {
@@ -154,7 +178,23 @@ public static class ConfigLoader
             seenNames[job.Name] = path;
 
             var effective = SettingsMerge.Resolve(job, defaults);
-            ConfigValidator.Validate(effective, guard, diagnostics);
+
+            // Into a bag of its own, so what validation says about this job can be attributed to
+            // it and weighed separately from a fault with the configuration as a whole.
+            var jobBag = new DiagnosticBag();
+            ConfigValidator.Validate(effective, guard, jobBag);
+
+            foreach (var item in jobBag.Items)
+            {
+                diagnostics.Add(item with { Job = effective.Name });
+            }
+
+            if (jobBag.HasErrors)
+            {
+                skipped.Add(effective.Name);
+                continue;
+            }
+
             jobs.Add(effective);
         }
 
@@ -172,6 +212,7 @@ public static class ConfigLoader
         return new LoadedConfig
         {
             Jobs = jobs,
+            SkippedJobs = skipped,
             Diagnostics = diagnostics.Items,
             Paths = paths,
             Quarantined = quarantined,

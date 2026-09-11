@@ -85,6 +85,10 @@ internal static class RunCommand
                 Line = d.Line == 0 ? null : d.Line,
                 Column = d.Column == 0 ? null : d.Column,
                 Remedy = d.Remedy,
+
+                // Carried, not dropped. It is what tells an operator which of forty jobs is the
+                // one that will not run tonight, and what lets a notification be muted per job.
+                Job = d.Job,
             });
         }
 
@@ -200,9 +204,14 @@ internal static class RunCommand
             ctx.Output.Diagnostic(d);
         }
 
-        ctx.Output.Line(options.DryRun
+        var refused = config.SkippedJobs.Count > 0
+            ? $" {config.SkippedJobs.Count} job(s) skipped: {string.Join(", ", config.SkippedJobs)}."
+            : string.Empty;
+
+        ctx.Output.Line((options.DryRun
             ? $"dry run: {report.JobsRun} job(s), {report.Plans.Sum(p => p.Destructive.Count())} operation(s) planned. Nothing was changed."
-            : $"{report.JobsRun} job(s), {report.Completed} operation(s), {GlobCommand.Humanize(report.BytesFreed)} freed, {report.Failed} failure(s).");
+            : $"{report.JobsRun} job(s), {report.Completed} operation(s), {GlobCommand.Humanize(report.BytesFreed)} freed, {report.Failed} failure(s).")
+            + refused);
 
         // After the journal is closed and after state.Save, so a notification can never delay or
         // fail the thing it is reporting on.
@@ -220,7 +229,15 @@ internal static class RunCommand
             Errors = report.Errors,
         };
 
-        return ctx.Output.Complete("run", report.ExitCode, result);
+        // A job refused during validation never reaches the runner, so the runner cannot know it
+        // happened and reports a clean run. Exit 1, not 2: work was attempted and most of it
+        // succeeded, which is exactly the distinction ExitCode.ConfigInvalid's own doc comment
+        // draws when it says nothing on disk was touched.
+        var exit = report.ExitCode == ExitCode.Ok && config.SkippedJobs.Count > 0
+            ? ExitCode.Errors
+            : report.ExitCode;
+
+        return ctx.Output.Complete("run", exit, result);
     }
     /// <summary>
     /// What taking the gate concluded, in terms the platform-neutral caller can read.

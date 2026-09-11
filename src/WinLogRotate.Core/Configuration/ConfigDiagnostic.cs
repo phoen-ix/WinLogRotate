@@ -13,6 +13,18 @@ public sealed record ConfigDiagnostic
     public int Column { get; init; }
     public string? Remedy { get; init; }
 
+    /// <summary>
+    /// The job this is about, when it is about exactly one.
+    /// </summary>
+    /// <remarks>
+    /// What lets a validation failure cost one job instead of every rotation on the machine.
+    /// <c>LoadedConfig.HasErrors</c> - which is what makes <c>run</c> attempt nothing at all -
+    /// counts only errors with no job to blame, so an unparseable [notify] table still stops
+    /// everything while one job's refused path stops that job. The doctrine is <c>ConfigLoader</c>'s
+    /// own, already applied to a file that will not parse: report it, skip it, carry on.
+    /// </remarks>
+    public string? Job { get; init; }
+
     public override string ToString() =>
         Line > 0
             ? $"{File}({Line},{Column}): {Severity.ToString().ToLowerInvariant()}: {Message} [{Code}]"

@@ -231,14 +231,93 @@ public sealed class PathGuard(GuardOptions options)
         {
             if (IsWithin(anchor, root))
             {
+                // The remedy names something CheckOverrideEntry would actually accept. It used
+                // to say "add the exact pattern to allowDangerous", which was advice to type a
+                // key that reached nothing - and, once it did reach something, would have been
+                // rejected as too broad about as often as not.
+                var remedy = anchor.Equals(WinPath.Normalize(root), StringComparison.OrdinalIgnoreCase)
+                    ? $"'{pattern}' is anchored directly at '{root}', so no allowdangerous entry "
+                      + "can permit it - one that did would unlock the whole protected location. "
+                      + "Put the logs in a subdirectory and name that instead."
+                    : $"If this is genuinely intended, add \"{anchor}\" to this job's "
+                      + "allowdangerous. It is per job and per directory; there is no global "
+                      + "override, on purpose.";
+
                 return Refuse(GuardVerdict.ProtectedLocation, pattern, overridden,
                     $"'{pattern}' resolves inside '{root}', which WinLogRotate will not delete files from.",
-                    $"If this is genuinely intended, add the exact pattern to allowDangerous. " +
-                    "There is no global override, on purpose.");
+                    remedy);
             }
         }
 
         return Allow(pattern, overridden);
+    }
+
+    /// <summary>
+    /// Whether an <c>allowdangerous</c> entry is narrow enough to honour.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// An entry unlocks the directory it anchors at, so an entry that anchors at a volume root or
+    /// at a protected root itself unlocks the whole of the thing the guard exists to protect.
+    /// <c>allowdangerous = ["C:/**"]</c> is one six-character line that defeats every location
+    /// rule at once, and it used to be accepted - which made the claim on
+    /// <see cref="GuardScope.AllowDangerous"/> that there is no "disable safety" switch false.
+    /// </para>
+    /// <para>
+    /// An entry that unlocks nothing protected is fine and is not this rule's business; the point
+    /// is only that an entry must name somewhere <i>below</i> a protected root rather than the
+    /// root. As a deliberate consequence a volume root becomes unoverridable outright, which is
+    /// the right answer for a verdict whose own remarks put the blast radius at a whole drive.
+    /// </para>
+    /// </remarks>
+    public GuardDecision CheckOverrideEntry(string entry)
+    {
+        var problem = WinPath.Validate(entry, allowWildcards: true);
+        if (problem != PathProblem.None)
+        {
+            return new GuardDecision
+            {
+                Verdict = GuardVerdict.InvalidPath,
+                Subject = entry,
+                PathProblem = problem,
+                Message = $"allowdangerous entry {Describe(problem, entry)}",
+                Remedy = "An entry that can never match anything is a mistake rather than a "
+                       + "harmless no-op, so it is reported rather than ignored.",
+            };
+        }
+
+        var anchor = GuardScope.AnchorOf(entry);
+
+        if (anchor.Length == 0 || WinPath.IsRoot(anchor))
+        {
+            return new GuardDecision
+            {
+                Verdict = GuardVerdict.VolumeRoot,
+                Subject = entry,
+                Message = $"the allowdangerous entry '{entry}' is anchored at a volume root, so it "
+                        + "would unlock the entire drive.",
+                Remedy = "Name the directory the logs actually live in. An override is per "
+                       + "directory on purpose; there is no way to unlock a whole volume.",
+            };
+        }
+
+        foreach (var root in Options.ProtectedRoots)
+        {
+            if (anchor.Equals(WinPath.Normalize(root), StringComparison.OrdinalIgnoreCase))
+            {
+                return new GuardDecision
+                {
+                    Verdict = GuardVerdict.ProtectedLocation,
+                    Subject = entry,
+                    Message = $"the allowdangerous entry '{entry}' unlocks the whole of '{root}'.",
+                    Remedy = $"Name a directory inside '{root}' instead, for example "
+                           + $@"'{root}\YourApp\logs'. An entry may sit below a protected "
+                           + "location; it may not be one.",
+                };
+            }
+        }
+
+        return Allow(entry, overridden: false);
     }
 
     /// <summary>Checks a concrete file about to be modified or deleted.</summary>

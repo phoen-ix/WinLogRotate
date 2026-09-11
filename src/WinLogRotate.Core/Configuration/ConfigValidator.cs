@@ -13,9 +13,30 @@ public static class ConfigValidator
     {
         var file = job.SourceFile ?? job.Name;
 
+        // Entries are judged before any pattern consults them, so a job can never be rescued by
+        // an override too broad to honour. A refused entry is dropped rather than disabling the
+        // rest: an operator who wrote one good entry and one careless one should have the good
+        // one keep working, and the careless one named.
+        var honoured = new List<string>();
+        foreach (var entry in job.AllowDangerous)
+        {
+            var judged = guard.CheckOverrideEntry(entry);
+            if (judged.IsAllowed)
+            {
+                honoured.Add(entry);
+                continue;
+            }
+
+            d.Error(file, DiagnosticCode.DangerousPathRefused,
+                judged.Message ?? $"'{entry}' is not an acceptable allowdangerous entry.",
+                remedy: judged.Remedy);
+        }
+
+        var scope = job.GuardScope with { AllowDangerous = honoured };
+
         foreach (var pattern in job.Paths)
         {
-            var decision = guard.CheckPattern(pattern, job.GuardScope);
+            var decision = guard.CheckPattern(pattern, scope);
             if (!decision.IsAllowed)
             {
                 d.Error(file, DiagnosticCode.DangerousPathRefused,

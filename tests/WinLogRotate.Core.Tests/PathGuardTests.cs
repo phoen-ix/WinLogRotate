@@ -152,6 +152,85 @@ public class PathGuardTests
         decision.Message.ShouldNotBeNull().ShouldContain("1,842");
     }
 
+    // ---- what an override entry may say ---------------------------------------------------
+
+    /// <summary>A whole drive cannot be unlocked.</summary>
+    /// <remarks>
+    /// <c>allowdangerous = ["C:/**"]</c> was accepted, and one six-character line defeated every
+    /// location rule at once - because ** matches zero or more segments, so it matched the anchor
+    /// of every protected pattern on the machine. That made the claim on GuardScope.AllowDangerous
+    /// that there is no "disable safety" switch straightforwardly false.
+    /// </remarks>
+    [Theory]
+    [InlineData(@"C:\**")]
+    [InlineData(@"C:\*")]
+    [InlineData(@"\\srv\share\**")]
+    public void AWholeDriveCannotBeUnlocked(string entry) =>
+        Guard().CheckOverrideEntry(entry).Verdict.ShouldBe(GuardVerdict.VolumeRoot);
+
+    /// <summary>An entry may sit below a protected location; it may not be one.</summary>
+    [Theory]
+    [InlineData(@"C:\Windows\**")]
+    [InlineData(@"C:\Windows")]
+    [InlineData(@"C:\Windows\*.log")]
+    public void AnEntryThatUnlocksAWholeProtectedRootIsRefused(string entry) =>
+        Guard().CheckOverrideEntry(entry).Verdict.ShouldBe(GuardVerdict.ProtectedLocation);
+
+    /// <summary>A narrow entry inside a protected root is exactly what the feature is for.</summary>
+    /// <remarks>
+    /// The direction a breadth rule gets wrong by becoming "refuse everything" - which is what
+    /// the dead CheckReparsePoint did, and why milestone 15 had to reason about it rather than
+    /// simply wire it up.
+    /// </remarks>
+    [Theory]
+    [InlineData(@"C:\Windows\System32\LogFiles\*.log")]
+    [InlineData(@"C:\Windows\System32\LogFiles")]
+    [InlineData(@"C:\Windows\Logs\CBS\*.log")]
+    [InlineData(@"D:\logs\app\*.log")]
+    public void ANarrowEntryIsAccepted(string entry) =>
+        Guard().CheckOverrideEntry(entry).IsAllowed.ShouldBeTrue();
+
+    /// <summary>
+    /// The remedy names something the guard would actually accept.
+    /// </summary>
+    /// <remarks>
+    /// It used to say "add the exact pattern to allowDangerous" - advice to type a key that
+    /// reached nothing at all. Now that the key works, advice that would be rejected as too broad
+    /// would be no better, so the loop is closed here rather than trusted.
+    /// </remarks>
+    [Fact]
+    public void TheRemedyNamesAnEntryTheGuardWouldAccept()
+    {
+        var remedy = Guard()
+            .CheckPattern(@"C:\Windows\Logs\CBS\*.log", GuardScope.None)
+            .Remedy.ShouldNotBeNull();
+
+        var quoted = remedy.Split('"');
+        quoted.Length.ShouldBeGreaterThan(1, "the remedy has to name an entry, not describe one");
+
+        Guard().CheckOverrideEntry(quoted[1]).IsAllowed.ShouldBeTrue();
+
+        // And it really does unlock the pattern it was suggested for.
+        Guard().CheckPattern(@"C:\Windows\Logs\CBS\*.log", Allowing(quoted[1]))
+            .IsAllowed.ShouldBeTrue();
+    }
+
+    /// <summary>A pattern anchored at a protected root is told no entry can help.</summary>
+    /// <remarks>
+    /// Proposing an impossible fix is worse than proposing none: the operator writes it, the
+    /// entry is refused as too broad, and they have two diagnostics and no way forward.
+    /// </remarks>
+    [Fact]
+    public void APatternAnchoredAtAProtectedRootIsToldNoEntryCanHelp()
+    {
+        var remedy = Guard()
+            .CheckPattern(@"C:\Windows\*.log", GuardScope.None)
+            .Remedy.ShouldNotBeNull();
+
+        remedy.ShouldContain("no allowdangerous entry can permit it");
+        remedy.ShouldNotContain("add \"");
+    }
+
     [Fact]
     public void MalformedPatternsAreRefusedBeforeAnyFilesystemAccess()
     {
