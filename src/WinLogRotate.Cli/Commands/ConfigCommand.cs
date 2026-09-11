@@ -35,7 +35,17 @@ internal static class ConfigCommand
 
         ctx.Output.Line($"{paths.Root}: {loaded.Jobs.Count} job(s), {errors} error(s), {warnings} warning(s)");
 
-        var exit = errors > 0 ? ExitCode.ConfigInvalid : ExitCode.Ok;
+        // Split the way run does, and for the same reason. ExitCode.ConfigInvalid's own contract
+        // is that nothing was attempted, and milestone 16 made that false for a job-scoped error:
+        // run skips that job, rotates everything else and exits 1. Counting every error here left
+        // config check - the verb an operator runs to find out why run refused - disagreeing with
+        // run about what a refused path is worth, so a pipeline gating on it could not tell one
+        // bad pattern from a config.toml that will not parse.
+        //
+        // The Errors field below keeps the total. Only the exit code distinguishes them.
+        var exit = loaded.HasErrors ? ExitCode.ConfigInvalid
+            : errors > 0 ? ExitCode.Errors
+            : ExitCode.Ok;
 
         return ctx.Output.Complete("config check", exit, new ConfigCheckResult
         {

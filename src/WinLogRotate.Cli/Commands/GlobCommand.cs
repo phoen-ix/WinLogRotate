@@ -33,16 +33,12 @@ internal static class GlobCommand
             return ctx.Output.Complete<GlobResult>("glob", ExitCode.ConfigInvalid, null);
         }
 
-        if (decision.Overridden)
-        {
-            ctx.Output.Diagnostic(new CliDiagnostic
-            {
-                Severity = Severity.Warning,
-                Code = DiagnosticCode.DangerousPathRefused,
-                Message = decision.Message ?? "Permitted by an explicit override.",
-                Path = pattern,
-            });
-        }
+        // There is deliberately no "permitted by an override" branch here, and there was one for
+        // exactly one milestone. It could never fire: glob passes GuardScope.None, which carries
+        // no entries, and builds its guard with Overrides defaulting to Unknown - unreachable for
+        // two independent reasons, in the commit whose purpose was deleting code of that shape.
+        // glob tests one pattern typed on a command line; it has no job, and an override belongs
+        // to a job.
 
         var found = new FileEnumerator(guard).Resolve(pattern);
         var matches = found.Files;

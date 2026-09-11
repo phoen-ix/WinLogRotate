@@ -231,4 +231,65 @@ public sealed class AllowDangerousTests : IDisposable
 
         config.HasErrors.ShouldBeTrue();
     }
+
+    // ---- what config check tells a pipeline ---------------------------------------------------
+
+    private sealed class Sink : Cli.Output.IOutputSink
+    {
+        private readonly List<CliDiagnostic> _diagnostics = [];
+
+        public bool Verbose => false;
+
+        public IReadOnlyList<CliDiagnostic> Diagnostics => _diagnostics;
+
+        public void Diagnostic(CliDiagnostic diagnostic) => _diagnostics.Add(diagnostic);
+
+        public void Event(CliEvent evt) { }
+
+        public void Line(string text) { }
+
+        public int Complete<T>(string verb, int exitCode, T? result) => exitCode;
+    }
+
+    private int Check(params (string File, string Toml)[] jobs)
+    {
+        File.WriteAllText(Path.Combine(_dir.FullName, "config.toml"), "schema = 1\n");
+        var confd = Directory.CreateDirectory(Path.Combine(_dir.FullName, "conf.d"));
+        foreach (var (name, toml) in jobs)
+        {
+            File.WriteAllText(Path.Combine(confd.FullName, name), toml);
+        }
+
+        var parse = Cli.Commands.CommandTree.Build().Parse(["config", "check"]);
+
+        return Cli.Commands.ConfigCommand.Check(
+            new Cli.Commands.CommandContext(new Sink(), parse), _dir.FullName);
+    }
+
+    /// <summary>
+    /// A refused path exits 1 from config check, the way it does from run.
+    /// </summary>
+    /// <remarks>
+    /// It exited 2, whose own contract is that nothing was attempted - which milestone 16 made
+    /// false for a job-scoped error. So the verb an operator runs to find out why run refused
+    /// disagreed with run about what a refused path costs, and a pipeline gating on config check
+    /// could not tell one bad pattern from a config.toml that will not parse.
+    /// </remarks>
+    [Fact]
+    public void ConfigCheckExitsOneForAJobScopedError() =>
+        Check(("bad.toml", Job("iis-logs", "\"C:/Windows/System32/LogFiles/*.log\"")))
+            .ShouldBe(ExitCode.Errors);
+
+    /// <summary>A fault with no job to blame still exits 2.</summary>
+    [Fact]
+    public void ConfigCheckStillExitsTwoForAWholeConfigurationFault() =>
+        Check(
+            ("a.toml", Job("twins", "\"C:/app/a/*.log\"")),
+            ("b.toml", Job("twins", "\"C:/app/b/*.log\"")))
+            .ShouldBe(ExitCode.ConfigInvalid);
+
+    /// <summary>A clean configuration still exits 0.</summary>
+    [Fact]
+    public void ConfigCheckExitsZeroWhenNothingIsWrong() =>
+        Check(("good.toml", Job("app-logs", "\"C:/app/logs/*.log\""))).ShouldBe(ExitCode.Ok);
 }
