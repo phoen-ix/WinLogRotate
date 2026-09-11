@@ -12,8 +12,15 @@ namespace WinLogRotate.Cli.Output;
 /// than using <c>object</c> keeps the JSON source generator able to see everything.</summary>
 public sealed record EmptyResult;
 
-/// <summary>Payload of <c>winlogrotate --version --json</c>. The GUI reads this on start to
-/// check it is talking to a CLI it understands.</summary>
+/// <summary>
+/// Payload of <c>winlogrotate --version --json</c>.
+/// <para>
+/// The GUI runs this verb on start - it is the one verb that needs no configuration directory -
+/// but it reads product and schema off the <b>envelope</b>, which carries both and carries them
+/// even when a verb failed before it could build a payload. The copies here are for a person, or
+/// for a script that extracts <c>.result</c> and passes it on. See
+/// <c>WinLogRotate.Gui.Cli.CliIdentity</c>.
+/// </para></summary>
 public sealed record VersionResult
 {
     public required string Product { get; init; }

@@ -2,9 +2,13 @@ namespace WinLogRotate.Contracts;
 
 /// <summary>
 /// The single shape every <c>--json</c> response takes. This is the contract the GUI binds
-/// to, so it is versioned: <see cref="Schema"/> is compared on GUI start, and a mismatch
-/// (a stale GUI beside a freshly-updated CLI after a partial upgrade) is reported rather
-/// than allowed to produce confusing failures deeper in.
+/// to, so it is versioned: the GUI runs <c>--version --json</c> on start and compares
+/// <see cref="Schema"/> against its own, and a mismatch (a stale GUI beside a freshly-updated
+/// CLI after a partial upgrade) is reported rather than allowed to produce confusing failures
+/// deeper in. Nothing is refused - see <c>ProductInfo.ContractSchema</c> for why.
+/// <c>WinLogRotate.Gui.Cli.CliIdentity</c> does the comparing, and reads both fields off this
+/// root rather than off <see cref="Result"/>, because these two are the only things every
+/// envelope carries - including one whose verb threw before it could build a payload.
 /// </summary>
 /// <typeparam name="T">The verb's own result payload.</typeparam>
 public sealed record CliEnvelope<T>

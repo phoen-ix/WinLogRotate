@@ -37,7 +37,8 @@ internal static class CommandTree
         // Replace the built-in version option rather than adding beside it. Its action runs
         // first and prints bare text, so `--version --json` would emit no envelope at all -
         // and that envelope is exactly what the GUI reads on start to check it is talking to
-        // a CLI whose contract schema it understands.
+        // a CLI whose contract schema it understands - CliIdentity, wired into
+        // MainForm.CheckEnvironmentAsync.
         if (root.Options.FirstOrDefault(o => o is VersionOption) is { } builtIn)
         {
             root.Options.Remove(builtIn);

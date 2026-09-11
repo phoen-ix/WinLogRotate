@@ -8,8 +8,16 @@ public static class ProductInfo
     /// <summary>Product name, as it appears in paths, the registry and the Event Log.</summary>
     public const string Name = "WinLogRotate";
 
-    /// <summary>Wire-format version of the --json envelope. Bump on a breaking change;
-    /// the GUI compares it against its own and refuses to talk to a mismatched CLI.</summary>
+    /// <summary>
+    /// Wire-format version of the --json envelope. Bump on a breaking change.
+    /// <para>
+    /// The GUI runs <c>winlogrotate --version --json</c> once on start and compares the
+    /// envelope's schema against this constant. A mismatch is <b>reported in a banner, and
+    /// nothing is refused</b>: it can only make what that window displays wrong, because every
+    /// action shells out and the child validates its own arguments - and if the check is itself
+    /// wrong, an unnecessary banner is a far better failure than a window that will not open.
+    /// <c>WinLogRotate.Gui.Cli.CliIdentity</c> is the only thing that reads it.
+    /// </para></summary>
     public const int ContractSchema = 1;
 
     /// <summary>

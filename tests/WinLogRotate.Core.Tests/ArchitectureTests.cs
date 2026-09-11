@@ -105,6 +105,65 @@ public partial class ArchitectureTests
     }
 
     /// <summary>
+    /// Every claim that the GUI checks the contract schema names the code that does it.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// Four places said the GUI compared the envelope's schema on start, and none of them was
+    /// true: a grep for "Schema" across both GUI projects returned nothing. One of the four was
+    /// not even a comment - <c>CommandTree</c> removes System.CommandLine's built-in version
+    /// option so that <c>--version --json</c> emits an envelope, real code written for a reader
+    /// that did not exist.
+    /// </para>
+    /// <para>
+    /// A claim about a reader must name the reader. That is checkable, where "is this sentence
+    /// true" is not, and it is what would have caught the original defect: four files naming a
+    /// behaviour, no file implementing it.
+    /// </para>
+    /// </remarks>
+    [Fact]
+    public void EveryClaimThatTheGuiChecksTheContractSchemaNamesTheCodeThatDoes()
+    {
+        var root = RepoRoot.Find().FullName;
+
+        string[] claimants =
+        [
+            Path.Combine(root, "src", "WinLogRotate.Core", "ProductInfo.cs"),
+            Path.Combine(root, "src", "WinLogRotate.Contracts", "CliEnvelope.cs"),
+            Path.Combine(root, "src", "WinLogRotate.Cli", "Output", "Results.cs"),
+            Path.Combine(root, "src", "WinLogRotate.Cli", "Commands", "CommandTree.cs"),
+        ];
+
+        claimants
+            .Where(f => !File.ReadAllText(f).Contains("CliIdentity", StringComparison.Ordinal))
+            .Select(Path.GetFileName)
+            .ShouldBeEmpty("a claim that the GUI checks the schema must name CliIdentity");
+
+        // And the window must CALL it, in code. Naming it was not enough: the first version of
+        // this rule asked only that MainForm.cs contained the string, and the file mentions
+        // CliIdentityTests in a comment - so the window could stop comparing altogether and the
+        // prose would keep this green. Comment lines are stripped for the same reason
+        // NothingMarshalsToTheUiThreadByHand strips them.
+        var window = File.ReadAllLines(
+                Path.Combine(root, "src", "WinLogRotate.Gui", "MainForm.cs"))
+            .Where(line => !line.TrimStart().StartsWith("//", StringComparison.Ordinal))
+            .Where(line => !line.TrimStart().StartsWith("///", StringComparison.Ordinal));
+
+        window.Any(line => line.Contains("CliIdentity.Inspect", StringComparison.Ordinal))
+            .ShouldBeTrue("MainForm must actually run the check, not merely mention it");
+
+        // The check reports and carries on. The sentence that said otherwise described a feature
+        // nobody had written, and implementing it as written would have bricked the window on a
+        // false positive.
+        Directory
+            .EnumerateFiles(Path.Combine(root, "src"), "*.cs", SearchOption.AllDirectories)
+            .Where(f => !f.Contains(Path.Combine("obj", ""), StringComparison.Ordinal))
+            .Where(f => File.ReadAllText(f).Contains("refuses to talk", StringComparison.Ordinal))
+            .Select(Path.GetFileName)
+            .ShouldBeEmpty("the GUI reports a mismatch; it does not refuse to talk");
+    }
+
+    /// <summary>
     /// The rotation gate asks for exactly the rights it grants.
     /// </summary>
     /// <remarks>
