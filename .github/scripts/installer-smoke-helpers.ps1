@@ -327,7 +327,8 @@ function Invoke-WithHeldRotationGate {
     }
 
     if ($said -notcontains 'held') {
-        Receive-Job $job -Wait -AutoRemoveJob -ErrorAction SilentlyContinue | Out-Null
+        Stop-Job   $job -ErrorAction SilentlyContinue
+        Remove-Job $job -Force -ErrorAction SilentlyContinue
         throw "Could not take the rotation gate: $($said -join ', ')"
     }
 
@@ -337,9 +338,20 @@ function Invoke-WithHeldRotationGate {
     }
     finally
     {
-        # SilentlyContinue: the body's verdict is the point, and a cleanup complaint from the
-        # holder must not be able to overwrite it.
-        Receive-Job $job -Wait -AutoRemoveJob -ErrorAction SilentlyContinue | Out-Null
+        # Stopped and removed, never received. Receive-Job is the only part of this cleanup that
+        # can report an error, and an error here is fatal in a way that is easy to miss: the step
+        # runs under `pwsh -command`, which exits 1 when the LAST command failed - so a complaint
+        # from the holder fails the step after the body has already passed. Suppressing the
+        # message with -ErrorAction does not help; it leaves $? false and the failure silent,
+        # which is exactly how this was mis-diagnosed the first time. Leg B survives the same
+        # Receive-Job only because its step ends with assertions rather than with cleanup.
+        Stop-Job   $job -ErrorAction SilentlyContinue
+        Remove-Job $job -Force -ErrorAction SilentlyContinue
+
+        # And leave the shell in a state that says nothing. The body deliberately runs a native
+        # command that exits 3, and both of these outlive the pipeline that set them.
+        $global:LASTEXITCODE = 0
+        $null = $true
     }
 }
 

@@ -455,6 +455,11 @@ jobs:
             if ($envelope.exitCode -ne 3) { throw "Envelope said exitCode $($envelope.exitCode)." }
           }
 
+          # Stated, not inferred. A real failure throws above and never reaches this; without it
+          # the step's verdict is whatever $? and $LASTEXITCODE happen to hold, and the body ran a
+          # native command that exits 3 on purpose.
+          exit 0
+
       # LockProbe decides which strategy a rotation may use, its whole job is to answer a question
       # about a file somebody else is holding, and until milestone 14 it had never met one - on a
       # runner or in a test. Four share masks, four verdicts, through the shipped NativeAOT binary,
