@@ -46,7 +46,11 @@ public static class ConfigValidator
             {
                 d.Warn(file, DiagnosticCode.DangerousPathRefused,
                     decision.Message ?? $"'{pattern}' is permitted only by an explicit override.",
-                    remedy: "Review this override periodically; it is listed in Settings.");
+                    // Not "it is listed in Settings": nothing in the GUI has ever mentioned
+                    // AllowDangerous, and a remedy pointing somewhere that does not exist is
+                    // worse than none - especially now that this warning is reachable at all.
+                    remedy: "Review this override periodically; 'winlogrotate config check' "
+                          + "reports every one in force, with the file and line that set it.");
             }
         }
 
