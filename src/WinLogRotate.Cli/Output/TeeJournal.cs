@@ -55,13 +55,14 @@ internal sealed class TeeJournal(IJournal inner, IOutputSink sink, TimeProvider 
     /// Whether this entry is the final thing that will be said about its operation.
     /// </summary>
     /// <remarks>
-    /// The plan half of an operation that is about to be applied is not: the apply half follows
-    /// and says whether it worked. Everything else is - a skip is decided at plan time and never
-    /// applied, a dry run stops before the apply half and its plan events are all there is, and
-    /// the run and job brackets are statements in their own right.
+    /// The rule itself is <see cref="CliEventLastWord.Settles"/>, shared with the readers of the
+    /// persisted journal so the live account and the recorded one cannot disagree about what one
+    /// operation is. What stays here is the dry-run arm, because dry-ness is a property of the
+    /// run and not of the event: a dry run stops before the apply half, so its plan events are
+    /// all there is, and a reader of a journal has no such flag to consult - nor any need of
+    /// one, since a dry run journals to NullJournal and persists nothing.
     /// </remarks>
-    private bool IsLastWord(CliEvent entry) =>
-        dryRun || entry.Phase != Phase.Plan || entry.Result is not null;
+    private bool IsLastWord(CliEvent entry) => dryRun || CliEventLastWord.Settles(entry);
 
     public void Dispose() => inner.Dispose();
 }

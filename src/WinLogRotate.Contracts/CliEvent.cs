@@ -16,6 +16,11 @@ namespace WinLogRotate.Contracts;
 /// deletion from an abandoned one - which is a question the journal exists to answer later and
 /// a live pane cannot answer at all.
 /// </para>
+/// <para>
+/// <see cref="CliEventLastWord"/> is the one place that reads the pairing, for both the live
+/// stream and every reader of the persisted journal. Anything that counts these records without
+/// going through it is counting records rather than operations, and will say twice the truth.
+/// </para>
 /// </summary>
 public sealed record CliEvent
 {
