@@ -3,6 +3,7 @@ using System.Reflection;
 using System.Text.RegularExpressions;
 using Shouldly;
 using WinLogRotate.Contracts;
+using WinLogRotate.Core.Safety;
 using WinLogRotate.Hosting.Diagnostics;
 using Xunit;
 
@@ -407,5 +408,92 @@ public partial class ArchitectureTests
         names
             .Where(name => !code.Any(c => c.Contains($"DiagnosticCode.{name}", StringComparison.Ordinal)))
             .ShouldBeEmpty("diagnostic codes nothing under src/ ever raises");
+    }
+
+    /// <summary>
+    /// Every option the guard is configured with is read by the guard.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// A guard option nothing consults is worse than an unused field: it is a safety control that
+    /// appears to be set. Three shipped that way. <c>FollowReparsePoints</c> was deleted in
+    /// milestone 15 when its rule died; <c>Elevated</c> outlived the same rule by a milestone and
+    /// was still being populated at three call sites; and <c>MaxFilesOverride</c> was set by the
+    /// journal's own guard while nothing on that path ever reached a match count.
+    /// </para>
+    /// <para>
+    /// <b>The allowlist is empty and should stay that way.</b> The fix for an option nothing reads
+    /// is to read it or delete it, never to annotate it.
+    /// </para>
+    /// </remarks>
+    [Fact]
+    public void EveryGuardOptionIsReadByTheGuard()
+    {
+        var guard = Path.Combine(
+            RepoRoot.Find().FullName, "src", "WinLogRotate.Core", "Safety", "PathGuard.cs");
+
+        // Comments stripped first. GuardOptions and PathGuard share this file, so a declaration
+        // and its doc comment both name every option - and a scan satisfied by prose would pass
+        // while asserting nothing, which is the failure this file exists to catch.
+        var code = string.Join(
+            '\n',
+            File.ReadAllLines(guard)
+                .Where(l => !l.TrimStart().StartsWith("//", StringComparison.Ordinal))
+                .Where(l => !l.TrimStart().StartsWith('*')));
+
+        var options = typeof(GuardOptions)
+            .GetProperties(BindingFlags.Public | BindingFlags.Instance)
+            .Select(p => p.Name)
+            .ToArray();
+
+        options.Length.ShouldBeGreaterThan(1);
+
+        options
+            .Where(name => !code.Contains($"Options.{name}", StringComparison.Ordinal))
+            .ShouldBeEmpty("guard options the guard never reads");
+    }
+
+    /// <summary>
+    /// The link checks cannot be handed an override, and the location checks must be.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// "A link refusal is never overridable" was a promise in a doc comment, kept only because one
+    /// method happened not to consult a field that was in scope. That is the exact shape of the
+    /// defect milestone 15 fixed - <c>CheckReparsePoint</c> was dead and nobody noticed - so here
+    /// the promise is made structural instead: there is no parameter to pass.
+    /// </para>
+    /// <para>
+    /// The second half matters as much. A default value on the three checks that <i>do</i> take a
+    /// scope is precisely how <c>allowdangerous</c> would go quiet again: a new call site omits
+    /// it, the code compiles, and the override silently evaporates. Reflection over the parameter
+    /// rather than a text scan, so neither half can be satisfied by a comment.
+    /// </para>
+    /// </remarks>
+    [Fact]
+    public void TheLinkChecksCannotBeHandedAnOverride()
+    {
+        var methods = typeof(PathGuard).GetMethods(BindingFlags.Public | BindingFlags.Instance);
+        var scope = typeof(GuardScope);
+
+        string[] links = ["CheckLinkTarget", "LinkedFileNotFollowed", "UnresolvableLink"];
+        string[] located = ["CheckPattern", "CheckPath", "CheckMatchCount"];
+
+        // A renamed method would otherwise make both assertions below vacuously true.
+        methods.Count(m => links.Contains(m.Name, StringComparer.Ordinal)).ShouldBe(links.Length);
+        methods.Count(m => located.Contains(m.Name, StringComparer.Ordinal)).ShouldBe(located.Length);
+
+        methods
+            .Where(m => links.Contains(m.Name, StringComparer.Ordinal))
+            .Where(m => m.GetParameters().Any(p => p.ParameterType == scope))
+            .Select(m => m.Name)
+            .ShouldBeEmpty("link checks that can be handed an override");
+
+        methods
+            .Where(m => located.Contains(m.Name, StringComparer.Ordinal))
+            .Where(m => m.GetParameters().SingleOrDefault(p => p.ParameterType == scope)
+                        is not { HasDefaultValue: false })
+            .Select(m => m.Name)
+            .ShouldBeEmpty("location checks whose scope is missing or optional");
     }
 }

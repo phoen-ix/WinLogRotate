@@ -216,7 +216,7 @@ public sealed class RotationRunner(
             var refused = false;
             foreach (var pattern in job.Paths)
             {
-                var decision = guard.CheckPattern(pattern);
+                var decision = guard.CheckPattern(pattern, job.GuardScope);
                 if (!decision.IsAllowed)
                 {
                     refused = true;
@@ -256,7 +256,7 @@ public sealed class RotationRunner(
                 source.Refused.Clear();
             }
 
-            var count = guard.CheckMatchCount(job.Name, matched.Count);
+            var count = guard.CheckMatchCount(job.Name, matched.Count, job.GuardScope);
             if (!count.IsAllowed)
             {
                 Report(Diagnose.Refusal(count, job.Name));

@@ -129,10 +129,13 @@ public static class JournalMaintenance
     /// usual protected-location and match-count rules cannot meaningfully fire here. Reparse
     /// points are still refused - that check has no override anywhere in the product.
     /// </summary>
-    private static PathGuard Guard { get; } = new(new GuardOptions
-    {
-        MaxFilesOverride = int.MaxValue,
-    });
+    /// <remarks>
+    /// The match-count exemption is not stated here. It rides on the synthetic job's
+    /// <c>MaxFiles = int.MaxValue</c>, which reaches the guard as a <see cref="GuardScope"/> like
+    /// any other job's - so there is one mechanism for "this job may match more than the default"
+    /// rather than a second one wired only to this directory.
+    /// </remarks>
+    private static PathGuard Guard { get; } = new(new GuardOptions());
 
     private static EffectiveJob JobFor(JournalSettings settings) => new()
     {

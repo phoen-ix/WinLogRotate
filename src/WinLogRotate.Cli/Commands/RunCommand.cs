@@ -22,7 +22,7 @@ internal static class RunCommand
         var started = TimeProvider.System.GetUtcNow();
 
         var paths = InstallPaths.Resolve(configDir);
-        var guard = new PathGuard(new GuardOptions { Elevated = Privilege.IsElevated() });
+        var guard = new PathGuard(new GuardOptions());
 
         // Honour a pause before doing anything. Exit 0, not an error: pausing is a deliberate
         // operator action, and a scheduled task logging a daily failure because somebody opened

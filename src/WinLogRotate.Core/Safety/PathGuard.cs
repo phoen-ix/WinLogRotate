@@ -62,28 +62,15 @@ public sealed record GuardOptions
     public IReadOnlyList<string> ProtectedRoots { get; init; } = DefaultProtectedRoots();
 
     /// <summary>
-    /// Patterns the operator has explicitly, individually unlocked.
-    /// <para>
-    /// Scoped on purpose: this is a list of exact patterns, not a boolean. There is no
-    /// "disable safety" switch, because that is the switch everyone flips once during an
-    /// incident and never flips back.
-    /// </para>
+    /// Refuse a pattern that resolves to more files than this, unless a job's
+    /// <see cref="GuardScope.MaxMatches"/> says otherwise. A pattern matching 40,000 files is a
+    /// typo far more often than it is a plan.
     /// </summary>
-    public IReadOnlyList<string> AllowDangerous { get; init; } = [];
-
-    /// <summary>Refuse a pattern that resolves to more files than this. A pattern matching
-    /// 40,000 files is a typo far more often than it is a plan.</summary>
     public int MaxMatches { get; init; } = 1000;
 
-    /// <summary>True when the current process holds an elevated token.</summary>
-    public bool Elevated { get; init; }
-
-    /// <summary>
-    /// Overrides <see cref="MaxMatches"/>. Only for directories the product owns and the
-    /// installer created with a locked-down ACL - the journal's own folder - where a
-    /// "did you really mean 40,000 files?" prompt protects nobody.
-    /// </summary>
-    public int? MaxFilesOverride { get; init; }
+    // There is deliberately no AllowDangerous here, and there was until milestone 16. An override
+    // list on the guard itself is machine-wide, which is precisely the "disable safety" switch
+    // this product says it does not have - so it lives on GuardScope, per job, per call.
 
     /// <summary>
     /// The default protected set. Resolved from the running system where possible so a machine
@@ -119,6 +106,81 @@ public sealed record GuardOptions
 }
 
 /// <summary>
+/// One job's scoped relaxations of the guard's defaults.
+/// </summary>
+/// <remarks>
+/// <para>
+/// Passed per call rather than held on <see cref="PathGuard"/>. The guard is built once per
+/// process and an override belongs to exactly one job, so a guard that remembered the last job's
+/// overrides would hand them to the next one - which is the machine-wide switch this type exists
+/// to prevent.
+/// </para>
+/// <para>
+/// The link checks deliberately take no scope at all. A link refusal is not overridable by
+/// anything, and the way to keep that true is for there to be no parameter to pass - see
+/// <see cref="PathGuard.CheckLinkTarget"/>, and the architecture test that pins it.
+/// </para>
+/// </remarks>
+public readonly record struct GuardScope
+{
+    /// <summary>
+    /// Directories this job has explicitly, individually unlocked.
+    /// </summary>
+    /// <remarks>
+    /// A list of specific entries, not a boolean. <c>ConfigValidator</c> refuses an entry broad
+    /// enough to unlock a whole protected root, because that is the switch everyone flips once
+    /// during an incident and never flips back.
+    /// </remarks>
+    public IReadOnlyList<string>? AllowDangerous { get; init; }
+
+    /// <summary>This job's match ceiling, or null to use the guard's default.</summary>
+    public int? MaxMatches { get; init; }
+
+    /// <summary>No job in hand: the guard's defaults, nothing relaxed.</summary>
+    public static GuardScope None => default;
+
+    /// <summary>
+    /// The directory an entry unlocks.
+    /// </summary>
+    /// <remarks>
+    /// <c>Glob.LiteralPrefix</c> alone is wrong here, and silently. For a wildcard-free entry it
+    /// returns the <i>parent</i> - it treats the last segment as a filename - so
+    /// <c>C:\Windows\System32\LogFiles</c> would anchor at <c>C:\Windows\System32</c>, a
+    /// protected root, and the most reasonable entry an operator could write would be the one
+    /// rejected as too broad.
+    /// </remarks>
+    internal static string AnchorOf(string entry)
+    {
+        var normalized = WinPath.Normalize(entry);
+        return Glob.HasWildcard(normalized) ? Glob.LiteralPrefix(normalized) : normalized;
+    }
+
+    /// <summary>
+    /// True when this job unlocked the directory an already-normalised subject sits in.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// Containment, not glob matching, and the difference is the whole feature. The guard is asked
+    /// about concrete files as well as patterns - <c>PlanExecutor</c> re-checks every file at the
+    /// last moment before it is destroyed - and those files include the job's own archives. An
+    /// entry of <c>...\CBS\*.log</c> glob-matches <c>CbsPersist.log</c> and does <b>not</b> match
+    /// <c>CbsPersist.log.1</c> or <c>CbsPersist.log.2.zip</c>, so a glob-matching override would
+    /// pass validation, pass planning, and then refuse every compress and every delete the job
+    /// tried to make. It would look wired and would not work.
+    /// </para>
+    /// <para>
+    /// So an entry names a directory and unlocks that directory. Which files are touched inside it
+    /// remains the job's <c>paths</c> to decide, which is where that decision belongs anyway.
+    /// </para>
+    /// </remarks>
+    internal bool Allows(string normalizedSubject) =>
+        AllowDangerous is { Count: > 0 } list
+        && list.Any(entry =>
+            AnchorOf(entry) is { Length: > 0 } anchor
+            && PathGuard.IsWithin(normalizedSubject, anchor));
+}
+
+/// <summary>
 /// Refuses destructive work in places it should never happen.
 /// <para>
 /// This runs before anything is opened, renamed or deleted, and it is deliberately biased
@@ -133,7 +195,7 @@ public sealed class PathGuard(GuardOptions options)
     /// <summary>
     /// Checks a configured glob pattern, before any filesystem access.
     /// </summary>
-    public GuardDecision CheckPattern(string pattern)
+    public GuardDecision CheckPattern(string pattern, GuardScope scope)
     {
         var problem = WinPath.Validate(pattern, allowWildcards: true);
         if (problem != PathProblem.None)
@@ -149,10 +211,14 @@ public sealed class PathGuard(GuardOptions options)
         }
 
         var normalized = WinPath.Normalize(pattern);
-        var overridden = IsOverridden(normalized);
 
         // The directory the pattern is anchored at, which is what actually gets walked.
         var anchor = Glob.LiteralPrefix(normalized);
+
+        // Asked about the anchor rather than the pattern, so the question matches the one
+        // CheckPath asks about a concrete file: is the directory this touches one the job
+        // unlocked? A pattern and the files it finds must not get different answers.
+        var overridden = scope.Allows(anchor);
 
         if (string.IsNullOrEmpty(anchor) || WinPath.IsRoot(anchor))
         {
@@ -176,7 +242,7 @@ public sealed class PathGuard(GuardOptions options)
     }
 
     /// <summary>Checks a concrete file about to be modified or deleted.</summary>
-    public GuardDecision CheckPath(string path)
+    public GuardDecision CheckPath(string path, GuardScope scope)
     {
         var problem = WinPath.Validate(path);
         if (problem != PathProblem.None)
@@ -191,7 +257,7 @@ public sealed class PathGuard(GuardOptions options)
         }
 
         var normalized = WinPath.Normalize(path);
-        var overridden = IsOverridden(normalized);
+        var overridden = scope.Allows(normalized);
 
         return ClassifyLocation(normalized) switch
         {
@@ -232,17 +298,32 @@ public sealed class PathGuard(GuardOptions options)
         return (GuardVerdict.Allowed, null);
     }
 
-    /// <summary>Checks the size of a resolved match set.</summary>
-    public GuardDecision CheckMatchCount(string pattern, int count)
+    /// <summary>
+    /// Checks the size of a resolved match set against this job's ceiling.
+    /// </summary>
+    /// <param name="subject">
+    /// What to name in the message - a pattern from <c>glob</c>, a job name from the runner. It is
+    /// deliberately not treated as a path: the old code ran the override lookup over it, which
+    /// meant normalising a job name as a filename and matching it against globs.
+    /// </param>
+    /// <remarks>
+    /// <c>allowdangerous</c> does not unlock this, and never did meaningfully. <c>maxfiles</c> is
+    /// the count override; two keys relaxing one rule is how an operator raises a ceiling they did
+    /// not know they were raising.
+    /// </remarks>
+    public GuardDecision CheckMatchCount(string subject, int count, GuardScope scope)
     {
-        if (count <= (Options.MaxFilesOverride ?? Options.MaxMatches))
+        var ceiling = scope.MaxMatches ?? Options.MaxMatches;
+
+        if (count <= ceiling)
         {
-            return Allow(pattern, overridden: false);
+            return Allow(subject, overridden: false);
         }
 
-        var overridden = IsOverridden(WinPath.Normalize(pattern));
-        return Refuse(GuardVerdict.TooManyMatches, pattern, overridden,
-            $"'{pattern}' matches {count:N0} files, above the limit of {Options.MaxMatches:N0}.",
+        // The ceiling actually applied, not Options.MaxMatches. Reporting the default while
+        // enforcing a job's own limit tells the operator to raise a number that is already raised.
+        return Refuse(GuardVerdict.TooManyMatches, subject, overridden: false,
+            $"'{subject}' matches {count:N0} files, above the limit of {ceiling:N0}.",
             "Narrow the pattern, or raise maxfiles if this really is one job.");
     }
 
@@ -366,11 +447,6 @@ public sealed class PathGuard(GuardOptions options)
 
         return c.StartsWith(r.EndsWith('\\') ? r : r + '\\', StringComparison.OrdinalIgnoreCase);
     }
-
-    private bool IsOverridden(string normalized) =>
-        Options.AllowDangerous.Any(allowed =>
-            WinPath.Normalize(allowed).Equals(normalized, StringComparison.OrdinalIgnoreCase)
-            || Glob.IsMatch(normalized, WinPath.Normalize(allowed)));
 
     private static GuardDecision Allow(string subject, bool overridden) =>
         new() { Verdict = GuardVerdict.Allowed, Subject = subject, Overridden = overridden };

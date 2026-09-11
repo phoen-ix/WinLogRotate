@@ -80,7 +80,7 @@ public sealed class PlanExecutor(
             // Against where the file REALLY is, not where it is spelled. The planner's check was
             // textual, so a directory swapped for a junction between planning and acting - or one
             // reached by an 8.3 name - would pass it and be deleted from anyway.
-            var decision = guard.CheckPath(Resolved(op.Source, resolved));
+            var decision = guard.CheckPath(Resolved(op.Source, resolved), job.GuardScope);
             if (!decision.IsAllowed)
             {
                 failed++;

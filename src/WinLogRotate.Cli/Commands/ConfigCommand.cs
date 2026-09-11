@@ -89,7 +89,7 @@ internal static class ConfigCommand
     private static (LoadedConfig, InstallPaths) Load(string? configDir, bool quarantine)
     {
         var paths = InstallPaths.Resolve(configDir);
-        var guard = new PathGuard(new GuardOptions { Elevated = Privilege.IsElevated() });
+        var guard = new PathGuard(new GuardOptions());
         return (ConfigLoader.Load(paths, guard, quarantine), paths);
     }
 

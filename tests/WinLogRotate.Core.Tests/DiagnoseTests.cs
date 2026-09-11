@@ -25,7 +25,7 @@ public sealed class DiagnoseTests
     [Fact]
     public void ARefusedProtectedLocationIsASecurityDiagnostic_NotARotationFailure()
     {
-        var decision = Guard().CheckPattern(@"C:\Windows\System32\*.log");
+        var decision = Guard().CheckPattern(@"C:\Windows\System32\*.log", GuardScope.None);
         decision.IsAllowed.ShouldBeFalse();
 
         var d = Diagnose.Refusal(decision, job: "Bad job");
@@ -41,7 +41,7 @@ public sealed class DiagnoseTests
         // ConfigValidator reports a refused pattern as an Error. The runtime guard reports the
         // identical condition, and a severity that depends on which code path happened to
         // notice it would make any threshold behave differently for the same broken config.
-        Diagnose.Refusal(Guard().CheckPattern(@"C:\Windows\System32\*.log"))
+        Diagnose.Refusal(Guard().CheckPattern(@"C:\Windows\System32\*.log", GuardScope.None))
             .Severity.ShouldBe(Severity.Error);
     }
 
@@ -50,7 +50,7 @@ public sealed class DiagnoseTests
     {
         // The guard already writes the best available explanation and the exact fix. Re-wording
         // it here would mean two places to keep correct, and the copy would lose.
-        var decision = Guard().CheckMatchCount(@"C:\logs\*", 1842);
+        var decision = Guard().CheckMatchCount(@"C:\logs\*", 1842, GuardScope.None);
 
         var d = Diagnose.Refusal(decision);
 
@@ -62,7 +62,7 @@ public sealed class DiagnoseTests
     [Fact]
     public void TooManyMatchesIsAMisconfiguration_NotAnAttack()
     {
-        var d = Diagnose.Refusal(Guard().CheckMatchCount(@"C:\logs\*", 40_000));
+        var d = Diagnose.Refusal(Guard().CheckMatchCount(@"C:\logs\*", 40_000, GuardScope.None));
 
         d.Severity.ShouldBe(Severity.Error);
         d.Code.ShouldBe(DiagnosticCode.DangerousPathRefused);
@@ -90,7 +90,7 @@ public sealed class DiagnoseTests
     {
         // Putting a typo in the 9xxx band would train operators to skim the one band that must
         // never be skimmed.
-        var d = Diagnose.Refusal(Guard().CheckPattern(@"C:logs\*.log"));
+        var d = Diagnose.Refusal(Guard().CheckPattern(@"C:logs\*.log", GuardScope.None));
 
         d.Code.ShouldBe(DiagnosticCode.ConfigInvalid);
         d.Severity.ShouldBe(Severity.Error);

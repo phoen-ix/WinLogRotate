@@ -1,3 +1,5 @@
+using WinLogRotate.Core.Safety;
+
 namespace WinLogRotate.Core.Configuration;
 
 /// <summary>What a job does.</summary>
@@ -317,4 +319,20 @@ public sealed record EffectiveJob
     public required TimeSpan HookTimeout { get; init; }
     public required IReadOnlyList<string> AllowDangerous { get; init; }
     public string? SourceFile { get; init; }
+
+    /// <summary>
+    /// This job's scoped relaxations of the guard's defaults.
+    /// </summary>
+    /// <remarks>
+    /// The one place a job becomes a <see cref="GuardScope"/>, so there is exactly one answer to
+    /// "what has this job unlocked". Until milestone 16 there was no conversion at all:
+    /// <c>allowdangerous</c> was bound, merged, carried here and read by nothing, so the remedy
+    /// the guard printed named a key that did nothing and the refusal it was meant to lift took
+    /// every rotation on the machine down with it.
+    /// </remarks>
+    public GuardScope GuardScope => new()
+    {
+        AllowDangerous = AllowDangerous,
+        MaxMatches = MaxFiles,
+    };
 }

@@ -15,7 +15,7 @@ public static class ConfigValidator
 
         foreach (var pattern in job.Paths)
         {
-            var decision = guard.CheckPattern(pattern);
+            var decision = guard.CheckPattern(pattern, job.GuardScope);
             if (!decision.IsAllowed)
             {
                 d.Error(file, DiagnosticCode.DangerousPathRefused,

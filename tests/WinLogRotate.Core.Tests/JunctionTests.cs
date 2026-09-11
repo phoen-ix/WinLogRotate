@@ -97,7 +97,7 @@ public sealed class JunctionTests : IDisposable
 
     /// <summary>A guard whose only protected location is inside this test's own tree.</summary>
     private PathGuard Guard(params string[] protectedRoots) =>
-        new(new GuardOptions { ProtectedRoots = protectedRoots, Elevated = true });
+        new(new GuardOptions { ProtectedRoots = protectedRoots });
 
     // ---- the defect --------------------------------------------------------------------------
 

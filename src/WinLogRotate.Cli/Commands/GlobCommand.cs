@@ -11,8 +11,8 @@ internal static class GlobCommand
 {
     public static int Run(CommandContext ctx, string pattern)
     {
-        var guard = new PathGuard(new GuardOptions { Elevated = Privilege.IsElevated() });
-        var decision = guard.CheckPattern(pattern);
+        var guard = new PathGuard(new GuardOptions());
+        var decision = guard.CheckPattern(pattern, GuardScope.None);
 
         if (!decision.IsAllowed)
         {
@@ -58,7 +58,7 @@ internal static class GlobCommand
             ctx.Output.Line($"refused: {diagnostic.Message}");
         }
 
-        var count = guard.CheckMatchCount(pattern, matches.Count);
+        var count = guard.CheckMatchCount(pattern, matches.Count, GuardScope.None);
 
         if (!count.IsAllowed)
         {
