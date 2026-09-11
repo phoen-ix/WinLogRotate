@@ -20,6 +20,21 @@ internal sealed class JsonOutputSink(bool verbose, bool stream, TextWriter? stre
     private readonly DiagnosticCollector _diagnostics = new();
     private readonly TextWriter _events = streamTo ?? Console.Out;
 
+    /// <summary>
+    /// The writer to close when the verb is done - the one <c>--output</c> opened, and never
+    /// <c>Console.Out</c>.
+    /// </summary>
+    /// <remarks>
+    /// Nothing closed it. <c>CommandContext.From</c> opens the file and is called inline at every
+    /// SetAction in the tree, so the handle stayed open for the life of the process. On Linux
+    /// nothing notices; on Windows a reader opening with the default <c>FileShare.Read</c> cannot
+    /// tolerate an outstanding write handle, so reading the file during a run is a sharing
+    /// violation. The GUI escaped it twice over - its tail shares write, and it reads the whole
+    /// file only after the child has exited - which is why tests running the CLI in-process are
+    /// what finally found it.
+    /// </remarks>
+    private readonly TextWriter? _owned = streamTo;
+
     public bool Verbose { get; } = verbose;
 
     public IReadOnlyList<CliDiagnostic> Diagnostics => _diagnostics.Items;
@@ -72,6 +87,13 @@ internal sealed class JsonOutputSink(bool verbose, bool stream, TextWriter? stre
         // until now it redirected the event half and left the result behind.
         _events.WriteLine(JsonSerializer.Serialize(envelope, info));
         _events.Flush();
+
+        // Here, and not in a Dispose the caller would have to remember: Complete is the last
+        // thing every verb does, and the envelope above is the last thing written. Closing it
+        // makes the file readable by anything the instant the verb returns - which is the whole
+        // contract of a flag whose only caller is another program waiting to read it.
+        _owned?.Dispose();
+
         return exitCode;
     }
 }

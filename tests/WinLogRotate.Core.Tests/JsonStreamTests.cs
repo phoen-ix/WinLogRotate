@@ -49,8 +49,8 @@ public sealed class JsonStreamTests : IDisposable
         missingok = true
         """;
 
-    /// <summary>Runs the verb exactly as the GUI's elevated path does, and returns the file.</summary>
-    private string[] Stream(params string[] verb)
+    /// <summary>Runs the verb exactly as the GUI's elevated path does, and names the file.</summary>
+    private string Run(params string[] verb)
     {
         var file = Path.Combine(_dir.FullName, $"events-{Guid.NewGuid():N}.ndjson");
 
@@ -60,7 +60,54 @@ public sealed class JsonStreamTests : IDisposable
 
         parse.Invoke();
 
+        return file;
+    }
+
+    /// <summary>
+    /// What the verb left in the file.
+    /// </summary>
+    /// <remarks>
+    /// An ordinary reader, deliberately: <c>File.ReadAllLines</c> opens with the default
+    /// <c>FileShare.Read</c>, which on Windows cannot tolerate an outstanding write handle. That
+    /// is how the CLI never closing its <c>--output</c> file was caught, and leaving this alone
+    /// is what keeps it caught.
+    /// </remarks>
+    private string[] Stream(params string[] verb)
+    {
+        var file = Run(verb);
         return File.Exists(file) ? File.ReadAllLines(file) : [];
+    }
+
+    /// <summary>
+    /// The verb lets go of the file it was told to write.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// Nothing closed it. <c>CommandContext.From</c> opens the stream and is called inline at
+    /// every SetAction in the tree, so the handle outlived the verb and was released only by the
+    /// process exiting. The GUI escaped it twice over - its tail shares write, and it reads the
+    /// whole file only after the child has exited - so what finally found it was these tests
+    /// running the CLI in-process, on Windows, where they failed and nowhere else.
+    /// </para>
+    /// <para>
+    /// Asserted by opening exclusively, which .NET enforces on Unix as well through flock - so
+    /// this holds on the Linux leg rather than being a property only the Windows one can see.
+    /// </para>
+    /// </remarks>
+    [Fact]
+    public void ARunLetsGoOfTheFileItWroteTo()
+    {
+        var file = Run("run", "--no-notify", "--config-dir", Config(Job("app", "\"C:/app/logs/*.log\"")));
+
+        File.Exists(file).ShouldBeTrue("the fixture must have produced a file to let go of");
+
+        Should.NotThrow(
+            () =>
+            {
+                using var exclusive = new FileStream(
+                    file, FileMode.Open, FileAccess.Read, FileShare.None);
+            },
+            "the verb has returned and something still holds its --output file open");
     }
 
     /// <summary>
