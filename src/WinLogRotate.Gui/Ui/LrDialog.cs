@@ -1,5 +1,7 @@
 using System.Runtime.InteropServices;
 
+using WinLogRotate.Core;
+
 namespace WinLogRotate.Gui.Ui;
 
 /// <summary>How serious a dialog is.</summary>
@@ -188,9 +190,22 @@ public static partial class LrDialog
     /// <c>BCM_SETSHIELD</c> is silently ignored on an owner-drawn button, which is why
     /// <see cref="FlatStyle.System"/> is set first. Half the shield code in circulation omits
     /// that and quietly does nothing at all.
+    /// <para>
+    /// And nothing is drawn when this process is already elevated. The shield means "pressing
+    /// this raises a UAC prompt", and an elevated process raises none - a shield that promises a
+    /// prompt which never comes is how people learn to ignore shields. The question is about
+    /// <i>this window's</i> token, so it is asked of this process rather than read off a child's
+    /// answer: it has to be answerable before any child exists, and the first page is built
+    /// before the start-up probe returns.
+    /// </para>
     /// </remarks>
     public static void AddShield(Button button)
     {
+        if (Privilege.IsElevated())
+        {
+            return;
+        }
+
         button.FlatStyle = FlatStyle.System;
 
         void Apply(object? sender, EventArgs e) =>

@@ -29,8 +29,16 @@ public sealed record VersionResult
     public required string Runtime { get; init; }
     public required string Architecture { get; init; }
 
-    /// <summary>True when this process holds an elevated token. The GUI uses it to decide
-    /// whether a button needs a shield.</summary>
+    /// <summary>
+    /// True when the process that answered held an elevated token.
+    /// </summary>
+    /// <remarks>
+    /// A fact about that process, for a person or a script asking "was that run elevated?" - and
+    /// the only elevation answer available from a verb that reads no configuration at all. It is
+    /// not what draws the UAC shield: the shield predicts whether <i>this window's</i> next
+    /// action will raise a prompt, which is a question about the window's own token and has to be
+    /// answerable before any child exists. See <c>LrDialog.AddShield</c>.
+    /// </remarks>
     public required bool Elevated { get; init; }
 }
 
@@ -72,7 +80,14 @@ public sealed record JournalResult
     public required IReadOnlyList<CliEvent> Entries { get; init; }
 }
 
-/// <summary>A config diagnostic in wire form, so the GUI can jump to file, line and column.</summary>
+/// <summary>
+/// A config diagnostic in wire form, located precisely enough to click.
+/// </summary>
+/// <remarks>
+/// For an editor integration or a script. Not for this GUI: the Jobs page runs <c>config check</c>
+/// without <c>--json</c> and shows the CLI's own rendered text, which is better output than a
+/// hand-walked table of the same fields would be.
+/// </remarks>
 public sealed record ConfigDiagnosticDto
 {
     public required Severity Severity { get; init; }
@@ -152,7 +167,8 @@ public sealed record DoctorResult
 /// </summary>
 /// <remarks>
 /// Deliberately counts rather than names. Target strings are credentials - a webhook URL's entropy
-/// is in its path - and this payload is polled by the GUI and pasted into support tickets.
+/// is in its path - and this payload rides in an envelope the GUI polls, and is pasted into
+/// support tickets.
 /// </remarks>
 public sealed record NotifyDoctorDto
 {
@@ -354,7 +370,13 @@ public sealed record ProbeResultDto
     public required string Verdict { get; init; }
     public required string Explanation { get; init; }
 
-    /// <summary>The best strategy this file actually supports, for the GUI to preselect.</summary>
+    /// <summary>
+    /// The best strategy this file actually supports.
+    /// </summary>
+    /// <remarks>
+    /// For whoever is choosing a <c>lockstrategy</c> for a job - at a prompt, or in a script that
+    /// probes a path before writing a configuration. Nothing in the window runs this verb.
+    /// </remarks>
     public string? Suggested { get; init; }
 
     public int BlockingError { get; init; }

@@ -105,6 +105,142 @@ public partial class ArchitectureTests
     }
 
     /// <summary>
+    /// The elevation question is asked in exactly two places.
+    /// </summary>
+    /// <remarks>
+    /// One is the start-up banner, which says a read-only view is a supported way to run. The
+    /// other is the UAC shield, which means "pressing this raises a prompt" and must therefore
+    /// not be drawn when this process is already elevated. Both are statements about this
+    /// window's own token.
+    /// <para>
+    /// Asserted as an equality rather than a containment, so it pins both halves: that the rule
+    /// exists in <c>LrDialog</c>, and that no page re-derives it. A page deciding for itself
+    /// whether to draw a shield is how six call sites came to draw one unconditionally.
+    /// </para>
+    /// </remarks>
+    [Fact]
+    public void TheElevationQuestionIsAskedInExactlyTwoPlaces()
+    {
+        var gui = Path.Combine(RepoRoot.Find().FullName, "src", "WinLogRotate.Gui");
+
+        Directory
+            .EnumerateFiles(gui, "*.cs", SearchOption.AllDirectories)
+            .Where(f => !f.Contains(Path.Combine("obj", ""), StringComparison.Ordinal))
+            .Where(f => File.ReadAllLines(f)
+                .Where(line => !line.TrimStart().StartsWith("///", StringComparison.Ordinal))
+                .Any(line => line.Contains("Privilege.IsElevated()", StringComparison.Ordinal)))
+            .Select(Path.GetFileName)
+            .OrderBy(f => f, StringComparer.Ordinal)
+            .ShouldBe(["LrDialog.cs", "MainForm.cs"]);
+    }
+
+    /// <summary>
+    /// A payload does not claim a reader it does not have.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// Five doc comments in <c>Results.cs</c> named the GUI as a reader of a field the GUI never
+    /// read. <c>VersionResult</c> said "the GUI reads this on start" while no handshake existed at
+    /// all; <c>Elevated</c> said it decided whether a button needed a shield while every shield
+    /// was drawn unconditionally; <c>ConfigDiagnosticDto</c> offered file, line and column for a
+    /// page that runs <c>config check</c> without <c>--json</c>; and <c>ProbeResultDto</c> offered
+    /// a value to preselect for a verb the window never runs.
+    /// </para>
+    /// <para>
+    /// So: naming the GUI in a payload's documentation commits that payload to being read by it.
+    /// The GUI hand-walks every envelope, so "read" means the property's camelCase name appears
+    /// as a literal in one of the two GUI projects.
+    /// </para>
+    /// <para>
+    /// Record-level, and therefore weaker than it looks: a record passes if <i>any</i> of its
+    /// properties is read, and the name could be one the GUI reads from a different verb's
+    /// payload entirely. Stated rather than glossed - the same caveat
+    /// <c>EveryDiagnosticCodeIsRaisedBySomethingUnderSrc</c> makes about itself.
+    /// </para>
+    /// </remarks>
+    [Fact]
+    public void EveryResultThatNamesTheGuiIsReadByTheGui()
+    {
+        var root = RepoRoot.Find().FullName;
+
+        var gui = new[] { "WinLogRotate.Gui", "WinLogRotate.Gui.Model" }
+            .SelectMany(p => Directory.EnumerateFiles(
+                Path.Combine(root, "src", p), "*.cs", SearchOption.AllDirectories))
+            .Where(f => !f.Contains(Path.Combine("obj", ""), StringComparison.Ordinal))
+            .Select(File.ReadAllText)
+            .ToArray();
+
+        var lines = File.ReadAllLines(
+            Path.Combine(root, "src", "WinLogRotate.Cli", "Output", "Results.cs"));
+
+        var doc = new List<string>();
+        var records = new List<(string Name, string Doc, List<string> Body)>();
+        (string Name, string Doc, List<string> Body)? open = null;
+
+        foreach (var line in lines)
+        {
+            if (open is { } current)
+            {
+                if (line == "}")
+                {
+                    records.Add(current);
+                    open = null;
+                }
+                else
+                {
+                    current.Body.Add(line);
+                }
+
+                continue;
+            }
+
+            var declared = Regex.Match(line, @"^public sealed record (\w+)");
+
+            if (declared.Success)
+            {
+                open = (declared.Groups[1].Value, string.Join('\n', doc), []);
+                doc.Clear();
+                continue;
+            }
+
+            if (line.TrimStart().StartsWith("///", StringComparison.Ordinal))
+            {
+                doc.Add(line);
+            }
+            else if (line.Trim().Length > 0)
+            {
+                doc.Clear();
+            }
+        }
+
+        // Self-check: the rule is about the records in this file, and there are a lot of them.
+        records.Count.ShouldBeGreaterThan(20);
+
+        var claimants = records
+            .Where(r => (r.Doc + string.Join('\n', r.Body))
+                .Contains("the GUI", StringComparison.OrdinalIgnoreCase))
+            .ToArray();
+
+        claimants.Length.ShouldBeGreaterThan(1, "some payloads do name the GUI");
+
+        foreach (var (name, _, body) in claimants)
+        {
+            var properties = body
+                .Select(l => Regex.Match(l, @"public (?:required )?[\w<>?\[\].]+ (\w+) \{ get;"))
+                .Where(m => m.Success)
+                .Select(m => m.Groups[1].Value)
+                .Select(n => char.ToLowerInvariant(n[0]) + n[1..])
+                .ToArray();
+
+            properties.ShouldNotBeEmpty($"{name} has no properties this rule can check");
+
+            properties
+                .Any(n => gui.Any(f => f.Contains($"\"{n}\"", StringComparison.Ordinal)))
+                .ShouldBeTrue($"{name} names the GUI, and the GUI reads none of its fields");
+        }
+    }
+
+    /// <summary>
     /// Every page that runs the CLI reports a defect.
     /// </summary>
     /// <remarks>
