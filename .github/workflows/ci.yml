@@ -626,6 +626,104 @@ jobs:
       # insertion string, and category 0. Get any of those wrong and the event still appears -
       # it just renders as "The description for Event ID N ... cannot be found", which no unit
       # test can catch because it is Event Viewer doing the rendering, not us.
+      # A junction needs no privilege at all to create, which is the entire reason the defence
+      # exists - and until this milestone the job's own anchor was walked without ever being
+      # checked, so a job pointed at one was followed wherever it led.
+      #
+      # Every run below is --dry-run, deliberately. The revert table for this feature requires
+      # running these steps against a guard that has been switched off on purpose, and a real run
+      # in that state would walk System32 as an administrator with a retention plan. A dry run
+      # still reaches CheckPattern, the enumeration and the new link check - all of which happen
+      # before anything consults options.DryRun.
+      - name: 'Leg A: a junction to an ordinary directory is followed'
+        shell: pwsh
+        run: |
+          . .github/scripts/installer-smoke-helpers.ps1
+          $exe = Join-Path (Get-UninstallEntry -Scope machine).InstallLocation 'winlogrotate.exe'
+
+          New-Item -ItemType Directory -Force 'C:\smoke\real-logs' -ErrorAction Stop | Out-Null
+          [System.IO.File]::WriteAllBytes('C:\smoke\real-logs\svc.log', (New-Object byte[] 4096))
+          New-Item -ItemType Junction -Path 'C:\smoke\junc-ok' -Target 'C:\smoke\real-logs' -ErrorAction Stop | Out-Null
+
+          # Proven, not assumed. A junction that silently failed to be created would make every
+          # assertion below pass against an ordinary directory.
+          if (-not ((Get-Item 'C:\smoke\junc-ok').Attributes -band [IO.FileAttributes]::ReparsePoint)) {
+            throw 'C:\smoke\junc-ok is not a reparse point.'
+          }
+
+          $g = & $exe glob 'C:/smoke/junc-ok/*.log' --json | ConvertFrom-Json
+          if ($LASTEXITCODE -ne 0) { throw "glob exited $LASTEXITCODE through a benign junction." }
+
+          if ($g.result.count -ne 1) {
+            throw ("glob found $($g.result.count) file(s) through a junction to an ordinary " +
+                   'directory. Relocating logs onto another volume is ordinary practice and must ' +
+                   'keep working.')
+          }
+
+          $resolved = Get-JsonProperty $g.result 'resolvedAnchor'
+          if (-not $resolved) { throw 'glob did not report where the anchor actually led.' }
+          "  junction followed, anchor resolved to $resolved"
+
+          # The link itself, non-recursively. Leaving a live junction under C:\smoke would make
+          # any later recursive delete of that tree a delete of whatever it points at.
+          (Get-Item 'C:\smoke\junc-ok').Delete()
+
+      - name: 'Leg A: a junction into System32 is refused and names both paths'
+        shell: pwsh
+        run: |
+          . .github/scripts/installer-smoke-helpers.ps1
+          $exe = Join-Path (Get-UninstallEntry -Scope machine).InstallLocation 'winlogrotate.exe'
+
+          New-Item -ItemType Junction -Path 'C:\smoke\junc-bad' -Target 'C:\Windows\System32' -ErrorAction Stop | Out-Null
+          if (-not ((Get-Item 'C:\smoke\junc-bad').Attributes -band [IO.FileAttributes]::ReparsePoint)) {
+            throw 'C:\smoke\junc-bad is not a reparse point.'
+          }
+
+          $before = @(Get-ChildItem 'C:\Windows\System32' -Filter *.log -ErrorAction SilentlyContinue).Count
+
+          @(
+            'schema = 1', '[job]', 'name = "junction"', 'kind = "rotate"',
+            'paths = ["C:/smoke/junc-bad/*.log"]',
+            'rotate = 3', 'compress = false', 'notifempty = false'
+          ) | Set-Content "$env:DATA_DIR\conf.d\junction.toml"
+
+          $r = & $exe run --dry-run --job junction --no-notify --json | ConvertFrom-Json
+          $global:LASTEXITCODE = 0
+
+          $refusals = @($r.diagnostics | Where-Object { $_.code -eq 'LR9004' })
+          if ($refusals.Count -ne 1) {
+            throw ("expected exactly one LR9004, got $($refusals.Count). Codes: " +
+                   ($r.diagnostics.code -join ', '))
+          }
+
+          # Severity is an integer on the wire - CliJsonContext registers no string converter -
+          # so Critical is 3 and comparing against 'Critical' would silently never match.
+          if ($refusals[0].severity -ne 3) {
+            throw "LR9004 came back at severity $($refusals[0].severity), expected 3 (Critical)."
+          }
+
+          foreach ($needle in @('junc-bad', 'System32')) {
+            if ($refusals[0].message -notlike "*$needle*") {
+              throw ("the refusal does not name '$needle': $($refusals[0].message). A refusal " +
+                     'that does not say what was aimed where is unactionable.')
+            }
+          }
+
+          # One line for one cause. "matched no files" on top would describe the consequence as
+          # though it were a second, separate problem.
+          if ($r.diagnostics.code -contains 'LR2002') {
+            throw 'the refused pattern was also reported as matching no files.'
+          }
+
+          $after = @(Get-ChildItem 'C:\Windows\System32' -Filter *.log -ErrorAction SilentlyContinue).Count
+          if ($after -ne $before) { throw "System32 changed: $before -> $after." }
+
+          '  refused, named, and nothing behind it was touched'
+
+          # Delete the link itself, never the tree behind it.
+          (Get-Item 'C:\smoke\junc-bad').Delete()
+          Remove-Item "$env:DATA_DIR\conf.d\junction.toml"
+
       - name: 'Leg A: the Event Log actually renders our messages'
         shell: pwsh
         run: |
