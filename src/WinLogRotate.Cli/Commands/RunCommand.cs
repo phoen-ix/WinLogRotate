@@ -216,7 +216,8 @@ internal static class RunCommand
         }
 
         var refused = config.SkippedJobs.Count > 0
-            ? $" {config.SkippedJobs.Count} job(s) skipped: {string.Join(", ", config.SkippedJobs)}."
+            ? $" {config.SkippedJobs.Count} job(s) skipped: "
+              + $"{string.Join(", ", config.SkippedJobs.Select(j => j.Name))}."
             : string.Empty;
 
         ctx.Output.Line((options.DryRun
@@ -238,6 +239,7 @@ internal static class RunCommand
             Failed = report.Failed,
             BytesFreed = report.BytesFreed,
             Errors = report.Errors,
+            SkippedJobs = [.. config.SkippedJobs.Select(j => j.Name)],
         };
 
         // A job refused during validation never reaches the runner, so the runner cannot know it

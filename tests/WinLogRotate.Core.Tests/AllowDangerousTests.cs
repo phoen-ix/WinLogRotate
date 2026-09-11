@@ -86,7 +86,7 @@ public sealed class AllowDangerousTests : IDisposable
             "a refused path belongs to one job, so it must not stop the whole machine rotating");
 
         config.Jobs.ShouldHaveSingleItem().Name.ShouldBe("app-logs");
-        config.SkippedJobs.ShouldHaveSingleItem().ShouldBe("iis-logs");
+        config.SkippedJobs.ShouldHaveSingleItem().Name.ShouldBe("iis-logs");
     }
 
     /// <summary>A skipped job is named, and the refusal is attributed to it.</summary>
@@ -162,7 +162,7 @@ public sealed class AllowDangerousTests : IDisposable
             "cbs", "\"C:/Windows/Logs/CBS/*.log\"", $"allowdangerous = [\"{entry}\"]")));
 
         config.Jobs.ShouldBeEmpty();
-        config.SkippedJobs.ShouldHaveSingleItem().ShouldBe("cbs");
+        config.SkippedJobs.ShouldHaveSingleItem().Name.ShouldBe("cbs");
 
         config.Diagnostics
             .Any(d => d.Severity >= Severity.Error && d.Message.Contains("allowdangerous", StringComparison.Ordinal))
@@ -208,7 +208,7 @@ public sealed class AllowDangerousTests : IDisposable
                 "allowdangerous = [\"C:/Windows/Logs/CBS\"]")));
 
         config.Jobs.ShouldBeEmpty();
-        config.SkippedJobs.ShouldHaveSingleItem().ShouldBe("cbs");
+        config.SkippedJobs.ShouldHaveSingleItem().Name.ShouldBe("cbs");
 
         config.Diagnostics.ShouldHaveSingleItem()
             .Message.ShouldContain("was not honoured because");

@@ -102,6 +102,17 @@ public sealed record RunResult
     public required int Failed { get; init; }
     public required long BytesFreed { get; init; }
     public required IReadOnlyList<string> Errors { get; init; }
+
+    /// <summary>
+    /// Jobs that could not be loaded, so this run never attempted them.
+    /// </summary>
+    /// <remarks>
+    /// In the envelope because the console line alone reached only a human reading stdout. A
+    /// monitoring wrapper or a GUI parsing --json had no way to learn that a job had stopped
+    /// rotating - which, since milestone 16 made this cost one job rather than the whole run, is
+    /// the difference between a machine that is fine and one that is quietly not.
+    /// </remarks>
+    public IReadOnlyList<string> SkippedJobs { get; init; } = [];
 }
 
 /// <summary>Payload of <c>winlogrotate doctor</c>: every fact an operator would otherwise

@@ -713,4 +713,69 @@ public sealed class NotificationPlannerTests : IDisposable
 
     private string FingerprintOf(CliDiagnostic d) =>
         Plan([d], BaselinedState()).Messages.Single().Fingerprint;
+
+    // ---- a job that could not be loaded -------------------------------------------------------
+
+    private NotificationPlan PlanUnloadable(
+        NotifyStateStore state, bool muted = false, string job = "iis") =>
+        NotificationPlanner.PlanFor(
+            new RunSummary
+            {
+                RunId = "01JQTEST",
+                Machine = "WEB01",
+                JobsRun = 0,
+                Completed = 0,
+                BytesFreed = 0,
+
+                // Never observed: it did not reach the runner. It joins the considered set only
+                // because it carries a diagnostic.
+                ObservedJobs = [],
+                UnloadableJobs = [job],
+                MutedJobs = muted ? [job] : [],
+            },
+            [Bad(job, DiagnosticCode.DangerousPathRefused)],
+            Settings(), state, _now);
+
+    /// <summary>
+    /// A job that could not be loaded is reported on the first run, not baselined.
+    /// </summary>
+    /// <remarks>
+    /// Baselining exists so installing this on an already-broken machine does not page anybody
+    /// about problems predating the install. A job whose configuration will not validate is a
+    /// change somebody made minutes ago, so that reasoning does not reach it - and before
+    /// milestone 16 the same condition stopped every rotation on the machine, which nobody could
+    /// miss. Left to baseline, the first night is silent and nothing is said until RemindAfter
+    /// elapses: seven days, with the log not rotating throughout.
+    /// </remarks>
+    [Fact]
+    public void AJobThatCouldNotBeLoadedIsReportedOnTheFirstRun()
+    {
+        var plan = PlanUnloadable(State());
+
+        var message = plan.Messages.ShouldHaveSingleItem();
+        message.Job.ShouldBe("iis");
+        message.Reason.ShouldBe(NotifyReason.NewFailure);
+    }
+
+    /// <summary>An ordinary first sighting is still baselined.</summary>
+    /// <remarks>
+    /// The exemption has to be narrow, or it becomes the wall of alerts baselining exists to
+    /// prevent. A job that loaded fine and merely failed is not a configuration change.
+    /// </remarks>
+    [Fact]
+    public void AnOrdinaryFirstFailureIsStillBaselined() =>
+        Plan([Bad()], State()).Messages
+            .ShouldBeEmpty("a job that loaded and then failed is the case baselining is for");
+
+    /// <summary>
+    /// notify = false is honoured for a job that could not be loaded.
+    /// </summary>
+    /// <remarks>
+    /// The muted set was built from config.Jobs, and a skipped job is by definition not in it -
+    /// so the operator's mute stopped applying at precisely the moment the job broke. It is why
+    /// LoadedConfig.SkippedJobs carries the whole job rather than its name.
+    /// </remarks>
+    [Fact]
+    public void AMutedJobThatCouldNotBeLoadedIsStillMuted() =>
+        PlanUnloadable(State(), muted: true).Messages.ShouldBeEmpty();
 }

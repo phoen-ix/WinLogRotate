@@ -46,7 +46,13 @@ public sealed record LoadedConfig
     /// <see cref="Jobs"/> would be a log that stops being rotated with nobody told, which is the
     /// worst outcome this product has.
     /// </remarks>
-    public IReadOnlyList<string> SkippedJobs { get; init; } = [];
+    /// <remarks>
+    /// The whole job, not just its name. A skipped job is absent from <see cref="Jobs"/>, so
+    /// anything built from that list cannot see its settings - and the notification phase builds
+    /// its muted set that way, which meant a job the operator had muted with
+    /// <c>notify = false</c> mailed them precisely when it broke.
+    /// </remarks>
+    public IReadOnlyList<EffectiveJob> SkippedJobs { get; init; } = [];
 
     /// <summary>
     /// True when the configuration as a whole is unusable, so nothing should be attempted.
@@ -113,7 +119,7 @@ public static class ConfigLoader
         }
 
         var jobs = new List<EffectiveJob>();
-        var skipped = new List<string>();
+        var skipped = new List<EffectiveJob>();
 
         if (!Directory.Exists(paths.ConfigDirectory))
         {
@@ -195,7 +201,7 @@ public static class ConfigLoader
 
             if (jobBag.HasErrors)
             {
-                skipped.Add(effective.Name);
+                skipped.Add(effective);
                 continue;
             }
 

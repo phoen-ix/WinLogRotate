@@ -124,7 +124,9 @@ public static class NotificationPlanner
                 LastSeen = now,
             };
 
-            var decision = Decide(prior, failing, fingerprint, settings, state.AlgorithmChanged, now);
+            var decision = Decide(
+                prior, failing, fingerprint, settings, state.AlgorithmChanged, now,
+                unloadable: run.UnloadableJobs.Any(j => Same(j, job)));
 
             switch (decision.Kind)
             {
@@ -173,9 +175,13 @@ public static class NotificationPlanner
     /// run-level bit that job pins the run at Failing for ever, so Failing-to-Healthy never
     /// happens again and recovery notification silently leaves the product.
     /// </remarks>
+    /// <param name="unloadable">
+    /// True when this job could not be loaded, which exempts it from baselining. See
+    /// <see cref="RunSummary.UnloadableJobs"/>.
+    /// </param>
     private static Verdict Decide(
         JobNotifyState prior, bool failing, string fingerprint,
-        NotifySettings settings, bool algorithmChanged, DateTimeOffset now)
+        NotifySettings settings, bool algorithmChanged, DateTimeOffset now, bool unloadable)
     {
         if (settings.On == NotifyOn.Every)
         {
@@ -186,6 +192,13 @@ public static class NotificationPlanner
 
         switch (prior.Outcome)
         {
+            case NotifyOutcome.Unknown when failing && unloadable:
+                // The one thing a first sighting does not get to be quiet about. A job that will
+                // not validate is a configuration change made minutes ago, not a pre-existing
+                // condition, so the argument for baselining does not reach it - and the cost of
+                // being wrong is a log that silently never rotates until somebody notices.
+                return new Verdict(Decision.Send, NotifyReason.NewFailure, null);
+
             case NotifyOutcome.Unknown:
                 // Never reported on. A failure is recorded rather than sent, so a fresh install
                 // is quiet; a healthy job is simply recorded.
@@ -401,4 +414,22 @@ public sealed record RunSummary
     /// partial mute that nothing detects.
     /// </remarks>
     public IReadOnlyCollection<string> MutedJobs { get; init; } = [];
+
+    /// <summary>
+    /// Jobs that could not be loaded at all, so this run never looked at them.
+    /// </summary>
+    /// <remarks>
+    /// These are exempt from baselining. Baselining exists so that installing this on a machine
+    /// that is already broken does not page anybody about problems predating the install - but a
+    /// job whose configuration will not validate is a change somebody just made, usually minutes
+    /// ago, so the reasoning does not apply to it. Without the exemption the first night after a
+    /// typo is silent, the job is recorded as failing, and nothing is said until RemindAfter
+    /// elapses - seven days by default, with the log not rotating throughout.
+    /// <para>
+    /// Before milestone 16 this condition set LoadedConfig.HasErrors and stopped every rotation
+    /// on the machine, which nobody could miss. Making it cost one job was right; making it quiet
+    /// was not part of the intention.
+    /// </para>
+    /// </remarks>
+    public IReadOnlyCollection<string> UnloadableJobs { get; init; } = [];
 }

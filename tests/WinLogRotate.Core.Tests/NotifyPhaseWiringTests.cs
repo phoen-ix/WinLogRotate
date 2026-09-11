@@ -312,4 +312,111 @@ public sealed class NotifyPhaseWiringTests : IDisposable
 
         sink.Lines.ShouldContain(l => l.Contains("no notification targets", StringComparison.OrdinalIgnoreCase));
     }
+
+    // ---- a job that could not be loaded -------------------------------------------------------
+
+    /// <summary>Writes a job that will fail validation, so it lands in SkippedJobs.</summary>
+    private Core.InstallPaths WithUnloadableJob(string extra)
+    {
+        var paths = Write("""
+            schema = 1
+            [notify]
+            enabled = true
+            on = "change"
+            to = ["eventlog:"]
+            """);
+
+        File.WriteAllText(Path.Combine(_dir.FullName, "conf.d", "bad.toml"), $"""
+            schema = 1
+            [job]
+            name  = "broken"
+            kind  = "manage"
+            paths = ["C:/Windows/System32/LogFiles/*.log"]
+            {extra}
+            """);
+
+        return paths;
+    }
+
+    /// <summary>
+    /// What RunCommand does before it calls the phase: forward the config's diagnostics.
+    /// </summary>
+    /// <remarks>
+    /// The phase reads the sink's list rather than the config's, deliberately - IOutputSink's own
+    /// doc comment explains that config-load diagnostics exist only there. A test that hands the
+    /// phase a LoadedConfig without doing this hands it nothing to plan from.
+    /// </remarks>
+    private static void Forward(RecordingSink sink, LoadedConfig config)
+    {
+        foreach (var d in config.Diagnostics)
+        {
+            sink.Diagnostic(new CliDiagnostic
+            {
+                Severity = d.Severity,
+                Code = d.Code,
+                Message = d.Message,
+                Path = d.File,
+                Remedy = d.Remedy,
+                Job = d.Job,
+            });
+        }
+    }
+
+    /// <summary>
+    /// A job that could not be loaded is reported on the night it breaks.
+    /// </summary>
+    /// <remarks>
+    /// Through the real phase and in dry run, so the plan is described without anything being
+    /// delivered - delivery is where channel resolution can fail for unrelated reasons and turn
+    /// this into a test that passes because nothing happened at all.
+    /// </remarks>
+    [Fact]
+    public void AJobThatCouldNotBeLoadedIsReportedImmediately()
+    {
+        var paths = WithUnloadableJob(string.Empty);
+        var config = Load(paths);
+
+        config.SkippedJobs.ShouldHaveSingleItem().Name.ShouldBe("broken");
+
+        var (sink, ctx) = Context();
+        Forward(sink, config);
+
+        Cli.Commands.NotifyPhase.Run(
+            ctx, paths, config, report: null, new RunOptions { DryRun = true },
+            DateTimeOffset.UtcNow);
+
+        sink.Lines.ShouldContain(
+            l => l.Contains("would send", StringComparison.Ordinal),
+            "a job whose configuration will not validate is a change made minutes ago, "
+            + "not a pre-existing condition to baseline");
+    }
+
+    /// <summary>
+    /// notify = false is honoured for a job that could not be loaded.
+    /// </summary>
+    /// <remarks>
+    /// The defect was in how the phase builds its muted set, not in how the planner reads one:
+    /// MutedJobs came from config.Jobs, and a skipped job is by definition absent from that list,
+    /// so the operator's mute stopped applying at exactly the moment the job broke. A
+    /// planner-level test hands a muted set in directly and cannot see this.
+    /// </remarks>
+    [Fact]
+    public void AMutedJobThatCouldNotBeLoadedSendsNothing()
+    {
+        var paths = WithUnloadableJob("notify = false");
+        var config = Load(paths);
+
+        // Otherwise this passes for the wrong reason if SkippedJobs ever stops carrying the job.
+        config.SkippedJobs.ShouldHaveSingleItem().Notify.ShouldBeFalse();
+
+        var (sink, ctx) = Context();
+        Forward(sink, config);
+
+        Cli.Commands.NotifyPhase.Run(
+            ctx, paths, config, report: null, new RunOptions { DryRun = true },
+            DateTimeOffset.UtcNow);
+
+        sink.Lines.ShouldNotContain(l => l.Contains("would send", StringComparison.Ordinal));
+        sink.Lines.ShouldContain(l => l.Contains("notify = false", StringComparison.Ordinal));
+    }
 }

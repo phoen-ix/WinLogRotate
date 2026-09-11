@@ -92,8 +92,17 @@ internal static class NotifyPhase
             MutedJobs =
             [
                 .. config.Jobs.Where(j => !j.Notify).Select(j => j.Name),
+
+                // Skipped jobs too. They are not in config.Jobs - that is what being skipped
+                // means - so building the muted set from that list alone made notify = false
+                // stop applying at exactly the moment the job broke.
+                .. config.SkippedJobs.Where(j => !j.Notify).Select(j => j.Name),
                 .. config.Journal.Notify ? Array.Empty<string>() : [JournalMaintenance.JobName],
             ],
+
+            // Exempt from baselining, so a job that will not validate is reported the night
+            // somebody breaks it rather than a week later. See RunSummary.UnloadableJobs.
+            UnloadableJobs = [.. config.SkippedJobs.Select(j => j.Name)],
         };
 
         var now = TimeProvider.System.GetUtcNow();
