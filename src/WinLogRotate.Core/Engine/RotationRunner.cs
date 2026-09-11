@@ -94,7 +94,7 @@ public sealed record RunReport
 public sealed class RotationRunner(
     IJournal journal, PathGuard guard, StateStore state, TimeProvider clock,
     IArchiveSource? archiveSource = null, IHookHost? hookHost = null, HookGate? hookGate = null,
-    IWriterInspector? inspector = null)
+    IWriterInspector? inspector = null, IFileSource? files = null)
 {
     /// <summary>
     /// What can be asked of a live log: what its writer permits, and what it looks like now.
@@ -143,7 +143,7 @@ public sealed class RotationRunner(
     /// One enumerator for the run, so a link is resolved and reported once however many patterns
     /// or jobs meet it.
     /// </summary>
-    private readonly FileEnumerator _files = new(guard);
+    private readonly IFileSource _files = files ?? new FileEnumerator(guard);
 
     private readonly IArchiveSource _archives = archiveSource ?? new FileArchiveSource(new FileEnumerator(guard));
 
@@ -273,6 +273,24 @@ public sealed class RotationRunner(
                         Report(diagnostic);
                     }
 
+                    // Per pattern, which is what maxfiles has always been documented to mean -
+                    // JobSettings.MaxFiles, GuardOptions.MaxMatches and docs/configuration.md all
+                    // say "a pattern". Enforced over the job's accumulated total, five patterns
+                    // of 250 files were refused at the default of 1000 though none was close to
+                    // it, and the message read "'iis-logs' matches 1,240 files" - naming a job
+                    // where the operator needs to know which of five patterns to narrow.
+                    var count = guard.CheckMatchCount(pattern, found.Files.Count, job.GuardScope);
+                    if (!count.IsAllowed)
+                    {
+                        // The same flag the pattern refusal above sets, so "matched no files"
+                        // does not arrive on top of this as if it were a second problem. And
+                        // continue to the next pattern, not the next job: one runaway pattern
+                        // used to abandon every healthy pattern beside it.
+                        refused = true;
+                        Report(Diagnose.Refusal(count, job.Name));
+                        continue;
+                    }
+
                     matched.AddRange(found.Files);
                 }
 
@@ -286,13 +304,6 @@ public sealed class RotationRunner(
                     }
 
                     source.Refused.Clear();
-                }
-
-                var count = guard.CheckMatchCount(job.Name, matched.Count, job.GuardScope);
-                if (!count.IsAllowed)
-                {
-                    Report(Diagnose.Refusal(count, job.Name));
-                    continue;
                 }
 
                 // Not "&& !refused": a pattern the guard turned down has already been reported, with

@@ -1,3 +1,4 @@
+using System.Globalization;
 using Microsoft.Extensions.Time.Testing;
 using Shouldly;
 using WinLogRotate.Contracts;
@@ -65,6 +66,22 @@ public sealed class RotationRunnerTests : IDisposable
             ProtectedRoots = [@"C:\Windows", @"C:\Program Files"],
             Overrides = gate,
         });
+
+    /// <summary>A file source that answers per pattern, so counts can be stated rather than staged.</summary>
+    private sealed class Patterns(Dictionary<string, int> counts) : IFileSource
+    {
+        public EnumerationResult Resolve(string pattern) => new()
+        {
+            Files = [.. Enumerable.Range(0, counts.GetValueOrDefault(pattern))
+                .Select(i => new MatchedFile
+                {
+                    Path = pattern.Replace("*", i.ToString(CultureInfo.InvariantCulture), StringComparison.Ordinal),
+                    Length = 4096,
+                    LastWriteUtc = new DateTimeOffset(2026, 9, 8, 12, 0, 0, TimeSpan.Zero),
+                })],
+            Refusals = [],
+        };
+    }
 
     /// <summary>Nothing on disk; every rotation here is a decision, not an operation.</summary>
     private sealed class NoArchives : IArchiveSource
@@ -795,5 +812,86 @@ public sealed class RotationRunnerTests : IDisposable
         }).PlanRotation(Job(), [Live()], new RunOptions { DryRun = true }, Now, _ => { });
 
         journal.Entries.Where(e => e.Operation == Op.NulFill).ShouldBeEmpty();
+    }
+
+    // ---- maxfiles is a limit on a pattern -----------------------------------------------------
+
+    /// <summary>Drives the real Run, because the pattern loop and the count check live there.</summary>
+    /// <summary>
+    /// Drives the real Run, because the pattern loop and the count check live there.
+    /// </summary>
+    /// <remarks>
+    /// The ceiling is set on the job, not on GuardOptions: a job's maxfiles reaches the guard
+    /// through GuardScope and takes precedence, so a guard-level MaxMatches leaves the default
+    /// 1000 in force and makes every assertion below vacuous.
+    /// </remarks>
+    private RunReport RunWith(IFileSource files, EffectiveJob job) =>
+        new RotationRunner(
+                new NullJournal(), new PathGuard(new GuardOptions()), State(),
+                _clock, new NoArchives(), null, null, null, files)
+            .Run(Config(job with { MaxFiles = 4 }), new RunOptions { DryRun = true, Force = true });
+
+    /// <summary>
+    /// Two patterns under the ceiling are not refused for exceeding it together.
+    /// </summary>
+    /// <remarks>
+    /// maxfiles has always been documented as a limit on a pattern - JobSettings.MaxFiles,
+    /// GuardOptions.MaxMatches and docs/configuration.md all say so - and was enforced over the
+    /// job's accumulated total. Five patterns of 250 files were refused at the default of 1000
+    /// though no single one was anywhere near it.
+    /// </remarks>
+    [Fact]
+    public void MaxfilesLimitsOnePatternRatherThanTheJobsTotal()
+    {
+        var report = RunWith(
+            new Patterns(new() { [@"C:\logs\a\*.log"] = 3, [@"C:\logs\b\*.log"] = 3 }),
+            Job() with { Paths = [@"C:\logs\a\*.log", @"C:\logs\b\*.log"] });
+
+        report.Diagnostics.ShouldNotContain(d => d.Code == DiagnosticCode.DangerousPathRefused);
+        report.Plans.ShouldHaveSingleItem().MatchedFiles
+            .ShouldBe(6, "six files, and neither pattern exceeded four");
+    }
+
+    /// <summary>A runaway pattern is refused; the healthy pattern beside it still rotates.</summary>
+    /// <remarks>
+    /// The count refusal used to continue past the whole job, so one mistyped pattern silently
+    /// abandoned every other pattern the job listed.
+    /// </remarks>
+    [Fact]
+    public void ARunawayPatternDoesNotAbandonItsSiblings()
+    {
+        var report = RunWith(
+            new Patterns(new() { [@"C:\logs\big\*.log"] = 40, [@"C:\logs\ok\*.log"] = 2 }),
+            Job() with { Paths = [@"C:\logs\big\*.log", @"C:\logs\ok\*.log"] });
+
+        var refusal = report.Diagnostics
+            .Where(d => d.Code == DiagnosticCode.DangerousPathRefused)
+            .ShouldHaveSingleItem();
+
+        // The pattern, not the job. An operator reading "'app' matches 42 files" has no way to
+        // learn which of two patterns to narrow.
+        refusal.Message.ShouldNotBeNull().ShouldContain(@"C:\logs\big\*.log");
+        refusal.Message.ShouldNotContain("'app'");
+
+        report.Plans.ShouldHaveSingleItem().MatchedFiles
+            .ShouldBe(2, "the healthy pattern still contributed its files");
+    }
+
+    /// <summary>A job whose only pattern runs away does not also report matching no files.</summary>
+    /// <remarks>
+    /// The refused flag exists to stop one cause producing two diagnostics; a per-pattern count
+    /// refusal has to set it just as the pattern refusal above it does.
+    /// </remarks>
+    [Fact]
+    public void ARefusedCountDoesNotAlsoReportMatchingNothing()
+    {
+        var report = RunWith(
+            new Patterns(new() { [@"C:\logs\big\*.log"] = 40 }),
+            Job() with { Paths = [@"C:\logs\big\*.log"] });
+
+        report.Diagnostics.ShouldNotContain(d => d.Code == DiagnosticCode.FileMissing);
+        report.Diagnostics
+            .Where(d => d.Code == DiagnosticCode.DangerousPathRefused)
+            .ShouldHaveSingleItem();
     }
 }

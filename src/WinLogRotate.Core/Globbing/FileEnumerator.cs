@@ -36,6 +36,22 @@ public sealed record EnumerationResult
 }
 
 /// <summary>
+/// Where a job's live logs come from.
+/// </summary>
+/// <remarks>
+/// Injectable for the reason <c>IArchiveSource</c> is, one field below it in
+/// <c>RotationRunner</c>: this is the code that decides which files a job acts on, and that
+/// decision deserves tests that do not need a file system. It needs one more than the archive
+/// side does, because <c>PathGuard</c> refuses every Unix path as not absolute - so a runner test
+/// driven by real files can only run on Windows, and the rules worth proving here are
+/// platform-neutral.
+/// </remarks>
+public interface IFileSource
+{
+    EnumerationResult Resolve(string pattern);
+}
+
+/// <summary>
 /// Resolves glob patterns against the filesystem.
 /// </summary>
 /// <remarks>
@@ -59,7 +75,7 @@ public sealed record EnumerationResult
 /// the operator had typed.
 /// </para>
 /// </remarks>
-public sealed class FileEnumerator(PathGuard guard, ILinkResolver? links = null)
+public sealed class FileEnumerator(PathGuard guard, ILinkResolver? links = null) : IFileSource
 {
     private readonly ILinkResolver _links = links ?? new LinkResolver();
 
