@@ -62,7 +62,7 @@ public sealed class MainForm : Form
     /// </summary>
     private async Task CheckEnvironmentAsync()
     {
-        var result = await _cli.RunAsync(Args("doctor", "--json")).ConfigureAwait(true);
+        var result = await _cli.RunAsync(CliArgs.For(_configDir, "doctor", "--json")).ConfigureAwait(true);
 
         if (result.Failure == CliFailure.NotFound)
         {
@@ -110,11 +110,6 @@ public sealed class MainForm : Form
         _content.Controls.Add(page);
         Theme.Apply(this, Theme.IsDark);
     }
-
-    internal string[] Args(params string[] verb) => BuildArgs(_configDir, verb);
-
-    internal static string[] BuildArgs(string? configDir, params string[] verb) =>
-        configDir is null ? verb : [.. verb, "--config-dir", configDir];
 
     /// <summary>
     /// Reads the system's app theme.

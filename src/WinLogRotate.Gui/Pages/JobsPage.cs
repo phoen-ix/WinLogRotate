@@ -56,7 +56,7 @@ public sealed class JobsPage : UserControl
     private async Task LoadAsync()
     {
         _status.Text = "Loading...";
-        var result = await _cli.RunAsync(MainForm.BuildArgs(_configDir, "config", "show", "--json"))
+        var result = await _cli.RunAsync(CliArgs.For(_configDir, "config", "show", "--json"))
             .ConfigureAwait(true);
 
         _grid.Rows.Clear();
@@ -112,7 +112,7 @@ public sealed class JobsPage : UserControl
 
     private async Task CheckAsync()
     {
-        var result = await _cli.RunAsync(MainForm.BuildArgs(_configDir, "config", "check"))
+        var result = await _cli.RunAsync(CliArgs.For(_configDir, "config", "check"))
             .ConfigureAwait(true);
 
         if (result.Ok)
@@ -136,7 +136,7 @@ public sealed class JobsPage : UserControl
 
     private async Task OpenFolderAsync()
     {
-        var result = await _cli.RunAsync(MainForm.BuildArgs(_configDir, "doctor", "--json"))
+        var result = await _cli.RunAsync(CliArgs.For(_configDir, "doctor", "--json"))
             .ConfigureAwait(true);
 
         if (!result.Ok)

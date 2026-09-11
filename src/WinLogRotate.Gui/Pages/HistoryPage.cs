@@ -59,7 +59,7 @@ public sealed class HistoryPage : UserControl
 
     private async Task LoadAsync()
     {
-        var result = await _cli.RunAsync(MainForm.BuildArgs(_configDir, "journal", "--json"))
+        var result = await _cli.RunAsync(CliArgs.For(_configDir, "journal", "--json"))
             .ConfigureAwait(true);
 
         _grid.Rows.Clear();

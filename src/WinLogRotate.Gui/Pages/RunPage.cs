@@ -79,8 +79,8 @@ public sealed class RunPage : UserControl
                 // --no-notify on both: a run somebody started by pressing a button, while
                 // watching the output scroll past, must not also page whoever is on call. The
                 // scheduled task passes nothing and so still reports.
-                ? MainForm.BuildArgs(_configDir, "run", "--dry-run", "--verbose", "--no-notify")
-                : MainForm.BuildArgs(_configDir, "run", "--verbose", "--no-notify");
+                ? CliArgs.For(_configDir, "run", "--dry-run", "--verbose", "--no-notify")
+                : CliArgs.For(_configDir, "run", "--verbose", "--no-notify");
 
             var result = dryRun
                 ? await _cli.RunAsync(arguments).ConfigureAwait(true)

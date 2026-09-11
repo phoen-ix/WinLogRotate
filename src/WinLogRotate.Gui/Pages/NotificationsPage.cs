@@ -86,7 +86,7 @@ public sealed class NotificationsPage : UserControl
     private async Task LoadAsync()
     {
         var result = await _cli.RunAsync(
-            MainForm.BuildArgs(_configDir, "notify", "show", "--json")).ConfigureAwait(true);
+            CliArgs.For(_configDir, "notify", "show", "--json")).ConfigureAwait(true);
 
         if (!result.Ok)
         {
@@ -187,7 +187,7 @@ public sealed class NotificationsPage : UserControl
         _status.Text = "Sending...";
 
         var result = await _cli.RunAsync(
-            MainForm.BuildArgs(_configDir, "notify", "test")).ConfigureAwait(true);
+            CliArgs.For(_configDir, "notify", "test")).ConfigureAwait(true);
 
         // notify test always exits 0 - a webhook outage is not a rotation failure - so the text
         // is what says whether anything arrived.
@@ -208,7 +208,7 @@ public sealed class NotificationsPage : UserControl
         }
 
         var result = await _cli.RunAsync(
-            MainForm.BuildArgs(_configDir, "notify", "reset")).ConfigureAwait(true);
+            CliArgs.For(_configDir, "notify", "reset")).ConfigureAwait(true);
 
         _status.ForeColor = result.Ok ? Theme.Current.Muted : Theme.Current.Danger;
         _status.Text = result.Ok ? "Suppressed channels cleared." : result.Describe();
@@ -301,7 +301,7 @@ public sealed class NotificationsPage : UserControl
         var outcome = SecretPipeOutcome.TimedOut;
 
         var result = await _cli.RunElevatedAsync(
-            MainForm.BuildArgs(_configDir,
+            CliArgs.For(_configDir,
                 "notify", "set-secret", asked.Provider, asked.Field, "--from-pipe", pipe.Name),
             onLine: null,
             onStarted: id => outcome = pipe.Deliver(id, message, TimeSpan.FromSeconds(30)))

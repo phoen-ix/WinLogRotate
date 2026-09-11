@@ -71,7 +71,7 @@ public sealed class SchedulingPage : UserControl
 
     private async Task RefreshStatusAsync()
     {
-        var result = await _cli.RunAsync(MainForm.BuildArgs(_configDir, "doctor", "--json"))
+        var result = await _cli.RunAsync(CliArgs.For(_configDir, "doctor", "--json"))
             .ConfigureAwait(true);
 
         if (!result.Ok)
@@ -118,7 +118,7 @@ public sealed class SchedulingPage : UserControl
             // removes a task and registers another, which can take ten seconds or more. Ten
             // seconds of a frozen window reads as a hang.
             var result = await _cli.RunElevatedAsync(
-                MainForm.BuildArgs(_configDir, "host", "use", kind),
+                CliArgs.For(_configDir, "host", "use", kind),
                 UiThread.LineTo(_log, line => _log.AppendText(line + Environment.NewLine)))
                 .ConfigureAwait(true);
 

@@ -44,10 +44,10 @@ public sealed class SettingsPage : UserControl
 
     private async Task LoadAsync()
     {
-        var result = await _cli.RunAsync(MainForm.BuildArgs(_configDir, "doctor")).ConfigureAwait(true);
+        var result = await _cli.RunAsync(CliArgs.For(_configDir, "doctor")).ConfigureAwait(true);
         _report.Text = result.StdOut + result.StdErr;
 
-        var json = await _cli.RunAsync(MainForm.BuildArgs(_configDir, "doctor", "--json"))
+        var json = await _cli.RunAsync(CliArgs.For(_configDir, "doctor", "--json"))
             .ConfigureAwait(true);
 
         if (!json.Ok)
@@ -85,7 +85,7 @@ public sealed class SettingsPage : UserControl
     private async Task HardenAsync()
     {
         var result = await _cli.RunElevatedAsync(
-            MainForm.BuildArgs(_configDir, "host", "repair", "--acl")).ConfigureAwait(true);
+            CliArgs.For(_configDir, "host", "repair", "--acl")).ConfigureAwait(true);
 
         if (result.Ok)
         {
