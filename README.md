@@ -265,10 +265,12 @@ deliberately differs, and what cannot exist on Windows.
 
 ## Status, honestly
 
-**v0.7.x.** The installer and scheduler are verified end to end on Windows. Rotation itself ran
+**v0.8.x.** The installer and scheduler are verified end to end on Windows. Rotation itself ran
 for the first time in 0.4.0 — before that the engine skipped every `kind = "rotate"` job silently,
 which is to say the headline feature had never executed at all. It is verified only against files
-nothing holds open. The GUI is entirely unverified.
+nothing holds open. The GUI has still never rendered a window; what it does with the CLI's
+output — following the stream, wording an exit code, reading a failure out of an envelope — now
+lives in a plain library and is covered, which is the part that was silently wrong.
 
 ### What has actually run on Windows
 
