@@ -105,6 +105,106 @@ public partial class ArchitectureTests
     }
 
     /// <summary>
+    /// Nothing says <c>host status</c> reads the journal.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// It does not. <c>HostCommand.Status</c> asks the run host what is registered and reads no
+    /// journal file at all. The claim had reached four files and one documentation page, because
+    /// each was a verbatim copy of the sentence before it - fixing two and leaving three is how
+    /// it got there.
+    /// </para>
+    /// <para>
+    /// Sentence-scoped, and it needs the reading verb: "results surface in the Event Log, the
+    /// journal and <c>host status</c>" is true and names both, and a rule that could not tell
+    /// the two apart would push people into wording their comments around the test.
+    /// </para>
+    /// </remarks>
+    [Fact]
+    public void NothingSaysHostStatusReadsTheJournal()
+    {
+        var root = RepoRoot.Find().FullName;
+
+        var files = Directory
+            .EnumerateFiles(Path.Combine(root, "src"), "*.cs", SearchOption.AllDirectories)
+            .Where(f => !f.Contains(Path.Combine("obj", ""), StringComparison.Ordinal))
+            .Concat(Directory.EnumerateFiles(Path.Combine(root, "docs"), "*.md"))
+            .Append(Path.Combine(root, "README.md"))
+            .ToArray();
+
+        // Self-check: several files name the verb, so the needle is live.
+        files.Count(f => File.ReadAllText(f).Contains("host status", StringComparison.Ordinal))
+            .ShouldBeGreaterThan(4);
+
+        bool Claims(string path)
+        {
+            var prose = File.ReadAllText(path)
+                .Replace("///", " ", StringComparison.Ordinal)
+                .Replace("//", " ", StringComparison.Ordinal)
+                .Replace("<c>", "", StringComparison.Ordinal)
+                .Replace("</c>", "", StringComparison.Ordinal)
+                .Replace('\n', ' ')
+                .Replace("`", "", StringComparison.Ordinal);
+
+            return prose.Split('.').Any(sentence =>
+                sentence.Contains("host status", StringComparison.OrdinalIgnoreCase)
+                && sentence.Contains("journal", StringComparison.OrdinalIgnoreCase)
+                && sentence.Contains("read", StringComparison.OrdinalIgnoreCase));
+        }
+
+        files.Where(Claims).Select(Path.GetFileName).ShouldBeEmpty(
+            "host status reports what is registered; it reads no journal");
+    }
+
+    /// <summary>
+    /// The journal's contract describes the journal.
+    /// </summary>
+    /// <remarks>
+    /// The half a sentence-scoped rule cannot reach. <c>IJournal</c> said the GUI and
+    /// <c>host status</c> "never read Last Run Result" - true - and then, in the next sentence,
+    /// "The journal does", which implies something that is not. Listing a type's readers is a
+    /// fact about those readers, and keeping such a list in the contract is how it came to hold
+    /// one that was wrong.
+    /// </remarks>
+    [Fact]
+    public void TheJournalContractDescribesTheJournal()
+    {
+        var root = RepoRoot.Find().FullName;
+
+        // Self-check: the needle is a live string somewhere else in the tree.
+        File.ReadAllText(Path.Combine(root, "src", "WinLogRotate.Cli", "Commands", "HostCommand.cs"))
+            .ShouldContain("host status");
+
+        File.ReadAllText(Path.Combine(root, "src", "WinLogRotate.Core", "Journaling", "IJournal.cs"))
+            .ShouldNotContain("host status", Case.Sensitive,
+                "the journal's contract is about the journal, not about who reads it");
+    }
+
+    /// <summary>
+    /// And the fact both documents were wrong about, made checkable.
+    /// </summary>
+    /// <remarks>
+    /// Method-scoped, because <c>host path</c> legitimately names the journal directory a few
+    /// hundred lines away - a file-level needle would be a false positive on its neighbour.
+    /// </remarks>
+    [Fact]
+    public void HostStatusReadsNoJournal()
+    {
+        var file = File.ReadAllText(Path.Combine(
+            RepoRoot.Find().FullName, "src", "WinLogRotate.Cli", "Commands", "HostCommand.cs"));
+
+        var status = file
+            .Split("public static int ", StringSplitOptions.None)
+            .Where(chunk => chunk.StartsWith("Status(", StringComparison.Ordinal))
+            .ToArray();
+
+        var body = status.ShouldHaveSingleItem();
+
+        body.ShouldContain("TaskRunHost", Case.Sensitive, "its whole data source");
+        body.ShouldNotContain("JournalReader", Case.Sensitive);
+    }
+
+    /// <summary>
     /// The elevation question is asked in exactly two places.
     /// </summary>
     /// <remarks>

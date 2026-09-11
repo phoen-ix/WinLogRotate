@@ -76,8 +76,8 @@ public sealed record HostInstallOptions
     /// <c>--lock-held-exit 0</c> is deliberate. Exit 3 means another run holds the gate, which
     /// is a normal outcome - but Task Scheduler renders it as 0x3 in the Last Run Result column
     /// and an administrator skimming that column reads it as a failure. The cost is that 0x0 no
-    /// longer proves work happened, which is exactly why <c>host status</c>, the GUI and the
-    /// Event Log all read the journal instead.
+    /// longer proves work happened, which is exactly why the GUI and the Event Log report
+    /// from the journal instead.
     /// </para>
     /// <para>
     /// <c>--run-deadline</c> tells the run how long it has, so the notification phase can stop

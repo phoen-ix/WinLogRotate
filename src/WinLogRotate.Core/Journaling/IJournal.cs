@@ -5,8 +5,8 @@ namespace WinLogRotate.Core.Journaling;
 /// <summary>
 /// The append-only record of everything WinLogRotate compressed, moved or deleted.
 /// <para>
-/// This is the answer to "what happened to my logs", and it is why the GUI and
-/// <c>host status</c> never read Task Scheduler's Last Run Result: the task we register
+/// This is the answer to "what happened to my logs", and it is why
+/// nothing reads Task Scheduler's Last Run Result: the task we register
 /// deliberately exits 0 when another run holds the lock, so 0x0 does not prove work happened.
 /// The journal does.
 /// </para>

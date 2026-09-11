@@ -28,8 +28,8 @@ public static class ExitCode
     /// <para>
     /// Task Scheduler shows this as 0x3, which reads as a failure to an admin skimming the
     /// Last Run Result column, so the task we register passes --lock-held-exit 0. The cost
-    /// is that 0x0 no longer proves work happened, which is why `host status`, the GUI and
-    /// the Event Log all read the journal and never LastTaskResult.
+    /// is that 0x0 no longer proves work happened, which is why the GUI and the Event Log
+    /// report from the journal and never from LastTaskResult.
     /// </para></summary>
     public const int LockHeld = 3;
 

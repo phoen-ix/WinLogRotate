@@ -143,5 +143,9 @@ success — which is correct, but means `0x0` does not prove work happened. Wors
 `ExecutionTimeLimit` terminating a task reports `0x41306`, which is indistinguishable from an
 operator pressing **Stop**.
 
-`host status`, the GUI and this log all read the journal instead. That is an invariant, because
-reading `LastTaskResult` is the tempting shortcut.
+The GUI and this log report from the journal instead. That is an invariant, because reading
+`LastTaskResult` is the tempting shortcut.
+
+`host status` answers a different question and reads neither: whether a run host is registered,
+whether the registration has drifted from what this build would write, and where the configuration
+lives. Ask the journal what happened; ask `host status` what is set up.

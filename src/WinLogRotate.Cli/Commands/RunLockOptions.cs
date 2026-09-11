@@ -41,9 +41,9 @@ internal sealed record RunLockOptions
     /// <remarks>
     /// The registered task passes 0. Task Scheduler renders exit 3 as 0x3, which an
     /// administrator reads as a failure - and "another rotation was already running" is not one.
-    /// The cost is that 0x0 stops proving work happened, which is why host status, the GUI and
-    /// the Event Log all read the journal instead. That is an invariant, because reading
-    /// LastTaskResult is the tempting shortcut.
+    /// The cost is that 0x0 stops proving work happened, which is why the GUI and the Event
+    /// Log report from the journal instead. That is an invariant, because reading LastTaskResult
+    /// is the tempting shortcut.
     /// </remarks>
     public int HeldExitCode { get; init; } = Core.ExitCode.LockHeld;
 }
