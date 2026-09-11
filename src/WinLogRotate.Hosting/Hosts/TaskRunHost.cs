@@ -1,5 +1,6 @@
 using System.Diagnostics;
 using System.Runtime.Versioning;
+using Microsoft.Win32;
 
 namespace WinLogRotate.Hosting.Hosts;
 
@@ -53,18 +54,51 @@ public sealed class TaskRunHost : IRunHost
         return exitCode == 0
             ? new HostStatus
             {
-                Configured = RunHostKind.Task,
+                Configured = Configured(),
                 Actual = RunHostKind.Task,
                 Registered = true,
                 Detail = output.Trim(),
             }
             : new HostStatus
             {
-                Configured = RunHostKind.Task,
+                Configured = Configured(),
                 Actual = RunHostKind.None,
                 Registered = false,
                 Detail = "No scheduled task is registered.",
             };
+    }
+
+    /// <summary>
+    /// What the install was set up to use, according to the installer.
+    /// </summary>
+    /// <remarks>
+    /// Read rather than assumed. This used to return <c>Task</c> unconditionally, which made
+    /// <see cref="HostStatus.Drifted"/> unable to tell "somebody deleted the task" from "this
+    /// install was never given one" - and those need opposite responses. A portable copy, or one
+    /// installed with <c>/HOST=none</c>, has nothing registered on purpose.
+    /// </remarks>
+    private static RunHostKind Configured()
+    {
+        try
+        {
+            foreach (var hive in new[] { Registry.LocalMachine, Registry.CurrentUser })
+            {
+                using var key = hive.OpenSubKey(Names.UninstallKey);
+                if (key?.GetValue("HostKind") is string kind
+                    && Enum.TryParse<RunHostKind>(kind, ignoreCase: true, out var parsed))
+                {
+                    return parsed;
+                }
+            }
+        }
+        catch (Exception e) when (e is System.Security.SecurityException or UnauthorizedAccessException)
+        {
+            // A reader who cannot see the key learns nothing, which is not the same as learning
+            // that nothing is configured - so say None and let the caller report only what it can
+            // actually see.
+        }
+
+        return RunHostKind.None;
     }
 
     private static void Run(string exe, string[] arguments, bool throwOnFailure = true)

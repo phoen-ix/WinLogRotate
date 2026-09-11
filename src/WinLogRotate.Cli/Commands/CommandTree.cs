@@ -440,8 +440,7 @@ internal static class CommandTree
     {
         var source = new Argument<string>("path") { Description = "A Linux logrotate.conf or logrotate.d file." };
         var outDir = new Option<DirectoryInfo?>("--out") { Description = "Where to write the converted job files." };
-        var probe = new Option<bool>("--probe") { Description = "Probe each path and pick a supported locked-file strategy, instead of leaving imported jobs disabled." };
-        var import = new Command("import", "Convert a Linux logrotate configuration. One way: what cannot be translated is commented, not guessed.") { source, outDir, probe };
+        var import = new Command("import", "Convert a Linux logrotate configuration. One way: what cannot be translated is commented, not guessed.") { source, outDir };
         GlobalOptions.AddTo(import);
         import.SetAction(parse => ImportCommand.Run(CommandContext.From(parse), parse.GetRequiredValue(source), parse.GetValue(outDir)?.FullName, parse.GetValue(GlobalOptions.ConfigDir)?.FullName));
         return import;
@@ -449,8 +448,7 @@ internal static class CommandTree
 
     private static Command BuildScan()
     {
-        var deep = new Option<bool>("--deep") { Description = "Also search for log directories no producer claims." };
-        var scan = new Command("scan", "Find log producers on this machine and say which ones rotate but never delete.") { deep };
+        var scan = new Command("scan", "Find log producers on this machine and say which ones rotate but never delete.");
         GlobalOptions.AddTo(scan);
         scan.SetAction(parse => ScanCommand.Run(CommandContext.From(parse)));
         return scan;
@@ -462,8 +460,10 @@ internal static class CommandTree
         GlobalOptions.AddTo(check);
         check.SetAction(parse => UpdateCommand.CheckAsync(CommandContext.From(parse)).GetAwaiter().GetResult());
 
-        var yes = new Option<bool>("--yes") { Description = "Install without asking." };
-        var apply = new Command("apply", "Install the newest release.") { yes };
+        // No --yes, and the description says what the verb does rather than what it is named
+        // after. Apply deliberately does not self-replace - see UpdateCommand.Apply - so a switch
+        // offering to "install without asking" was attached to a verb that installs nothing.
+        var apply = new Command("apply", "Explain how to install the newest release.");
         GlobalOptions.AddTo(apply);
         apply.SetAction(parse => UpdateCommand.Apply(CommandContext.From(parse)));
 

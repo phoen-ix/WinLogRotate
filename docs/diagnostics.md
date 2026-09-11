@@ -76,8 +76,8 @@ same guard is a Warning. The **ID** never varies, which is what an alert rule sh
 | 115 | Error | The verb needs a platform this is not | `LR1005` |
 | 120 | Warning | A job was skipped | `LR2001` |
 | 121 | Warning | A log file was missing | `LR2002` |
-| 122 | Warning | A log file was empty | `LR2003` |
-| 123 | Warning | Not due yet | `LR2004` |
+| 122 | Info | A log was due but held back by `notifempty` | `LR2003` |
+| 123 | Info | A log was due but held back by `minsize` or `minage` | `LR2004` |
 | 124 | Warning | First run: a baseline was recorded | `LR2005` |
 | 130 | Error | A rotation failed | `LR3001` |
 | 131 | Error | The file was locked by another process | `LR3002` |
@@ -86,7 +86,7 @@ same guard is a Warning. The **ID** never varies, which is what an alert rule sh
 | 134 | Error | NUL-fill detected; `copytruncate` quarantined for that path | `LR3102` |
 | 135 | Error | A hook ran and failed, timed out, or could not be started | `LR3103` |
 | 140 | Warning | No run host is registered | `LR4001` |
-| 141 | Warning | The registered run host has drifted from its definition | `LR4002` |
+| 141 | Warning | The run host this install was set up with is no longer registered | `LR4002` |
 | 142 | Error | Registering the run host failed | `LR4003` |
 | 150 | Warning | A notification target is unparseable or missing its credential | `LR5001` |
 | 151 | Warning | A notification channel could not be reached | `LR5002` |

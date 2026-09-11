@@ -500,4 +500,77 @@ public sealed class RotationRunnerTests : IDisposable
                 Now))
             .Message.ShouldContain("must be resolved");
     }
+
+    // ---- why a log was held back ---------------------------------------------------------------
+
+    /// <summary>
+    /// A log that was due and was held back by notifempty says so.
+    /// </summary>
+    /// <remarks>
+    /// "Why did this not rotate last night?" is the question an operator actually asks, and the
+    /// answer used to exist only as a DueReason nothing read and a Skip line invisible without
+    /// --verbose. LR2003 has been published in docs/diagnostics.md since before anything raised it.
+    /// </remarks>
+    [Fact]
+    public void ALogHeldBackBecauseItIsEmptyIsReported()
+    {
+        var reported = new List<CliDiagnostic>();
+        var state = State();
+        state.Set(@"C:\logs\app.log", new PathState
+        {
+            Path = @"C:\logs\app.log",
+            LastRotated = Now.AddDays(-2),
+        });
+
+        Runner(state, new NoArchives()).PlanRotation(
+            Job() with { NotIfEmpty = true },
+            [Live() with { Length = 0 }],
+            new RunOptions(), Now, reported.Add);
+
+        reported.ShouldContain(d => d.Code == DiagnosticCode.FileEmpty && d.Severity == Severity.Info);
+    }
+
+    /// <summary>The same for minsize, which is the other "not yet" an operator has to ask about.</summary>
+    [Fact]
+    public void ALogHeldBackByMinsizeIsReported()
+    {
+        var reported = new List<CliDiagnostic>();
+        var state = State();
+        state.Set(@"C:\logs\app.log", new PathState
+        {
+            Path = @"C:\logs\app.log",
+            LastRotated = Now.AddDays(-2),
+        });
+
+        Runner(state, new NoArchives()).PlanRotation(
+            Job() with { MinSize = 1 << 30 },
+            [Live()],
+            new RunOptions(), Now, reported.Add);
+
+        reported.ShouldContain(d => d.Code == DiagnosticCode.NotDueYet);
+    }
+
+    /// <summary>
+    /// A log that is simply not due tonight is not reported.
+    /// </summary>
+    /// <remarks>
+    /// The ordinary case for most logs on most runs. Reporting it would put a line per file per
+    /// night in front of an operator and bury the two above.
+    /// </remarks>
+    [Fact]
+    public void ALogThatIsMerelyNotDueIsNotReported()
+    {
+        var reported = new List<CliDiagnostic>();
+        var state = State();
+        state.Set(@"C:\logs\app.log", new PathState
+        {
+            Path = @"C:\logs\app.log",
+            LastRotated = Now.AddMinutes(-5),
+        });
+
+        Runner(state, new NoArchives()).PlanRotation(
+            Job(), [Live()], new RunOptions(), Now, reported.Add);
+
+        reported.ShouldNotContain(d => d.Code == DiagnosticCode.NotDueYet);
+    }
 }

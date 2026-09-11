@@ -426,4 +426,28 @@ public class InstallerNamePinningTests
     public void TheEventLogKeyMatches() =>
         Define(Nsi(), "EVENTLOG_KEY")
             .ShouldBe($@"SYSTEM\CurrentControlSet\Services\EventLog\{Names.EventLogName}\{Names.EventLogSource}");
+
+    /// <summary>
+    /// Drift is "this was set up and is now gone", not "there is nothing".
+    /// </summary>
+    /// <remarks>
+    /// <c>TaskRunHost.Query</c> used to hardcode <c>Configured = Task</c>, so a portable copy and
+    /// an install whose task somebody deleted were indistinguishable - and <c>Drifted</c> was
+    /// never read by anything anyway. Reading the kind the installer recorded is what gives the
+    /// two cases different answers, and LR4002 its first emitter.
+    /// </remarks>
+    [Theory]
+    [InlineData(RunHostKind.Task, RunHostKind.None, true)]
+    [InlineData(RunHostKind.Task, RunHostKind.Task, false)]
+    [InlineData(RunHostKind.None, RunHostKind.None, false)]
+    public void DriftIsConfiguredAgainstActual(
+        RunHostKind configured, RunHostKind actual, bool drifted)
+    {
+        new HostStatus
+        {
+            Configured = configured,
+            Actual = actual,
+            Registered = actual != RunHostKind.None,
+        }.Drifted.ShouldBe(drifted);
+    }
 }

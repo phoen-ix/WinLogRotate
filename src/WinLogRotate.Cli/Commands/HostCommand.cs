@@ -109,7 +109,23 @@ internal static class HostCommand
         ctx.Output.Line($"run host      {(status.Registered ? "scheduled task" : "none")}");
         ctx.Output.Line($"config        {paths.Root}");
 
-        if (!status.Registered)
+        // Drift first, because it is the more specific answer to the same observation. "Nothing
+        // is registered" is a fact about now; "this install was set up with a task and the task is
+        // gone" says somebody removed it, which is a different problem with a different cause.
+        if (status.Drifted && status.Configured != RunHostKind.None)
+        {
+            ctx.Output.Diagnostic(new CliDiagnostic
+            {
+                Severity = Severity.Warning,
+                Code = DiagnosticCode.HostDrift,
+                Message = $"This install was set up to run rotations as a "
+                        + $"{status.Configured.ToString().ToLowerInvariant()}, but that is not "
+                        + "registered any more.",
+                Remedy = "Something removed it - a Group Policy sweep, a cleanup script, or a "
+                       + "hand edit. Re-register with 'winlogrotate host use task'.",
+            });
+        }
+        else if (!status.Registered)
         {
             ctx.Output.Diagnostic(new CliDiagnostic
             {

@@ -397,6 +397,36 @@ public sealed class RotationRunner(
     }
 
     /// <summary>
+    /// The diagnostic for a log that was due and was held back, or null for anything else.
+    /// </summary>
+    /// <remarks>
+    /// Info, not Warning: nothing is wrong. These are the gates working, and an operator reading
+    /// one wants the reason rather than an alarm. Both codes have been published in
+    /// <c>docs/diagnostics.md</c> since before they had anything to raise them.
+    /// </remarks>
+    private static CliDiagnostic? Suppression(DueVerdict verdict) => verdict.Reason switch
+    {
+        DueReason.Empty => new CliDiagnostic
+        {
+            Severity = Severity.Info,
+            Code = DiagnosticCode.FileEmpty,
+            Message = verdict.Explanation,
+            Remedy = "Set notifempty = false to rotate an empty log anyway.",
+        },
+
+        DueReason.TooSmall or DueReason.TooYoung => new CliDiagnostic
+        {
+            Severity = Severity.Info,
+            Code = DiagnosticCode.NotDueYet,
+            Message = verdict.Explanation,
+            Remedy = "minsize and minage hold a rotation back until a log is big enough or old "
+                   + "enough. It will rotate on the first run after that.",
+        },
+
+        _ => null,
+    };
+
+    /// <summary>
     /// Looks at a log we truncated moments ago, and records only bad news.
     /// </summary>
     /// <remarks>
@@ -551,6 +581,18 @@ public sealed class RotationRunner(
                 : RotationCriteria.Evaluate(
                     job, state.Get(file.Path)?.LastRotated, now, file.Length, file.LastWriteUtc,
                     options.Force);
+
+            // A log that was due and was held back anyway is worth saying out loud. "Why did this
+            // not rotate last night?" is the question an operator actually asks, and the three
+            // gates that answer it - notifempty, minsize, minage - used to produce a verdict
+            // nothing read and a Skip line nobody sees without --verbose.
+            //
+            // DueReason.NotDue is deliberately absent: "the schedule says not tonight" is the
+            // ordinary case for most logs on most runs, and reporting it would bury the rest.
+            if (Suppression(due[file.Path]) is { } suppressed)
+            {
+                report(suppressed with { Job = job.Name, Path = file.Path });
+            }
 
             // Phase A - judge the truncation recorded last time, whether or not the log is due.
             // Gating this on dueness would leave a monthly job's evidence unexamined for a month,

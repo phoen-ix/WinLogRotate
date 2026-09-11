@@ -1,5 +1,9 @@
+using System.Globalization;
+using System.Reflection;
 using System.Text.RegularExpressions;
 using Shouldly;
+using WinLogRotate.Contracts;
+using WinLogRotate.Hosting.Diagnostics;
 using Xunit;
 
 namespace WinLogRotate.Core.Tests;
@@ -253,5 +257,155 @@ public partial class ArchitectureTests
             .ToArray();
 
         offenders.ShouldBeEmpty();
+    }
+
+    [GeneratedRegex(@"^\|\s*(\d+)\s*\|[^|]*\|[^|]*\|\s*`(LR\d{4})`\s*\|", RegexOptions.Compiled)]
+    private static partial Regex DocumentedDiagnostic();
+
+    /// <summary>
+    /// Every row of the published diagnostics table names a real code, at its real event ID.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// <c>docs/diagnostics.md</c> calls itself a contract, and an alert rule cannot exist without
+    /// a documented event ID. So the table has to be bound to the code rather than maintained
+    /// beside it: a renumbering that breaks the build is a nuisance, and one that breaks somebody's
+    /// alert rule six months later is not discovered at all.
+    /// </para>
+    /// <para>
+    /// Severity is deliberately not asserted. The document says out loud that the Type column is
+    /// contextual - <c>LR3003</c> is legitimately Error, Warning and Info depending on
+    /// circumstance - so a test on it would fail on documented, deliberate behaviour.
+    /// </para>
+    /// </remarks>
+    [Fact]
+    public void EveryDiagnosticsDocRowNamesARealCodeAndItsRealEventId()
+    {
+        var doc = Path.Combine(RepoRoot.Find().FullName, "docs", "diagnostics.md");
+
+        var rows = File.ReadAllLines(doc)
+            .Select(line => DocumentedDiagnostic().Match(line))
+            .Where(m => m.Success)
+            .Select(m => (Id: int.Parse(m.Groups[1].Value, CultureInfo.InvariantCulture), Code: m.Groups[2].Value))
+            .ToArray();
+
+        // A regex that silently stopped matching would make everything below pass while asserting
+        // nothing, which is the failure this whole file exists to prevent.
+        rows.Length.ShouldBeGreaterThan(25);
+
+        var declared = typeof(DiagnosticCode)
+            .GetFields(BindingFlags.Public | BindingFlags.Static)
+            .Where(f => f.IsLiteral && f.FieldType == typeof(string))
+            .Select(f => (string)f.GetRawConstantValue()!)
+            .ToHashSet(StringComparer.Ordinal);
+
+        rows.Select(r => r.Code).Where(c => !declared.Contains(c))
+            .ShouldBeEmpty("documented codes that no longer exist");
+
+        declared.Where(c => rows.All(r => r.Code != c))
+            .ShouldBeEmpty("codes with no row in docs/diagnostics.md");
+
+        rows.Where(r => EventIds.For(r.Code) != r.Id)
+            .Select(r => $"{r.Code} is documented as {r.Id} but maps to {EventIds.For(r.Code)}")
+            .ShouldBeEmpty();
+    }
+
+    [GeneratedRegex(@"\bOption<[^>\n]+>\s+(\w+)\s*=", RegexOptions.Compiled)]
+    private static partial Regex OptionDeclaration();
+
+    /// <summary>
+    /// Every option the command tree declares is read by it.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// An option nothing reads is a lie in <c>--help</c>: it parses, it is accepted, it is
+    /// documented, and it changes nothing. This found three - <c>import --probe</c>,
+    /// <c>scan --deep</c> and <c>update apply --yes</c>, the last attached to a verb that installs
+    /// nothing at all.
+    /// </para>
+    /// <para>
+    /// <b>The allowlist is empty and should stay that way.</b> The fix for an unread option is to
+    /// read it or delete it, never to annotate it.
+    /// </para>
+    /// <para>
+    /// Unlike <c>OnlyTheAllowlistedFilesRevealASecret</c> this reads a single file rather than a
+    /// tree, so it cannot match itself and needs none of that test's runtime-assembled needle.
+    /// </para>
+    /// </remarks>
+    [Fact]
+    public void EveryOptionDeclaredOnTheCommandTreeIsReadByIt()
+    {
+        var tree = Path.Combine(
+            RepoRoot.Find().FullName, "src", "WinLogRotate.Cli", "Commands", "CommandTree.cs");
+
+        var text = File.ReadAllText(tree);
+
+        var declared = OptionDeclaration().Matches(text)
+            .Select(m => m.Groups[1].Value)
+            .Distinct(StringComparer.Ordinal)
+            .ToArray();
+
+        // A regex that stopped matching would make this pass while asserting nothing.
+        declared.Length.ShouldBeGreaterThan(10);
+
+        // GetRequiredValue as well, so an option becoming required does not read as unused.
+        declared
+            .Where(name => !text.Contains($"GetValue({name})", StringComparison.Ordinal)
+                        && !text.Contains($"GetRequiredValue({name})", StringComparison.Ordinal))
+            .ShouldBeEmpty("options the command tree declares and never reads");
+    }
+
+    /// <summary>
+    /// Every diagnostic code is raised by something under <c>src/</c>.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// A code with an event ID, a documented row and no emitter is an alert rule that can never
+    /// fire. This found three - <c>LR4002</c>, <c>LR2003</c> and <c>LR2004</c> - and would have
+    /// found <c>LR9003</c> and <c>LR3102</c> before the milestones that wired them, since each
+    /// appeared nowhere but the ID table.
+    /// </para>
+    /// <para>
+    /// <b>Comment lines are stripped first, and that is the whole difficulty.</b> Several files
+    /// name a code only inside a <c>&lt;see cref="..."/&gt;</c>, so a scan that counted prose would
+    /// be satisfied by a doc comment - which is exactly the failure this exists to catch.
+    /// </para>
+    /// <para>
+    /// Its reach stops there, honestly: it proves a code is named in live code, not that any path
+    /// reaches it. <c>LR9004</c> had one such reference for a long time, in a switch arm mapping a
+    /// verdict nothing produced, and this test would have been green throughout. Reachability is
+    /// what the revert tables and the one-real-path tests are for.
+    /// </para>
+    /// </remarks>
+    [Fact]
+    public void EveryDiagnosticCodeIsRaisedBySomethingUnderSrc()
+    {
+        var src = Path.Combine(RepoRoot.Find().FullName, "src");
+
+        // EventIds.cs names every code by construction - it is the mapping - so counting it would
+        // make this test vacuous. DiagnosticCode.cs needs no exclusion: it declares the literals
+        // and never spells "DiagnosticCode.Name", so it cannot match its own needle.
+        var code = Directory
+            .EnumerateFiles(src, "*.cs", SearchOption.AllDirectories)
+            .Where(f => !f.Contains($"{Path.DirectorySeparatorChar}obj{Path.DirectorySeparatorChar}", StringComparison.Ordinal))
+            .Where(f => Path.GetFileName(f) != "EventIds.cs")
+            .Select(f => string.Join(
+                '\n',
+                File.ReadAllLines(f)
+                    .Where(l => !l.TrimStart().StartsWith("//", StringComparison.Ordinal))
+                    .Where(l => !l.TrimStart().StartsWith('*'))))
+            .ToArray();
+
+        var names = typeof(DiagnosticCode)
+            .GetFields(BindingFlags.Public | BindingFlags.Static)
+            .Where(f => f.IsLiteral && f.FieldType == typeof(string))
+            .Select(f => f.Name)
+            .ToArray();
+
+        names.Length.ShouldBeGreaterThan(15);
+
+        names
+            .Where(name => !code.Any(c => c.Contains($"DiagnosticCode.{name}", StringComparison.Ordinal)))
+            .ShouldBeEmpty("diagnostic codes nothing under src/ ever raises");
     }
 }

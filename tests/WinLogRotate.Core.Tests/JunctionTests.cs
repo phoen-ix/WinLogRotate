@@ -311,9 +311,11 @@ public sealed class JunctionTests : IDisposable
 
         found.Refusals.Count.ShouldBe(2, "two distinct links, each named once");
 
-        // And asking again on the same instance adds nothing new: the run remembers its verdicts.
+        // A second pattern over the same tree adds nothing. One enumerator lives for one run, so a
+        // junction two of a job's patterns both reach is a finding about the link rather than two
+        // findings - and a `**` walk that meets the same one from two branches says it once.
         enumerator.Resolve(System.IO.Path.Combine(root, "**", "*.log"))
-            .Refusals.Count.ShouldBe(2);
+            .Refusals.ShouldBeEmpty("the run has already reported these");
     }
 
     /// <summary>
