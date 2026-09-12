@@ -20,6 +20,15 @@ public sealed record CliResult
     public CliFailure Failure { get; init; }
 
     /// <summary>
+    /// The verb that produced this, for a sentence that has to name what did not work.
+    /// </summary>
+    /// <remarks>
+    /// Empty rather than required, so every construction site stays valid and a caller that does
+    /// not set it gets a sentence that claims nothing about which verb ran.
+    /// </remarks>
+    public string Verb { get; init; } = string.Empty;
+
+    /// <summary>
     /// What to show a person when this failed.
     /// </summary>
     /// <remarks>
@@ -73,7 +82,14 @@ public sealed record CliResult
         _ => ExitCode switch
         {
             Core.ExitCode.Ok => "Completed.",
-            Core.ExitCode.Errors => "Completed, but some files could not be rotated.",
+            // "some files could not be rotated" is a sentence about `run`, and exit 1 is not.
+            // `host repair --acl` failing showed it under a dialog titled "Permissions", telling
+            // an operator that files had not been rotated by a verb that rotates nothing.
+            Core.ExitCode.Errors => Verb.StartsWith("run", StringComparison.Ordinal)
+                ? "Completed, but some files could not be rotated."
+                : Verb.Length > 0
+                    ? $"'{Verb}' did not finish. Some of what it was asked to do was not done."
+                    : "Some of the work could not be completed.",
             Core.ExitCode.ConfigInvalid => "The configuration has errors, so nothing was attempted.",
             Core.ExitCode.LockHeld => "Another rotation is already running.",
             Core.ExitCode.InternalError => "Something went wrong that WinLogRotate did not anticipate.",

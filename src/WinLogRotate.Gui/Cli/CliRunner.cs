@@ -98,6 +98,7 @@ public sealed class CliRunner(string executablePath)
             return new CliResult
             {
                 ExitCode = process.ExitCode,
+                Verb = CliArgs.VerbOf(arguments),
                 StdOut = await stdout.ConfigureAwait(false),
                 StdErr = written,
             };
@@ -196,6 +197,7 @@ public sealed class CliRunner(string executablePath)
             return new CliResult
             {
                 ExitCode = process.ExitCode,
+                Verb = CliArgs.VerbOf(arguments),
                 StdOut = written,
 
                 // Genuinely empty, and not a stand-in for "we did not look": a runas child

@@ -94,4 +94,64 @@ public sealed class CliArgsTests
         CliArgs.For(@"C:\conf", "doctor", "--json")
             .ShouldBe(["doctor", "--json", "--config-dir", @"C:\conf"]);
     }
+
+    /// <summary>
+    /// The verb a command line names, for a message that has to say what did not work.
+    /// </summary>
+    /// <remarks>
+    /// Stops at the first option, so the configuration directory this class appends
+    /// unconditionally never becomes part of the verb.
+    /// </remarks>
+    [Theory]
+    [InlineData("run", new[] { "run" })]
+    [InlineData("host repair", new[] { "host", "repair", "--acl" })]
+    [InlineData("config check", new[] { "config", "check", "--json", "--config-dir", "C:/pd" })]
+    [InlineData("", new[] { "--version" })]
+    public void TheVerbIsTheLeadingWords(string expected, string[] args) =>
+        CliArgs.VerbOf(args).ShouldBe(expected);
+
+    /// <summary>
+    /// A failure is described in terms of the verb that failed.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// Exit 1 said "Completed, but some files could not be rotated." for everything. That is a
+    /// sentence about <c>run</c>, and exit 1 is not: <c>host repair --acl</c> failing showed it
+    /// under a dialog titled "Permissions", telling an operator that files had not been rotated
+    /// by a verb that rotates nothing.
+    /// </para>
+    /// <para>
+    /// The <c>run</c> row is asserted beside it, because the specific sentence is the right one
+    /// there and losing it would be a worse trade than the defect.
+    /// </para>
+    /// </remarks>
+    [Theory]
+    [InlineData("run", "some files could not be rotated")]
+    [InlineData("run --catchup", "some files could not be rotated")]
+    [InlineData("host repair", "'host repair' did not finish")]
+    [InlineData("secret set", "'secret set' did not finish")]
+    [InlineData("", "Some of the work could not be completed.")]
+    public void AFailureIsDescribedInTermsOfTheVerbThatFailed(string verb, string expected) =>
+        new CliResult
+        {
+            ExitCode = Core.ExitCode.Errors,
+            StdOut = "",
+            StdErr = "",
+            Verb = verb,
+        }
+        .Describe().ShouldContain(expected);
+
+    /// <summary>Success and the other failures say the same thing for every verb.</summary>
+    /// <remarks>
+    /// Only exit 1 is ambiguous about what was attempted. "The configuration has errors, so
+    /// nothing was attempted" is true of whichever verb read the configuration, and a bare
+    /// "Completed." needs no subject.
+    /// </remarks>
+    [Theory]
+    [InlineData(Core.ExitCode.Ok, "Completed.")]
+    [InlineData(Core.ExitCode.ConfigInvalid, "The configuration has errors, so nothing was attempted.")]
+    [InlineData(Core.ExitCode.LockHeld, "Another rotation is already running.")]
+    public void TheOtherCodesNeedNoVerb(int exitCode, string expected) =>
+        new CliResult { ExitCode = exitCode, StdOut = "", StdErr = "", Verb = "host repair" }
+            .Describe().ShouldBe(expected);
 }

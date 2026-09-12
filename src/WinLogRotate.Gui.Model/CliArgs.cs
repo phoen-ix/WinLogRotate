@@ -22,4 +22,29 @@ public static class CliArgs
 {
     public static string[] For(string? configDir, params string[] verb) =>
         configDir is null ? verb : [.. verb, "--config-dir", configDir];
+
+    /// <summary>
+    /// The verb a command line names, for a message that has to say what did not work.
+    /// </summary>
+    /// <remarks>
+    /// The leading words, stopping at the first option: <c>host repair --acl --config-dir …</c>
+    /// is "host repair". Empty when there is no verb at all, which is a caller that should not
+    /// have come through here.
+    /// </remarks>
+    public static string VerbOf(IReadOnlyList<string> args)
+    {
+        var words = new List<string>();
+
+        foreach (var arg in args)
+        {
+            if (arg.StartsWith('-'))
+            {
+                break;
+            }
+
+            words.Add(arg);
+        }
+
+        return string.Join(' ', words);
+    }
 }
