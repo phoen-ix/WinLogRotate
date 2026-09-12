@@ -121,8 +121,10 @@ winlogrotate doctor                   # paths, permissions, schedule — in one 
 `--dry-run` is the same code path as a real run, stopped one step earlier — not a separate
 description that can drift from what the executor does.
 
-Everything speaks `--json` for scripting, and every verb the GUI offers exists here, because
-WinForms doesn't run on Server Core and that's where IIS usually lives.
+Everything speaks `--json` for scripting — one envelope on stdout, a stable diagnostic code on
+every finding, and five exit codes that mean five different things. See
+[automation](docs/automation.md). Every verb the GUI offers exists here too, because WinForms
+doesn't run on Server Core and that's where IIS usually lives.
 
 <details>
 <summary>Full command surface</summary>

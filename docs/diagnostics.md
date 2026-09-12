@@ -11,6 +11,9 @@ for a different reader:
 
 A fourth, half-used sink would be one more thing to rotate and one more place to look.
 
+Every code below reaches a script as the `code` field of a diagnostic in the `--json`
+envelope. See [automation](automation.md) for that envelope and what may be relied on.
+
 ## What reaches the Event Log
 
 Everything at **Warning and above**, written to `Application` under the source `WinLogRotate`.
