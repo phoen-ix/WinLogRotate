@@ -285,18 +285,62 @@ public class RotatePlannerTests
         op.Reason.ShouldContain("never overwrites");
     }
 
+    /// <summary>
+    /// rotate = n keeps n dated generations, counting the one this run is about to make.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// Retention skipped <c>rotate</c> of the archives already on disk and deleted the rest - but
+    /// the run then added one more, so a dateext job held <c>rotate + 1</c> generations for ever
+    /// while the numbered path landed on exactly <c>rotate</c>. Both reason strings claimed the
+    /// same contract, and <c>docs/configuration.md</c> defines it once for both.
+    /// </para>
+    /// <para>
+    /// The test this replaces asserted which file was deleted, not how many survived, so it could
+    /// not say anything about the count it was wrong about. It did go red here, on the number of
+    /// deletes - but only by accident of asserting the whole sequence.
+    /// </para>
+    /// </remarks>
     [Fact]
-    public void DateExtRetentionKeepsTheNewestByParsedDate()
+    public void DateExtRetentionKeepsTheNewestRotateGenerations()
     {
-        var plan = PlanFor(Job(dateExt: true, rotate: 2), F("app.log"),
-            F("app.log-20260905.gz", 2), F("app.log-20260904.gz", 3), F("app.log-20260903.gz", 4));
+        var files = new FakeFiles(@"C:\logs\app.log",
+            @"C:\logs\app.log-20260905.gz", @"C:\logs\app.log-20260904.gz",
+            @"C:\logs\app.log-20260903.gz");
 
-        var deleted = plan.Operations
-            .Where(o => o.Action == PlannedAction.Delete)
-            .Select(o => WinPath.FileName(o.Source))
-            .ToArray();
+        var after = After(Job(dateExt: true, rotate: 2), files);
 
-        deleted.ShouldBe(["app.log-20260903.gz"]);
+        // Two generations, as configured: the newest that was there, and the one just made.
+        after.Names.ShouldBe(["app.log", "app.log-20260905.gz", "app.log-20260907.gz"]);
+
+        after.Lost("app.log-20260904.gz").ShouldBeTrue();
+        after.Lost("app.log-20260903.gz").ShouldBeTrue();
+        after.Missing.ShouldBeEmpty();
+    }
+
+    /// <summary>
+    /// Two spellings of one dated generation count as one.
+    /// </summary>
+    /// <remarks>
+    /// <c>ArchiveNaming.DateExtGlob</c> ends in a wildcard, so <c>app.log-20260905</c> and
+    /// <c>app.log-20260905.gz</c> are both discovered and both parse to the same stamp. Counting
+    /// files rather than generations pushes one of the pair past the window and deletes it, and
+    /// which one dies is decided by nothing better than which path sorts first - the same
+    /// arbitrary choice between two spellings of one generation that the numbered path declines
+    /// to make.
+    /// </remarks>
+    [Fact]
+    public void TwoSpellingsOfOneDatedGenerationCountAsOne()
+    {
+        var files = new FakeFiles(@"C:\logs\app.log",
+            @"C:\logs\app.log-20260905", @"C:\logs\app.log-20260905.gz",
+            @"C:\logs\app.log-20260904.gz");
+
+        var after = After(Job(dateExt: true, rotate: 2), files);
+
+        after.Lost("app.log-20260905").ShouldBeFalse("both spellings are one generation");
+        after.Lost("app.log-20260905.gz").ShouldBeFalse("both spellings are one generation");
+        after.Lost("app.log-20260904.gz").ShouldBeTrue("this is the generation past the window");
     }
 
     // ---- other directives ----------------------------------------------------------------

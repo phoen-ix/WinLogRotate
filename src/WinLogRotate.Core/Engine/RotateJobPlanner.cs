@@ -302,10 +302,54 @@ public static class RotateJobPlanner
             return;
         }
 
-        // Deferred compression from the previous run, if any remain uncompressed.
+        // Retention decided before anything is written, for the reason the numbered path decides
+        // it first: a file this pass is going to delete must not be compressed on its way to the
+        // bin, and must not be condemned twice.
+        var condemned = AddMaxAgeDeletions(job, generation.Archives, operations, now);
+
+        // Ordered newest-first by parsed date, so retention keeps the newest N regardless of how
+        // the format happens to sort as a string.
+        //
+        // By generation, not by file. rotate is "how many old generations to keep", and the run
+        // about to happen produces one of them - counting only the archives already on disk kept
+        // rotate of those plus the new one, so a dateext job held one more generation than it was
+        // configured for, for ever, while the numbered path landed on exactly rotate.
+        //
+        // And one dated generation is one generation however many spellings of it are present.
+        // ArchiveNaming.DateExtGlob ends in a wildcard, so app.log-20260905 and
+        // app.log-20260905.gz are both discovered and both parse to the same stamp; counting
+        // files would push one of the pair past the window and delete it, chosen by nothing
+        // better than which path sorts first.
+        if (job.Rotate >= 0)
+        {
+            var keep = Math.Max(job.Rotate - 1, 0);
+
+            var doomed = generation.Archives
+                .GroupBy(DatedGeneration, StringComparer.OrdinalIgnoreCase)
+                .Skip(keep)
+                .SelectMany(g => g);
+
+            foreach (var archive in doomed)
+            {
+                if (!condemned.Add(archive.Path))
+                {
+                    continue;
+                }
+
+                operations.Add(new PlannedOp
+                {
+                    Action = PlannedAction.Delete,
+                    Source = archive.Path,
+                    Reason = $"rotate = {job.Rotate} keeps the newest {job.Rotate} archive(s)",
+                    Bytes = archive.Length,
+                });
+            }
+        }
+
+        // Deferred compression from the previous run, if any remain uncompressed and survive.
         if (job is { DelayCompress: true, CompressType: not CompressType.None })
         {
-            foreach (var stale in generation.Archives.Where(a => !a.IsCompressed))
+            foreach (var stale in generation.Archives.Where(a => !a.IsCompressed && !condemned.Contains(a.Path)))
             {
                 operations.Add(new PlannedOp
                 {
@@ -319,25 +363,20 @@ public static class RotateJobPlanner
         }
 
         AddLiveRotation(job, live, target, operations, verdict);
-
-        // Ordered newest-first by parsed date, so retention keeps the newest N regardless of
-        // how the format happens to sort as a string.
-        if (job.Rotate >= 0)
-        {
-            foreach (var doomed in generation.Archives.Skip(job.Rotate))
-            {
-                operations.Add(new PlannedOp
-                {
-                    Action = PlannedAction.Delete,
-                    Source = doomed.Path,
-                    Reason = $"rotate = {job.Rotate} keeps the newest {job.Rotate} archive(s)",
-                    Bytes = doomed.Length,
-                });
-            }
-        }
-
-        AddMaxAgeDeletions(job, generation.Archives, operations, now);
     }
+
+    /// <summary>
+    /// What counts as one dated generation: the parsed stamp, or the path where none parsed.
+    /// </summary>
+    /// <remarks>
+    /// Falling back to the path rather than to a shared null keeps an unparseable name its own
+    /// generation. Collapsing them would make every such file one generation between them, which
+    /// is how a retention pass deletes a pile of archives it never counted.
+    /// </remarks>
+    private static string DatedGeneration(ArchiveFile archive) =>
+        archive.Stamp is { } stamp
+            ? stamp.UtcDateTime.ToString("O", System.Globalization.CultureInfo.InvariantCulture)
+            : archive.Path;
 
     /// <param name="discard">
     /// Whether the archive this rotation produces is kept. <c>rotate = 0</c> keeps no generations,
