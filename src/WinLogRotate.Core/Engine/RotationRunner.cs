@@ -305,6 +305,43 @@ public sealed class RotationRunner(
                     matched.AddRange(found.Files);
                 }
 
+                // One file, however many of this job's patterns name it. Accumulated across
+                // patterns without this, LogSeries.Discover emitted a generation per occurrence
+                // and RotateJobPlanner planned the whole shift once per generation - both passes
+                // against the same archive list, because discovery finished before any operation
+                // ran. Two patterns as ordinary as ["C:/logs/*.log", "C:/logs/app.*"] were enough.
+                //
+                // Numbered rotation lost a generation and wedged an empty file in at .1: the
+                // second pass shifted the file the first pass had just created. dateext is worse,
+                // not safer - the second rename takes the freshly recreated empty log over the
+                // archive the first one wrote, and the whole of the current period is gone. Every
+                // operation was reported Ok, because each one individually succeeded.
+                //
+                // Keyed on CanonicalKey rather than the string: two patterns can name one file by
+                // different spellings, and a case-sensitive comparison would let C:\logs\App.log
+                // and C:\logs\app.log through as two.
+                var duplicates = matched.Count;
+                matched = [.. matched.DistinctBy(f => WinPath.CanonicalKey(f.Path))];
+                duplicates -= matched.Count;
+
+                if (duplicates > 0)
+                {
+                    // Info, and said once for the job. It is not a fault - overlapping patterns
+                    // are a reasonable way to write a job - but an operator who believes a file
+                    // is matched twice believes something about this job that is not true, and
+                    // silence about a de-duplication is how they would keep believing it.
+                    Report(new CliDiagnostic
+                    {
+                        Severity = Severity.Info,
+                        Code = DiagnosticCode.MatchedMoreThanOnce,
+                        Message = $"[{job.Name}] {duplicates} file(s) are named by more than one "
+                                + "of this job's patterns; each is rotated once.",
+                        Job = job.Name,
+                        Remedy = "Nothing needs changing. Narrow the patterns if the overlap was "
+                               + "not intended.",
+                    });
+                }
+
                 // Whatever the archive glob refused, reported against this job and then cleared, so a
                 // later job cannot inherit it.
                 if (_archives is FileArchiveSource source)

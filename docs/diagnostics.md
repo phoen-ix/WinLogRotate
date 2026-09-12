@@ -126,6 +126,7 @@ mean the same thing wherever it is read.
 | 122 | Info | A log was due but held back by `notifempty` | `LR2003` |
 | 123 | Info | A log was due but held back by `minsize` or `minage` | `LR2004` |
 | 124 | Info | First run: a baseline was recorded | `LR2005` |
+| 125 | Info | A file is named by more than one of a job's patterns; it is rotated once | `LR2006` |
 | 130 | Error | A rotation failed | `LR3001` |
 | 131 | Error | The file was locked by another process | `LR3002` |
 | 132 | *varies* | The configured lock strategy was unavailable | `LR3003` |

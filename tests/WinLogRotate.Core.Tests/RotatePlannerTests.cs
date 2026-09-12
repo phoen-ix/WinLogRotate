@@ -674,6 +674,104 @@ public class RotatePlannerTests
         // declined to make, and the remedy is where it would leak back in.
         d.Remedy.ShouldNotBeNull().ShouldNotContain("delete ", Case.Insensitive);
     }
+    /// <summary>
+    /// What a duplicated match does to a directory, on both rotation strategies.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// Not a test of the fix - <c>RotationRunner</c> de-duplicates, and
+    /// <c>AFileTwoPatternsNameIsRotatedOnce</c> pins that. This is the reason the fix is
+    /// urgent, kept as executable evidence of what the planner does when it is handed the same
+    /// live log twice, which is exactly what the runner used to hand it.
+    /// </para>
+    /// <para>
+    /// <b>Numbered rotation</b> loses a generation and wedges an empty file in at <c>.1</c>. Both
+    /// passes plan the full shift against the same archive list, because discovery finished
+    /// before any operation ran: yesterday's log lands at <c>.2</c> rather than <c>.1</c>, the
+    /// file that was at <c>.2</c> is destroyed, and what sits at <c>.1</c> is the empty log the
+    /// first pass recreated.
+    /// </para>
+    /// <para>
+    /// <b>dateext is worse, not safer.</b> The second rename takes the freshly recreated empty
+    /// log over the archive the first one just wrote, so the whole of the current period is gone
+    /// and the name it should be under holds nothing. Every operation reports <c>Ok</c>, because
+    /// each one individually succeeded.
+    /// </para>
+    /// </remarks>
+    [Fact]
+    public void TwoPassesOverOneLogDestroyAGeneration()
+    {
+        var job = Job(compress: false);
+        var files = new FakeFiles(@"C:\logs\app.log", @"C:\logs\app.log.1", @"C:\logs\app.log.2");
+        var live = files.All.Single(f => WinPath.FileName(f.Path) == "app.log");
+
+        var verdicts = new Dictionary<string, DueVerdict>
+        {
+            [live.Path] = new() { Due = true, Reason = DueReason.Scheduled, Explanation = "a new day has begun" },
+        };
+
+        var twice = Outcome.Of(
+            RotateJobPlanner.Plan(job, LogSeries.Discover(job, [live, live], files), verdicts, Now),
+            files);
+
+        twice.Became("app.log").ShouldBe(["app.log.2"],
+            "yesterday's log is filed as though it were the night before last");
+
+        twice.Became("app.log.2").ShouldBeEmpty("and the generation that was there is gone");
+
+        twice.Clobbered.ShouldContain(@"C:\logs\app.log.3");
+
+        // The empty file wedged in at .1: not one of the seeded files, so it has no origin.
+        twice.At(@"C:\logs\app.log.1").ShouldNotBeNull().Origin.ShouldBeNull();
+
+        // And what one pass does, for contrast - the same fixture, the same planner.
+        var once = Outcome.Of(
+            RotateJobPlanner.Plan(job, LogSeries.Discover(job, [live], files), verdicts, Now),
+            files);
+
+        once.Became("app.log").ShouldBe(["app.log.1"]);
+        once.Became("app.log.2").ShouldBe(["app.log.3"]);
+    }
+
+    /// <summary>
+    /// With dateext, two passes destroy the whole of the current period.
+    /// </summary>
+    /// <remarks>
+    /// Worth its own test because the obvious reading is the opposite one: dateext writes to a
+    /// name derived from the clock, so a second pass looks idempotent. It is not. The first pass
+    /// renames the live log to today's archive and recreates the live log empty; the second
+    /// renames that empty file over the archive. What is left under today's date is nothing.
+    /// </remarks>
+    [Fact]
+    public void WithDateExtTwoPassesDestroyTheCurrentPeriod()
+    {
+        var job = Job(compress: false, dateExt: true);
+        var files = new FakeFiles(@"C:\logs\app.log", @"C:\logs\app.log-20260906");
+        var live = files.All.Single(f => WinPath.FileName(f.Path) == "app.log");
+
+        var verdicts = new Dictionary<string, DueVerdict>
+        {
+            [live.Path] = new() { Due = true, Reason = DueReason.Scheduled, Explanation = "a new day has begun" },
+        };
+
+        var twice = Outcome.Of(
+            RotateJobPlanner.Plan(job, LogSeries.Discover(job, [live, live], files), verdicts, Now),
+            files);
+
+        twice.Became("app.log").ShouldBeEmpty(
+            "the live log was renamed onto today's archive, then an empty file was renamed over it");
+
+        twice.At(@"C:\logs\app.log-20260906").ShouldNotBeNull()
+            .Origin.ShouldBe(@"C:\logs\app.log-20260906", "yesterday survives; today does not");
+
+        // One pass, for contrast.
+        Outcome.Of(
+                RotateJobPlanner.Plan(job, LogSeries.Discover(job, [live], files), verdicts, Now),
+                files)
+            .Became("app.log")
+            .ShouldHaveSingleItem()
+            .ShouldEndWith("-20260907");
+    }
 }
 
 public class ArchiveNamingTests

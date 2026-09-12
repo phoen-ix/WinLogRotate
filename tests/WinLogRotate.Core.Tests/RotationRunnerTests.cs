@@ -83,6 +83,31 @@ public sealed class RotationRunnerTests : IDisposable
         };
     }
 
+    /// <summary>
+    /// A set of real paths, matched by the real glob, so two patterns can name one file.
+    /// </summary>
+    /// <remarks>
+    /// <see cref="Patterns"/> synthesises each result from the pattern that asked
+    /// (<c>pattern.Replace("*", i)</c>), so no two patterns it serves can ever produce the same
+    /// path - which made the duplicate-match defect unreachable from every fixture in this file.
+    /// A fake that cannot express a defect is a fake that certifies its absence.
+    /// </remarks>
+    private sealed class Overlapping(params string[] paths) : IFileSource
+    {
+        public EnumerationResult Resolve(string pattern) => new()
+        {
+            Files = [.. paths
+                .Where(p => Glob.IsMatch(p, pattern))
+                .Select(p => new MatchedFile
+                {
+                    Path = p,
+                    Length = 4096,
+                    LastWriteUtc = new DateTimeOffset(2026, 9, 8, 12, 0, 0, TimeSpan.Zero),
+                })],
+            Refusals = [],
+        };
+    }
+
     /// <summary>Nothing on disk; every rotation here is a decision, not an operation.</summary>
     private sealed class NoArchives : IArchiveSource
     {
@@ -900,5 +925,55 @@ public sealed class RotationRunnerTests : IDisposable
         report.Diagnostics
             .Where(d => d.Code == DiagnosticCode.DangerousPathRefused)
             .ShouldHaveSingleItem();
+    }
+
+    /// <summary>
+    /// A file two of a job's patterns name is rotated once.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// Matches were accumulated across a job's patterns with no de-duplication, so
+    /// <c>LogSeries.Discover</c> emitted a generation per occurrence and
+    /// <c>RotateJobPlanner</c> planned the entire shift once per generation - both passes
+    /// against the same archive list, because discovery finished before any operation ran.
+    /// <c>["C:/logs/*.log", "C:/logs/app.*"]</c> is enough, and every operation was reported
+    /// <c>Ok</c>, because each one individually succeeded.
+    /// </para>
+    /// <para>
+    /// This asserts that de-duplication happened before the planner saw the list. What two
+    /// passes actually do to a directory is named in <c>RotatePlannerTests</c>, where a job
+    /// rotates rather than baselines.
+    /// </para>
+    /// </remarks>
+    [Fact]
+    public void AFileTwoPatternsNameIsRotatedOnce()
+    {
+        var report = RunWith(
+            new Overlapping(@"C:\logs\app.log"),
+            Job() with { Paths = [@"C:\logs\*.log", @"C:\logs\app.*"] });
+
+        var plan = report.Plans.ShouldHaveSingleItem();
+
+        plan.MatchedFiles.ShouldBe(1, "one file, however many patterns name it");
+
+        report.Diagnostics
+            .Where(d => d.Code == DiagnosticCode.MatchedMoreThanOnce)
+            .ShouldHaveSingleItem()
+            .Severity.ShouldBe(Severity.Info,
+                "overlapping patterns are a reasonable way to write a job, not a fault");
+    }
+
+    /// <summary>
+    /// A job whose patterns do not overlap says nothing about overlapping.
+    /// </summary>
+    [Fact]
+    public void APlainJobIsNotToldItsPatternsOverlap()
+    {
+        var report = RunWith(
+            new Overlapping(@"C:\logs\app.log", @"C:\logs\web.log"),
+            Job() with { Paths = [@"C:\logs\app.*", @"C:\logs\web.*"] });
+
+        report.Plans.ShouldHaveSingleItem().MatchedFiles.ShouldBe(2);
+        report.Diagnostics.ShouldNotContain(d => d.Code == DiagnosticCode.MatchedMoreThanOnce);
     }
 }

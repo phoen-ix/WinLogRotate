@@ -83,6 +83,23 @@ public static class DiagnosticCode
     public const string NotDueYet = "LR2004";
     public const string FirstRunBaseline = "LR2005";
 
+    /// <summary>
+    /// A file is named by more than one of a job's patterns, and was rotated once.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// Info, because overlapping patterns are a reasonable way to write a job and nothing needs
+    /// changing. It is said at all because an operator who believes a file is matched twice
+    /// believes something about their configuration that is not true.
+    /// </para>
+    /// <para>
+    /// A Warning would be wrong twice over: it would reach the Event Log and the notification
+    /// threshold for a condition that is benign and permanently true, and park the job at
+    /// Failing for ever.
+    /// </para>
+    /// </remarks>
+    public const string MatchedMoreThanOnce = "LR2006";
+
     // 3xxx - rotation errors
     public const string RotationFailed = "LR3001";
     public const string FileLocked = "LR3002";

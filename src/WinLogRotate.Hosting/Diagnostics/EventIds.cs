@@ -77,6 +77,7 @@ public static class EventIds
         DiagnosticCode.FileEmpty => 122,
         DiagnosticCode.NotDueYet => 123,
         DiagnosticCode.FirstRunBaseline => 124,
+        DiagnosticCode.MatchedMoreThanOnce => 125,
 
         // 3xxx - rotation errors.
         DiagnosticCode.RotationFailed => 130,

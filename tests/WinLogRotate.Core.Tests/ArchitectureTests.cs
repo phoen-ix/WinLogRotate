@@ -1100,6 +1100,7 @@ public partial class ArchitectureTests
         [nameof(DiagnosticCode.FileEmpty)] = ["RotationRunner.cs"],
         [nameof(DiagnosticCode.NotDueYet)] = ["RotationRunner.cs"],
         [nameof(DiagnosticCode.FirstRunBaseline)] = ["RotationRunner.cs"],
+        [nameof(DiagnosticCode.MatchedMoreThanOnce)] = ["RotationRunner.cs"],
         [nameof(DiagnosticCode.RotationFailed)] = ["Diagnose.cs", "OldDirGate.cs"],
         [nameof(DiagnosticCode.FileLocked)] = ["Diagnose.cs", "LockChoice.cs", "NotifyTestCommand.cs", "ProbeCommand.cs"],
         [nameof(DiagnosticCode.StrategyUnavailable)] = ["LockChoice.cs", "ProbeCommand.cs"],
