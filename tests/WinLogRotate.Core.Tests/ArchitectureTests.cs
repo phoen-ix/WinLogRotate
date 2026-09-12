@@ -1866,4 +1866,53 @@ public partial class ArchitectureTests
             "a retry that reports nothing: the file was contended, the run slept for it, and the "
             + "record says only that the operation took a while");
     }
+    /// <summary>
+    /// The digest does not spend the diagnostics' allowance.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// <c>EventLogBudgetTests</c> proves the two allowances are independent; it cannot prove which
+    /// one each caller reaches for, because that is a line inside a Windows-annotated type on a
+    /// path no test leg can execute - no event source is registered on either. This is that half,
+    /// asserted where it can be: at the source.
+    /// </para>
+    /// <para>
+    /// Both directions. The sender calling <c>TryWrite</c> is the defect returning; the sink
+    /// calling <c>WriteDigest</c> would put mirrored diagnostics on an allowance that has no
+    /// ceiling, which is the same mistake pointed the other way.
+    /// </para>
+    /// </remarks>
+    [Fact]
+    public void TheDigestDoesNotSpendTheDiagnosticsAllowance()
+    {
+        var root = RepoRoot.Find().FullName;
+
+        var sender = Path.Combine(
+            root, "src", "WinLogRotate.Hosting", "Diagnostics", "EventLogNotifySender.cs");
+        var sink = Path.Combine(root, "src", "WinLogRotate.Cli", "Output", "EventLogSink.cs");
+
+        File.Exists(sender).ShouldBeTrue(sender);
+        File.Exists(sink).ShouldBeTrue(sink);
+
+        static string Code(string path) => string.Join(
+            '\n',
+            File.ReadAllLines(path)
+                .Where(l => !l.TrimStart().StartsWith("//", StringComparison.Ordinal))
+                .Where(l => !l.TrimStart().StartsWith("///", StringComparison.Ordinal)));
+
+        var senderCode = Code(sender);
+        var sinkCode = Code(sink);
+
+        // The needles have to be live, or both assertions below hold over nothing.
+        senderCode.ShouldContain("EventLogWriter.WriteDigest", Case.Sensitive,
+            "the digest sender no longer writes to the Event Log at all");
+        sinkCode.ShouldContain("EventLogWriter.TryWrite", Case.Sensitive,
+            "the diagnostic sink no longer writes to the Event Log at all");
+
+        senderCode.ShouldNotContain("EventLogWriter.TryWrite", Case.Sensitive,
+            "the digest would spend the mirrored diagnostics' allowance, and be reported as "
+            + "delivered when a noisy run had already spent it");
+        sinkCode.ShouldNotContain("EventLogWriter.WriteDigest", Case.Sensitive,
+            "mirrored diagnostics would go on the allowance that deliberately has no ceiling");
+    }
 }

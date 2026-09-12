@@ -41,8 +41,32 @@ public sealed class EventLogNotifySender(string source) : INotifySender
 
         var text = message.Subject + Environment.NewLine + Environment.NewLine + message.Body;
 
-        return EventLogWriter.TryWrite(source, severity, EventIds.NotificationDigest, text)
-            ? SendResult.Delivered()
-            : SendResult.Failed(400, "the Event Log refused the entry");
+        // WriteDigest, not TryWrite: the digests have their own allowance. Sharing the mirrored
+        // diagnostics' fifty meant that on a night bad enough to produce fifty of them - which is
+        // the only night this channel matters - the digest arrived over budget, and was reported
+        // as delivered because the allowance's announcement had been written in its place.
+        //
+        // Three outcomes rather than a bool, because they have three different fixes and an
+        // operator shown the wrong one goes looking in the wrong place.
+        return EventLogWriter.WriteDigest(source, severity, text) switch
+        {
+            EventLogOutcome.Written => SendResult.Delivered(),
+
+            // Cannot become true within this run: the handle is opened once and the failure
+            // memoised, so retrying would spend the run's shared deadline to fail identically.
+            EventLogOutcome.Unavailable => SendResult.Failed(400,
+                "the Event Log source is not registered, which is normal for a per-user install"),
+
+            // An answer, not a silence - which is what 0 is for. The body is already fitted to
+            // the Event Log's insertion-string limit, so a refusal is most plausibly about this
+            // one message rather than about the channel, and 4xx is where that belongs.
+            EventLogOutcome.Refused => SendResult.Failed(400, "the Event Log refused the entry"),
+
+            // Unreachable today - the digests have no ceiling - and kept honest rather than
+            // folded into the refusal, so that giving them one later cannot quietly resurrect
+            // "delivered" for a message nothing wrote.
+            _ => SendResult.Failed(400,
+                "this run's Event Log allowance was already spent, so the digest was not written"),
+        };
     }
 }
