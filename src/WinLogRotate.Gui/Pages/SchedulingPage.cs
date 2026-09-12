@@ -1,4 +1,3 @@
-using System.Text.Json;
 using WinLogRotate.Gui.Cli;
 using WinLogRotate.Gui.Ui;
 
@@ -20,7 +19,14 @@ public sealed class SchedulingPage : UserControl
     private readonly RadioButton _task = new() { Text = "Scheduled task (recommended)", AutoSize = true };
     private readonly RadioButton _service = new() { Text = "Windows service", AutoSize = true };
     private readonly RadioButton _none = new() { Text = "Neither - I will trigger it myself", AutoSize = true };
-    private readonly Button _apply = new() { Text = "Apply", Width = 110, FlatStyle = FlatStyle.System };
+    // Disabled until the first refresh says which host is registered. An Apply that is
+    // clickable before the page knows anything is an Apply that acts on a selection nobody made.
+    private readonly Button _apply =
+        new() { Text = "Apply", Width = 110, FlatStyle = FlatStyle.System, Enabled = false };
+
+    /// <summary>Whether the registered host is established, and therefore whether Apply means
+    /// anything. Owned by <see cref="RefreshStatusAsync"/>; read by the Apply path.</summary>
+    private bool _known;
     private readonly Label _current = new() { Dock = DockStyle.Top, Height = 44 };
     private readonly TextBox _log = new()
     {
@@ -62,7 +68,9 @@ public sealed class SchedulingPage : UserControl
         Controls.Add(options);
         Controls.Add(_current);
 
-        _task.Checked = true;
+        // Deliberately no selection here. Which host is registered is a fact about the machine,
+        // and RefreshStatusAsync is what learns it; pre-selecting one turned "I did not touch
+        // this page" into "remove the service".
         Load += async (_, _) => await RefreshStatusAsync().ConfigureAwait(true);
     }
 
@@ -74,42 +82,26 @@ public sealed class SchedulingPage : UserControl
         var result = await _cli.RunAsync(CliArgs.For(_configDir, "doctor", "--json"))
             .ConfigureAwait(true);
 
-        if (!result.Ok)
+        var view = SchedulingProjection.From(result);
+
+        _current.Text = view.Current;
+        _current.ForeColor = view.Warn ? Theme.Current.Warning : Theme.Current.Muted;
+
+        _task.Checked = view.Selected == RunHostChoice.Task;
+        _service.Checked = view.Selected == RunHostChoice.Service;
+        _none.Checked = view.Selected == RunHostChoice.None;
+
+        // A selection nobody made must not become an instruction. When the current host could
+        // not be established, every option on this page is one of those.
+        _known = view.Known;
+        _apply.Enabled = _known;
+
+        // Exit 4 is the only code that says nothing about what was or was not done can be relied
+        // on, so it is the only one worth interrupting for - a configuration error is exit 2 and
+        // belongs in the line above.
+        if (result.IsDefect)
         {
-            _current.Text = result.Describe();
-
-            // Exit 4 is the only code that says nothing about what was or was not done can be
-            // relied on, so it is the only one worth interrupting for - a configuration error is
-            // exit 2 and belongs in the line above.
-            if (result.IsDefect)
-            {
-                LrDialog.Error(this, "Scheduling", result.Describe(), result.Details);
-            }
-
-            return;
-        }
-
-        try
-        {
-            using var document = JsonDocument.Parse(result.StdOut);
-            var payload = document.RootElement.GetProperty("result");
-            var host = payload.GetProperty("runHost").GetString();
-            var detail = payload.GetProperty("runHostDetail").GetString();
-
-            _current.Text = $"Currently: {host} ({detail})";
-            _current.ForeColor = host == "None" ? Theme.Current.Warning : Theme.Current.Muted;
-
-            if (host == "None")
-            {
-                _current.Text += "  -  nothing is running rotations, so the configuration will never be applied.";
-            }
-        }
-        catch (Exception e) when (e is JsonException or KeyNotFoundException or InvalidOperationException)
-        {
-            // GetProperty throws KeyNotFoundException and GetInt32 throws
-            // InvalidOperationException, neither of which a JsonException filter catches - so an
-            // envelope that parsed but was missing a field escaped into an async void handler.
-            _current.Text = "Could not read the current status.";
+            LrDialog.Error(this, "Scheduling", result.Describe(), result.Details);
         }
     }
 
@@ -142,7 +134,10 @@ public sealed class SchedulingPage : UserControl
         }
         finally
         {
-            _apply.Enabled = true;
+            // Back to what is known, never unconditionally on. The refresh above has usually
+            // just set this; on the path where it threw, the last established answer is still
+            // the right one to offer - and if nothing was ever established, still nothing.
+            _apply.Enabled = _known;
         }
     }
 }
