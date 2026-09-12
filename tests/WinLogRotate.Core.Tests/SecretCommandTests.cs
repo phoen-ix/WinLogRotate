@@ -593,4 +593,58 @@ public sealed class SecretCommandTests : IDisposable
 
         public SecretsProtection Verify(string path, string? ownerSid) => SecretsProtection.Hardened;
     }
+
+    /// <summary>
+    /// Reading a secret out of a file says the file is still holding it, whichever verb read it.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// <c>secret import --from-file</c> has warned about this since the option existed:
+    /// a credential sitting in plain text in a file nothing is going to delete. <c>secret set
+    /// --from-file</c> read a file exactly the same way and said nothing at all.
+    /// </para>
+    /// <para>
+    /// A warning an operator learns to expect from one verb and does not get from its sibling is
+    /// worse than one that was never given - the absence reads as "this one is fine".
+    /// </para>
+    /// <para>
+    /// Both verbs are asserted in one theory rather than in two tests, so a third reader of
+    /// <c>--from-file</c> added later is an obvious row to add rather than a test to remember.
+    /// </para>
+    /// </remarks>
+    [Theory]
+    [InlineData("set")]
+    [InlineData("import")]
+    public void ReadingASecretFromAFileWarnsThatTheFileStillHoldsIt(string verb)
+    {
+        var platform = new FakePlatform();
+        var file = new FileInfo(Path.Combine(Root, "creds.txt"));
+        File.WriteAllText(file.FullName, verb == "set" ? "hunter2\n" : "a=hunter2\n");
+
+        var exit = verb == "set"
+            ? SecretCommand.Set(Context(), new FakeInput(null), platform, "a", file, Root)
+            : SecretCommand.Import(Context(), new FakeInput(null), platform, file, Root);
+
+        exit.ShouldBe(ExitCode.Ok, "the warning must not turn into a refusal");
+
+        var warning = _sink.Diagnostics
+            .Where(d => d.Code == DiagnosticCode.SecretInPlainConfig)
+            .ShouldHaveSingleItem();
+
+        warning.Severity.ShouldBe(Severity.Warning);
+        warning.Path.ShouldBe(file.FullName);
+
+        // And the value really was stored, so this is not a warning about work that did not
+        // happen.
+        SecretCommand.Test(Context(), platform, "a", Root).ShouldBe(ExitCode.Ok);
+    }
+
+    /// <summary>Typing the value at the prompt warns about no file, because there is none.</summary>
+    [Fact]
+    public void TypingASecretWarnsAboutNoFile()
+    {
+        Set(new FakePlatform(), "a").ShouldBe(ExitCode.Ok);
+
+        _sink.Diagnostics.ShouldNotContain(d => d.Code == DiagnosticCode.SecretInPlainConfig);
+    }
 }

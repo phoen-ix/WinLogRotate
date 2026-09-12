@@ -49,6 +49,12 @@ internal static class SecretCommand
                 return ctx.Output.Complete<SecretResult>("secret set", ExitCode.Errors, null);
             }
 
+            // The same hazard 'secret import' has warned about since --from-file existed: a
+            // credential sitting in a plaintext file that nothing is going to delete. Two verbs
+            // reading a secret out of a file the same way, and only one of them saying so, is a
+            // warning an operator learns to expect and then does not get.
+            WarnAboutPlaintextFile(ctx, fromFile);
+
             value = SecretString.From(text);
         }
         else if (!input.TryReadSecret($"Value for '{name}'", out value, out var error))
@@ -553,7 +559,7 @@ internal static class SecretCommand
                 return ctx.Output.Complete<SecretResult>("secret import", ExitCode.Errors, null);
             }
 
-            WarnAboutPlaintextFile(ctx, platform, fromFile);
+            WarnAboutPlaintextFile(ctx, fromFile);
         }
         else
         {
@@ -770,7 +776,7 @@ internal static class SecretCommand
     /// file somewhere even less private. We never delete it either: it is the operator's file
     /// and possibly their only copy.
     /// </remarks>
-    private static void WarnAboutPlaintextFile(CommandContext ctx, ISecretPlatform platform, FileInfo file)
+    private static void WarnAboutPlaintextFile(CommandContext ctx, FileInfo file)
     {
         ctx.Output.Diagnostic(new CliDiagnostic
         {
@@ -778,8 +784,8 @@ internal static class SecretCommand
             Code = DiagnosticCode.SecretInPlainConfig,
             Message = $"{file.FullName} holds credentials in plain text.",
             Path = file.FullName,
-            Remedy = "Delete it once the import has been verified. The values are now stored "
-                   + "encrypted and machine-bound; the file is not.",
+            Remedy = "Delete it once the value has been verified. What was read from it is "
+                   + "now stored encrypted and machine-bound; the file is not.",
         });
     }
 
