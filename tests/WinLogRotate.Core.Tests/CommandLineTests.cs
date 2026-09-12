@@ -53,24 +53,35 @@ public sealed class CommandLineTests
     }
 
     /// <summary>
-    /// The decoy that makes the probing rule pay: a file really is called <c>C:\Program.exe</c>.
+    /// Nothing on disk can decide where the program ends.
     /// </summary>
     /// <remarks>
-    /// Under CreateProcess' rule this is the executable that runs. Here the first token is
-    /// <c>C:\Program</c> - no extension, and not a file - so the string stays ambiguous and the
-    /// hook is refused. Deleting the ambiguity check makes this test start the decoy.
+    /// <para>
+    /// <c>C:\Program</c> is the string the implementation actually looks up, and it is the one the
+    /// test this replaces did not plant. That test planted <c>C:\Program.exe</c> - which the code
+    /// never constructs, because it appends nothing - and <c>C:\Program Files\App\reload.exe</c>
+    /// without the trailing <c> --now</c> the second probe carries with it. Neither string was ever queried, so it
+    /// passed without the probe returning true once, while the probe it was named after was live
+    /// underneath it.
+    /// </para>
+    /// <para>
+    /// What the probe did, when asked the question this test asks: accepted
+    /// <c>program = C:\Program</c> with the rest as arguments, and started it as SYSTEM. That is
+    /// CreateProcess' first leg, which is the behaviour <c>CommandLine</c>'s own remarks and
+    /// <c>docs/hooks.md</c> both say it exists to reject.
+    /// </para>
     /// </remarks>
     [Fact]
-    public void TheWindowsProbingRuleIsNotUsed()
+    public void NoFileOnDiskCanDecideWhereTheProgramEnds()
     {
-        var planted = Only(@"C:\Program.exe", @"C:\Program Files\App\reload.exe");
+        var planted = Only(@"C:\Program");
 
         CommandLine.TrySplit(
             @"C:\Program Files\App\reload.exe --now", planted,
-            out var program, out _, out var error, out _).ShouldBeFalse();
+            out var program, out var arguments, out var error, out _).ShouldBeFalse();
 
-        program.ShouldNotBe(@"C:\Program.exe");
         program.ShouldBeEmpty();
+        arguments.ShouldBeEmpty();
         error.ShouldBe(CommandLineError.Ambiguous);
     }
 
@@ -100,7 +111,10 @@ public sealed class CommandLineTests
     [Fact]
     public void ABareProgramNameIsRefused()
     {
-        CommandLine.TrySplit("net stop MyService", Only("net"),
+        // Nothing, not Only("net"). The planted file used to be what carried this to the
+        // NotAbsolute arm at all: without it the bare name fell through to Ambiguous, whose
+        // remedy - quote the program - produces `"net" stop MyService` and the same refusal.
+        CommandLine.TrySplit("net stop MyService", Nothing,
             out _, out _, out var error, out _).ShouldBeFalse();
 
         error.ShouldBe(CommandLineError.NotAbsolute);

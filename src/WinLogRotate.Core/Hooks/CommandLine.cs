@@ -100,14 +100,35 @@ public static class CommandLine
 
         var head = text[..space];
 
-        // An extension settles it without asking the disk anything, which is the better answer
-        // twice over: a hook is accepted or refused identically on every machine, and whoever
-        // reviews the configuration file can tell which it will be by reading it. The probe below
-        // only has to cover programs written without one.
+        // Unrooted is decided before ambiguous, because the two refusals have different remedies
+        // and only one of them works. Quoting `net stop MyService` produces `"net" stop MyService`,
+        // which is refused again for the reason it was refused the first time; what the operator
+        // needs to hear is the one about PATH. A head that is not absolute also settles the whole
+        // string, which begins where the head does.
+        if (!WinPath.IsAbsolute(head))
+        {
+            program = head;
+            return Absolute(ref program, ref error, ref detail);
+        }
+
+        // An extension settles where the program ends, and nothing else does. The disk used to
+        // get a vote here - `LooksExecutable(head) || exists(head)` - and that vote was
+        // CreateProcess' rule in the one form this type was written to reject.
         //
-        // Nothing is ever appended. CreateProcess' rule - try "C:\Program", then "C:\Program.exe"
-        // - is the whole reason this type exists.
-        if (LooksExecutable(head) || exists(head))
+        // The comment that stood here said "Nothing is ever appended. CreateProcess' rule - try
+        // C:\Program, then C:\Program.exe - is the whole reason this type exists." Nothing was
+        // appended, so C:\Program.exe was never tried. But `exists(head)` asked about C:\Program,
+        // which is the FIRST leg of that rule, reimplemented exactly. A file at C:\Program - or,
+        // more reachably, at the truncation point of any hook under a writable directory with a
+        // space in its name - turned the refusal documented in docs/hooks.md into
+        // `program = C:\Program`, `arguments = [Files\App\reload.exe, --now]`, started as SYSTEM
+        // with its working directory set to the plant's own parent.
+        //
+        // Lexical, therefore, and completely: a hook is accepted or refused identically on every
+        // machine and in every order, whoever reviews the configuration file can tell which by
+        // reading it, and `config check` cannot disagree with `run` because a file appeared
+        // between them.
+        if (LooksExecutable(head))
         {
             program = head;
             arguments = SplitArguments(text[space..]);
