@@ -92,13 +92,19 @@ internal static class UpdateCommand
         ctx.Output.Line($"Download the installer from {LatestReleaseUrl} and run it; it upgrades in place,");
         ctx.Output.Line("keeps your configuration, and waits for any rotation in progress to finish.");
 
-        return ctx.Output.Complete("update apply", ExitCode.Ok, new UpdateResult
-        {
-            Current = ProductInfo.Version,
-            Latest = null,
-            UpdateAvailable = false,
-            Detail = LatestReleaseUrl,
-        });
+        // Exit 1 with a diagnostic, not exit 0 with an UpdateResult. This verb never asked
+        // whether an update exists and never installed one, and it was reporting
+        // `updateAvailable: false, latest: null` at exit 0 - the exact shape of "I checked, you
+        // are up to date". `winlogrotate update apply && echo updated` printed "updated" on a
+        // machine that had not been updated, by a verb whose own comment argues honestly for not
+        // implementing it. Saying so beats offering a switch that quietly declines.
+        return Refusals.WillNotAct<UpdateResult>(
+            ctx,
+            "update apply",
+            "updating a per-machine install means writing to Program Files, which needs a UAC "
+            + "prompt nobody is present to answer at three in the morning.",
+            $"Download the installer from {LatestReleaseUrl} and run it. It upgrades in place, "
+            + "keeps your configuration, and waits for any rotation in progress to finish.");
     }
 
     /// <summary>

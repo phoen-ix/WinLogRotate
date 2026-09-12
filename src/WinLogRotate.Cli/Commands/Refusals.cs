@@ -46,6 +46,29 @@ internal static class Refusals
         return ctx.Output.Complete<T>(verb, ExitCode.ConfigInvalid, null);
     }
 
+    /// <summary>
+    /// This verb exists, was reached, and declines to do the thing it is named after.
+    /// </summary>
+    /// <remarks>
+    /// Distinct from <see cref="NeedsWindows{T}"/>, which is about the machine. This is about the
+    /// product: the verb is a placeholder, or a deliberate non-implementation, and the caller has
+    /// to be able to tell that apart from having done the work. Exit 1, because
+    /// <c>verb &amp;&amp; next</c> must not run <c>next</c>.
+    /// </remarks>
+    public static int WillNotAct<T>(CommandContext ctx, string verb, string because, string remedy)
+        where T : class
+    {
+        ctx.Output.Diagnostic(new CliDiagnostic
+        {
+            Severity = Severity.Error,
+            Code = DiagnosticCode.NotSupportedHere,
+            Message = $"'{verb}' does not do this: {because}",
+            Remedy = remedy,
+        });
+
+        return ctx.Output.Complete<T>(verb, ExitCode.Errors, null);
+    }
+
     /// <summary>This verb needs Windows, and this machine is not.</summary>
     public static int NeedsWindows<T>(CommandContext ctx, string verb, string because)
         where T : class

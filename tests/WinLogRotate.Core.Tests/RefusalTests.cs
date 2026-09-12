@@ -254,4 +254,56 @@ public sealed partial class RefusalTests
                  "ScanCommand.cs", "UpdateCommand.cs"],
                 customMessage: "a new guard needs deciding about: does this verb refuse, or report?");
     }
+
+    /// <summary>
+    /// A verb that declines to do what it is named after does not report success.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// <c>update apply</c> never asked whether an update exists and never installed one, and
+    /// returned exit 0 with <c>updateAvailable: false, latest: null</c> - the exact shape of "I
+    /// checked, you are up to date". Measured against the real CLI before the fix:
+    /// </para>
+    /// <code>
+    /// $ winlogrotate update apply --json
+    /// {"verb":"update apply","ok":true,"exitCode":0,"result":{"updateAvailable":false,...},"diagnostics":[]}
+    /// $ winlogrotate update apply &amp;&amp; echo updated
+    /// updated
+    /// </code>
+    /// <para>
+    /// Unlike Windows, this refusal happens on every platform, so there is nothing to skip: the
+    /// verb declines because of what the product does not do, not because of what the machine is.
+    /// </para>
+    /// </remarks>
+    [Fact]
+    public void AVerbThatWillNotActDoesNotReportSuccess()
+    {
+        var (sink, ctx) = Context("update", "apply");
+
+        var exit = Cli.Commands.UpdateCommand.Apply(ctx);
+
+        exit.ShouldNotBe(Core.ExitCode.Ok, "'update apply && next' must not run next");
+
+        var refusal = sink.Diagnostics.ShouldHaveSingleItem();
+        refusal.Severity.ShouldBe(Severity.Error);
+        refusal.Code.ShouldBe(DiagnosticCode.NotSupportedHere);
+        refusal.Remedy.ShouldNotBeNull().ShouldContain("Download the installer");
+    }
+
+    /// <summary>
+    /// It still says the useful thing on the console, where a person is reading.
+    /// </summary>
+    /// <remarks>
+    /// The lines were the only place this verb ever explained itself, and they are worth keeping:
+    /// the point of the change is that a script can tell too, not that a person is told less.
+    /// </remarks>
+    [Fact]
+    public void ItStillExplainsItselfToAPerson()
+    {
+        var (sink, ctx) = Context("update", "apply");
+
+        Cli.Commands.UpdateCommand.Apply(ctx);
+
+        sink.Lines.ShouldContain(l => l.Contains("not available", StringComparison.Ordinal));
+    }
 }
