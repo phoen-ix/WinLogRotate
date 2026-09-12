@@ -110,4 +110,66 @@ public sealed class FileEnumeratorTests : IDisposable
         Assert.SkipUnless(OperatingSystem.IsWindows(), "Resolves Windows paths.");
         Enumerator().Resolve(Path.Combine(_dir.FullName, @"nope\*.log")).Files.ShouldBeEmpty();
     }
+
+    /// <summary>
+    /// A wildcard in a directory position matches the directories it names.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// The end of the defect, asserted through the real enumerator rather than through the
+    /// predicate that decides it. <c>docs/configuration.md</c> has documented <c>*</c>, <c>?</c>,
+    /// <c>**</c> and <c>[abc]</c> since the glob was written, and <c>Glob.IsMatch</c> implements
+    /// all four faithfully - but the enumerator could not produce a candidate for it to judge
+    /// unless the wildcard was in the final segment.
+    /// </para>
+    /// <para>
+    /// This is the IIS spelling, and IIS filling disks is the case this product exists for.
+    /// </para>
+    /// <para>
+    /// The site that does not match the class is seeded too. Without it a predicate that
+    /// descended into everything would pass, and the fix would be "walk the whole volume".
+    /// </para>
+    /// </remarks>
+    [Fact]
+    public void AWildcardInADirectoryPositionMatchesTheDirectoriesItNames()
+    {
+        Assert.SkipUnless(OperatingSystem.IsWindows(), "Resolves Windows paths.");
+
+        Seed(@"LogFiles\W3SVC1\u_ex260912.log");
+        Seed(@"LogFiles\W3SVC2\u_ex260912.log");
+        Seed(@"LogFiles\FTPSVC3\u_ex260912.log");
+        Seed(@"LogFiles\W3SVC1\notes.txt");
+
+        var matches = Enumerator()
+            .Resolve(Path.Combine(_dir.FullName, @"LogFiles\W3SVC[0-9]\*.log"))
+            .Files;
+
+        matches
+            .Select(m => Path.GetFileName(Path.GetDirectoryName(m.Path))!)
+            .ShouldBe(["W3SVC1", "W3SVC2"]);
+    }
+
+    /// <summary>
+    /// The walk still stops where the pattern cannot reach.
+    /// </summary>
+    /// <remarks>
+    /// The other half of the same change, and the one that keeps it from being "enumerate
+    /// everything and filter". A single <c>*</c> never crosses a separator, so a file one level
+    /// below the pattern's last directory is not a match and the directory holding it is never
+    /// entered.
+    /// </remarks>
+    [Fact]
+    public void ASingleWildcardStillDoesNotCrossASeparator()
+    {
+        Assert.SkipUnless(OperatingSystem.IsWindows(), "Resolves Windows paths.");
+
+        Seed(@"LogFiles\W3SVC1\u_ex260912.log");
+        Seed(@"LogFiles\W3SVC1\archive\u_ex260911.log");
+
+        var matches = Enumerator()
+            .Resolve(Path.Combine(_dir.FullName, @"LogFiles\W3SVC[0-9]\*.log"))
+            .Files;
+
+        matches.Select(m => Path.GetFileName(m.Path)).ShouldBe(["u_ex260912.log"]);
+    }
 }

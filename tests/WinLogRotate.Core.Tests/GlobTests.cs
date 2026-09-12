@@ -116,4 +116,56 @@ public class GlobTests
     [InlineData("app.log", false)]
     public void WildcardDetection(string pattern, bool expected) =>
         Glob.HasWildcard(pattern).ShouldBe(expected);
+
+    /// <summary>
+    /// Which directories are worth walking into, for a pattern with a wildcard above its
+    /// filename.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// The decision that was missing entirely. <c>FileEnumerator</c> anchored at
+    /// <see cref="Glob.LiteralPrefix"/>, which cuts at the <i>first</i> wildcard, and then
+    /// descended only where the pattern contained <c>**</c>. So every documented wildcard
+    /// outside the final segment matched nothing at all, for ever, in silence - the enumerator
+    /// could not produce a candidate for <c>IsMatch</c> to judge.
+    /// </para>
+    /// <para>
+    /// <c>C:/inetpub/logs/LogFiles/W3SVC[0-9]/*.log</c> is the natural IIS spelling and IIS
+    /// filling disks is this product's headline case. With <c>missingok</c> the run was silent
+    /// and exited 0, and <c>winlogrotate glob</c> printed "no files match", which reads as
+    /// "nothing is there".
+    /// </para>
+    /// <para>
+    /// Both answers are asserted. A predicate that always said yes would fix the defect and turn
+    /// every job into a walk of the whole volume, so the false rows carry as much weight as the
+    /// true ones.
+    /// </para>
+    /// </remarks>
+    [Theory]
+    // The anchor of the IIS pattern: two segments left, one of them a directory level.
+    [InlineData("C:/inetpub/logs/LogFiles", "C:/inetpub/logs/LogFiles/W3SVC[0-9]/*.log", true)]
+
+    // A site directory that matches the class. Its own files have been listed already, so there
+    // is one segment left and nothing below it can match.
+    [InlineData("C:/inetpub/logs/LogFiles/W3SVC1", "C:/inetpub/logs/LogFiles/W3SVC[0-9]/*.log", false)]
+
+    // A sibling that does not match the class at all.
+    [InlineData("C:/inetpub/logs/LogFiles/FTPSVC2", "C:/inetpub/logs/LogFiles/W3SVC[0-9]/*.log", false)]
+
+    // No wildcard above the filename: * never crosses a separator, so there is nothing deeper.
+    [InlineData("C:/logs", "C:/logs/*.log", false)]
+
+    // ** is zero or more segments, so from here down everything is a candidate.
+    [InlineData("C:/logs", "C:/logs/**/*.log", true)]
+    [InlineData("C:/logs/a/b/c", "C:/logs/**/*.log", true)]
+
+    // Deeper than the pattern goes, with no ** to absorb it.
+    [InlineData("C:/logs/a/b", "C:/logs/*/x.log", false)]
+
+    // Two directory levels of wildcard: worth descending at each one until the last.
+    [InlineData("C:/a/x", "C:/a/*/b/*.log", true)]
+    [InlineData("C:/a/x/b", "C:/a/*/b/*.log", false)]
+    [InlineData("C:/a/x/c", "C:/a/*/b/*.log", false)]
+    public void WorthDescendingSaysWhereAMatchCanStillBe(string directory, string pattern, bool expected) =>
+        Glob.WorthDescending(directory, pattern).ShouldBe(expected);
 }

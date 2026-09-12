@@ -83,6 +83,36 @@ public partial class ArchitectureTests
     }
 
     /// <summary>
+    /// The enumerator does not decide where to descend by looking for <c>**</c>.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// That spelling is the whole of the defect: anchored at <c>Glob.LiteralPrefix</c>, which
+    /// cuts at the <i>first</i> wildcard, and descending only where the pattern contained
+    /// <c>**</c>, the enumerator could not produce a candidate for a wildcard in any earlier
+    /// path segment. Every such pattern matched nothing, for ever, in silence.
+    /// </para>
+    /// <para>
+    /// Stated negatively, and here rather than as a test of the walk, because
+    /// <c>FileEnumeratorTests</c> resolves Windows paths and does not run on the Linux leg at
+    /// all - so on that leg this is the only thing standing between the decision and its call
+    /// site. <c>GlobTests.WorthDescendingSaysWhereAMatchCanStillBe</c> pins the decision;
+    /// windows-2025 pins the walk.
+    /// </para>
+    /// </remarks>
+    [Fact]
+    public void TheEnumeratorDoesNotDecideDescentByLookingForTwoStars()
+    {
+        var enumerator = File.ReadAllText(Path.Combine(
+            RepoRoot.Find().FullName,
+            "src", "WinLogRotate.Core", "Globbing", "FileEnumerator.cs"));
+
+        enumerator.Contains("Contains(\"**\"", StringComparison.Ordinal).ShouldBeFalse(
+            "descend where Glob.WorthDescending says a match can still be, not where the "
+            + "pattern happens to spell **");
+    }
+
+    /// <summary>
     /// The GUI must never call <c>MessageBox</c>.
     /// <para>
     /// It renders light regardless of Application.SetColorMode, so a single call ruins a

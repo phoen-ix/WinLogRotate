@@ -35,7 +35,7 @@ everywhere and are usually easier to read in TOML than escaped backslashes.
 | Key | Type | Default | What it does |
 |---|---|---|---|
 | `name` | string | *required* | Identifies the job in the journal, in diagnostics and in notifications. Must be unique across all files. |
-| `paths` | list of strings | *required* | Glob patterns. `*` and `?` match within one segment, `**` matches across segments, `[abc]` matches a character set. |
+| `paths` | list of strings | *required* | Glob patterns. `*` and `?` match within one segment, `**` matches across segments, `[abc]` matches a character set. Any of them may appear in a directory position, not only in the filename — `C:/inetpub/logs/LogFiles/W3SVC[0-9]/*.log` matches every numbered IIS site and nothing else. |
 | `kind` | `"rotate"` \| `"manage"` | `"rotate"` | `rotate` moves the live log aside itself. `manage` leaves rotation to the application and only compresses and retains what it left behind. |
 | `enabled` | bool | `true` | A disabled job is not considered at all. |
 | `allowdangerous` | list of strings | *(empty)* | Directories this job may work in despite the guard refusing them. See **Dangerous paths** below. |

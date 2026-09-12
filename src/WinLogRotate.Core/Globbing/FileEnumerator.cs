@@ -110,10 +110,9 @@ public sealed class FileEnumerator(PathGuard guard, ILinkResolver? links = null)
             return new EnumerationResult { Files = [], Refusals = refusals };
         }
 
-        var recurse = normalized.Contains("**", StringComparison.Ordinal);
         var results = new List<MatchedFile>();
 
-        foreach (var path in Walk(anchor, resolvedAnchor, recurse, refusals))
+        foreach (var path in Walk(anchor, resolvedAnchor, normalized, refusals))
         {
             if (!Glob.IsMatch(path, normalized))
             {
@@ -221,7 +220,7 @@ public sealed class FileEnumerator(PathGuard guard, ILinkResolver? links = null)
     /// </para>
     /// </summary>
     private IEnumerable<string> Walk(
-        string root, string resolvedRoot, bool recurse, List<GuardDecision> refusals)
+        string root, string resolvedRoot, string pattern, List<GuardDecision> refusals)
     {
         var options = new EnumerationOptions
         {
@@ -270,7 +269,16 @@ public sealed class FileEnumerator(PathGuard guard, ILinkResolver? links = null)
                 yield return file;
             }
 
-            if (!recurse)
+            // Descend where the pattern could still be satisfied below, rather than only where
+            // it contains "**". The anchor is LiteralPrefix, which cuts at the FIRST wildcard,
+            // so a wildcard in any earlier path segment left everything it named unreachable -
+            // the enumerator could not produce a candidate for Glob.IsMatch to match, and
+            // docs/configuration.md had documented the language for six milestones.
+            //
+            // Glob.WorthDescending is allowed to answer "maybe" and costs a directory listing when
+            // it is wrong. Answering "no" wrongly is what this replaces, and it cost the
+            // operator every log under the pattern.
+            if (!Glob.WorthDescending(dir, pattern))
             {
                 continue;
             }

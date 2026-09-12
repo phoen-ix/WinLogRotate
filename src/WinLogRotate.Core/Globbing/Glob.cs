@@ -56,6 +56,79 @@ public static class Glob
         pattern.AsSpan().IndexOfAny('*', '?', '[') >= 0;
 
     /// <summary>
+    /// Whether any file <b>strictly below</b> <paramref name="directory"/> could match
+    /// <paramref name="pattern"/> - the question an enumerator answers before it descends.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// This is what was missing, and its absence made every documented wildcard outside the
+    /// final path segment match nothing at all, for ever, in silence. The enumerator anchored at
+    /// <see cref="LiteralPrefix"/>, which cuts at the <i>first</i> wildcard, and then descended
+    /// only when the pattern contained <c>**</c>. So
+    /// <c>C:/inetpub/logs/LogFiles/W3SVC[0-9]/*.log</c> - the natural IIS spelling, and IIS
+    /// filling disks is this product's headline case - anchored at <c>LogFiles</c>, never looked
+    /// inside <c>W3SVC1</c>, and rotated nothing. With <c>missingok</c> the run was silent and
+    /// exited 0, and <c>winlogrotate glob</c> printed "no files match", which reads as "nothing
+    /// is there".
+    /// </para>
+    /// <para>
+    /// Strictly below, because the files in the directory itself have already been listed by the
+    /// time this is asked. So a directory is worth descending into when its segments match the
+    /// pattern's leading segments and at least two pattern segments remain - one for a directory
+    /// level and one for a filename. Past a <c>**</c> the answer is always yes: it matches zero
+    /// or more segments and nothing below it can rule that out.
+    /// </para>
+    /// <para>
+    /// Answering "maybe" too often costs a directory listing. Answering "no" wrongly is what
+    /// this is replacing, and it costs the operator every log under that pattern.
+    /// </para>
+    /// </remarks>
+    public static bool WorthDescending(string directory, string pattern)
+    {
+        ArgumentNullException.ThrowIfNull(directory);
+        ArgumentNullException.ThrowIfNull(pattern);
+
+        return CouldDescend(Split(directory), 0, Split(pattern), 0);
+    }
+
+    private static bool CouldDescend(string[] path, int pi, string[] pattern, int qi)
+    {
+        while (true)
+        {
+            if (qi == pattern.Length)
+            {
+                // The pattern ran out before the directory did. Everything it names is above
+                // here, so nothing below can match.
+                return false;
+            }
+
+            if (pattern[qi] == "**")
+            {
+                // Zero or more segments, so every directory from here down is a candidate and
+                // no amount of looking further can rule one out.
+                return true;
+            }
+
+            if (pi == path.Length)
+            {
+                // The directory ran out first. Something strictly below it can only match if the
+                // pattern still has a directory level left as well as a filename - with one
+                // segment left, every match is a file in this directory, and those have been
+                // listed already.
+                return pattern.Length - qi >= 2;
+            }
+
+            if (!MatchSegment(path[pi].AsSpan(), pattern[qi].AsSpan()))
+            {
+                return false;
+            }
+
+            pi++;
+            qi++;
+        }
+    }
+
+    /// <summary>
     /// The longest leading run of segments containing no wildcard - the directory an
     /// enumeration can start from instead of walking the whole volume.
     /// </summary>
