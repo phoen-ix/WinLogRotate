@@ -157,7 +157,14 @@ public static class JournalMaintenance
         Schedule = Schedule.Daily,
         Weekday = 0,
         MonthDay = 0,
-        Rotate = settings.Retain,
+        // Deliberately off, so that maxage below is the only retention rule - which is what the
+        // comment beside it already argued for, while this line quietly did something else.
+        // ManageJobPlanner evaluates the count rule first, so with Rotate = Retain a day that
+        // rolled past maxsize pushed a day still inside the window off the end of the list. It
+        // was reported as "rotate = 30 keeps 30 archive(s)", naming a key the [journal] table
+        // does not have and an operator therefore cannot act on. An estate rolling twice a day
+        // was keeping fifteen.
+        Rotate = -1,
         Start = 1,
 
         // Retention is expressed in days, which for one-file-per-day is also the file count -

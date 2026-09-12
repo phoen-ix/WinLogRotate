@@ -45,6 +45,18 @@ public sealed class JournalMaintenanceTests : IDisposable
         return path;
     }
 
+    /// <summary>Writes an extra file for a day that rolled past maxsize.</summary>
+    private string SeedRoll(int daysOld, int chunk)
+    {
+        var date = _clock.GetUtcNow().AddDays(-daysOld);
+        var path = Path.Combine(_dir.FullName, $"journal-{date:yyyy-MM-dd}.{chunk}.ndjson");
+
+        File.WriteAllText(path,
+            $$"""{"ts":"{{date:O}}","run":"R","operation":"delete","phase":"apply","src":"C:\\logs\\roll.log"}""");
+        File.SetLastWriteTimeUtc(path, date.UtcDateTime);
+        return path;
+    }
+
     private static JournalSettings Settings(
         bool enabled = true, int retain = 30, CompressType compress = CompressType.Zip) =>
         new() { Enabled = enabled, Retain = retain, Compress = compress };
@@ -254,6 +266,57 @@ public sealed class JournalMaintenanceTests : IDisposable
         using var writer = JournalWriter.Open(_dir.FullName, _clock);
         writer.Path.ShouldBe(today);
     }
+
+    /// <summary>
+    /// A day that rolled does not push a day out of the window.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// <c>retain</c> is documented in days - here, in <c>README.md</c> and in
+    /// <c>docs/configuration.md</c> - and the synthetic job set <c>Rotate</c> to it as well as
+    /// <c>MaxAge</c>. <c>ManageJobPlanner</c> evaluates the count rule first, so on any day busy
+    /// enough to hit <c>maxsize</c> the extra files took a place in the count and a day still
+    /// inside the window fell off the end of the list. An estate rolling twice a day was keeping
+    /// fifteen.
+    /// </para>
+    /// <para>
+    /// It was reported, too, and reported wrongly: <i>"rotate = 30 keeps 30 archive(s)"</i> names
+    /// a key the <c>[journal]</c> table does not have, so the operator who read it had nothing to
+    /// change.
+    /// </para>
+    /// <para>
+    /// Named files and the condemning rule, not a count of survivors. The vacuous version of this
+    /// test asserts how many are left, which is satisfied by deleting the wrong ones.
+    /// </para>
+    /// </remarks>
+    [Fact]
+    public void ADayThatRolledDoesNotPushADayOutOfTheWindow()
+    {
+        // Thirty-one days, one of them busy enough to have rolled twice: thirty-three files for
+        // thirty-one days, which is the whole of the defect - the count rule cannot tell them
+        // apart. Only the oldest is outside a thirty-day window.
+        for (var day = 0; day <= 30; day++)
+        {
+            Seed(day);
+        }
+
+        SeedRoll(daysOld: 5, chunk: 1);
+        SeedRoll(daysOld: 5, chunk: 2);
+
+        var plan = JournalMaintenance.PlanFor(_dir.FullName, Settings(retain: 30), _clock.GetUtcNow());
+
+        var deleted = plan.Operations
+            .Where(o => o.Action == PlannedAction.Delete)
+            .Select(o => Path.GetFileName(o.Source))
+            .Order(StringComparer.Ordinal)
+            .ToArray();
+
+        deleted.ShouldBe(["journal-2026-08-08.ndjson"]);
+
+        plan.Operations.Single(o => o.Action == PlannedAction.Delete)
+            .Reason.ShouldStartWith("maxage", Case.Sensitive,
+                "and it goes for the reason an operator actually configured");
+    }
 }
 
 public class JournalSettingsBindingTests
@@ -293,4 +356,5 @@ public class JournalSettingsBindingTests
     [Fact]
     public void ItCanBeTurnedOffEntirely() =>
         Bind("[journal]\nenabled = false\n").Enabled.ShouldBeFalse();
+
 }

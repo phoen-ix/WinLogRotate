@@ -260,6 +260,11 @@ compress = "zip"     # zip | gzip | none
 maxsize  = "50M"     # roll mid-day past this, so one busy day can't produce an unopenable file
 ```
 
+`retain` is days, and only days. A day that rolled past `maxsize` into several files is still one
+day, and all of its files live and die together. The consequence worth knowing is that the
+directory has no ceiling in bytes: at worst it holds `retain` days of `maxsize` files, times
+however often a day rolls. If that matters on your disk, lower `maxsize`, or `retain`, or both.
+
 `enabled = false` writes no history at all — at the cost of making "what happened to my logs?"
 unanswerable. Today's journal is never touched while it is being written, for the same reason
 the live IIS log never is.
