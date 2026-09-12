@@ -38,7 +38,7 @@ internal static class NotifyTestCommand
         {
             ctx.Output.Line("No notification targets are configured, so there is nothing to test.");
             ctx.Output.Line("Add one to [notify] in " + paths.ConfigFile + ", e.g. to = [\"eventlog:\"].");
-            return ctx.Output.Complete("notify test", ExitCode.Ok, Empty());
+            return TestedNothing(ctx, target, paths.ConfigFile);
         }
 
         using var senders = Senders.Build(settings);
@@ -61,11 +61,15 @@ internal static class NotifyTestCommand
 
         if (channels.Count == 0)
         {
+            // A test that reached nothing was reported as a test that passed: exit 0, no
+            // diagnostics, and `{sent: 0, failed: 0, channels: []}` - which under --json is
+            // indistinguishable from a clean run, because JsonOutputSink.Line is a no-op and the
+            // console sentence was the only place this was ever said.
             ctx.Output.Line(target is null
                 ? "No target could be used. The diagnostics above say why."
                 : $"No configured target matches '{target}'.");
 
-            return ctx.Output.Complete("notify test", ExitCode.Ok, Empty());
+            return TestedNothing(ctx, target, paths.ConfigFile);
         }
 
         // Loaded read-only, purely so the output can say which channels a real run would skip.
@@ -152,6 +156,45 @@ internal static class NotifyTestCommand
             Failed = failures,
             Channels = results,
         });
+    }
+
+    /// <summary>
+    /// A test that reached no channel, said in the channel a script reads.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// Both ways of reaching this returned exit 0 with <c>{sent: 0, failed: 0, channels: []}</c>
+    /// and no diagnostics, which under <c>--json</c> is indistinguishable from a clean run: the
+    /// console sentences were the only place it was ever said, and <c>JsonOutputSink.Line</c> is
+    /// a no-op.
+    /// </para>
+    /// <para>
+    /// A name that matches nothing is a usage error rather than a delivery outcome - the operator
+    /// typed something and nothing on this machine answers to it - so that one exits non-zero.
+    /// It is also the likeliest of the two. With no name given, exit 0 stands: the caller asked
+    /// for whatever is configured and the honest answer is nothing.
+    /// </para>
+    /// </remarks>
+    private static int TestedNothing(CommandContext ctx, string? target, string configFile)
+    {
+        if (target is not null)
+        {
+            return Refusals.CannotUse<NotifyTestResult>(
+                ctx, "notify test", target,
+                "the name of a configured notification target",
+                "Run 'winlogrotate notify show' to list the targets this machine has.");
+        }
+
+        ctx.Output.Diagnostic(new CliDiagnostic
+        {
+            Severity = Severity.Warning,
+            Code = DiagnosticCode.NotifyMisconfigured,
+            Message = "No notification target could be used, so nothing was tested.",
+            Remedy = $"Add a target under [notify] in {configFile}, then run "
+                   + "'winlogrotate notify show' to confirm it.",
+        });
+
+        return ctx.Output.Complete("notify test", ExitCode.Ok, Empty());
     }
 
     private static NotifyTestResult Empty() => new() { Sent = 0, Failed = 0, Channels = [] };

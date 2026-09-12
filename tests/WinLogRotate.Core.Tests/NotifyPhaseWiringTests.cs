@@ -302,15 +302,95 @@ public sealed class NotifyPhaseWiringTests : IDisposable
         File.ReadAllBytes(paths.NotifyStateFile).ShouldBe(before);
     }
 
+    /// <summary>
+    /// A test that reached no channel says so where a script can read it.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// Both ways of reaching this returned exit 0 with <c>{sent: 0, failed: 0, channels: []}</c>
+    /// and no diagnostics. Under <c>--json</c> that is indistinguishable from a clean run: the
+    /// console sentences were the only place it was ever said, and <c>JsonOutputSink.Line</c> is
+    /// a no-op with the comment "the same information is carried as diagnostics and events" -
+    /// which here it was not.
+    /// </para>
+    /// <para>
+    /// The line is asserted beside the diagnostic, because a person reading the console is still
+    /// the commonest caller and the sentence they get is not being taken away.
+    /// </para>
+    /// </remarks>
     [Fact]
     public void NotifyTestSaysSoWhenNothingIsConfigured()
     {
         var paths = Write("schema = 1\n");
         var (sink, ctx) = Context();
 
-        Cli.Commands.NotifyTestCommand.Run(ctx, target: null, paths.Root);
+        var exit = Cli.Commands.NotifyTestCommand.Run(ctx, target: null, paths.Root);
 
         sink.Lines.ShouldContain(l => l.Contains("no notification targets", StringComparison.OrdinalIgnoreCase));
+
+        // Exit 0 stands: the caller asked for whatever is configured, and nothing is.
+        exit.ShouldBe(Core.ExitCode.Ok);
+
+        sink.Diagnostics
+            .Where(d => d.Code == DiagnosticCode.NotifyMisconfigured)
+            .ShouldHaveSingleItem()
+            .Message.ShouldContain("nothing was tested");
+    }
+
+    /// <summary>
+    /// A target name that matches nothing is a usage error, not a clean test.
+    /// </summary>
+    /// <remarks>
+    /// The likeliest of the two, and the one that has to exit non-zero: the operator typed
+    /// something and nothing on this machine answers to it. Reported as exit 0 with an empty
+    /// result, a deployment script checking notifications would have gone green on a typo.
+    /// </remarks>
+    [Fact]
+    public void NotifyTestRefusesANameThatMatchesNothing()
+    {
+        var paths = Write($"""
+            schema = 1
+            [notify]
+            to = ["{Unreachable}"]
+            retries = 0
+            """);
+
+        var (sink, ctx) = Context();
+
+        var exit = Cli.Commands.NotifyTestCommand.Run(ctx, "nosuchtarget", paths.Root);
+
+        exit.ShouldNotBe(Core.ExitCode.Ok);
+
+        sink.Diagnostics
+            .Where(d => d.Code == DiagnosticCode.ArgumentUnusable)
+            .ShouldHaveSingleItem()
+            .Message.ShouldContain("nosuchtarget");
+    }
+
+    /// <summary>
+    /// A target name that does match is tested, and says nothing about being unusable.
+    /// </summary>
+    /// <remarks>
+    /// The other direction. Without it the refusal above is satisfied by refusing every named
+    /// target, which would break the feature the name exists for.
+    /// </remarks>
+    [Fact]
+    public void NotifyTestStillAcceptsANameThatMatches()
+    {
+        var paths = Write($"""
+            schema = 1
+            [notify]
+            to = ["{Unreachable}"]
+            retries = 0
+            """);
+
+        var (sink, ctx) = Context();
+
+        var exit = Cli.Commands.NotifyTestCommand.Run(ctx, "http", paths.Root);
+
+        exit.ShouldBe(Core.ExitCode.Ok, "a channel was tested; that it failed is not a usage error");
+        sink.Diagnostics.ShouldNotContain(d => d.Code == DiagnosticCode.ArgumentUnusable);
+        sink.Lines.ShouldContain(l => l.Contains("FAILED", StringComparison.Ordinal));
     }
 
     // ---- a job that could not be loaded -------------------------------------------------------
