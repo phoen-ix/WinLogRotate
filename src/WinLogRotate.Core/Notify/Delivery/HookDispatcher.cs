@@ -135,6 +135,7 @@ public static class HookDispatcher
         // Per message: how many channels took it, and whether any channel that was tried did not.
         var accepted = new int[messages.Count];
         var blocked = new bool[messages.Count];
+        var refused = new int[messages.Count];
 
         var deadline = options.Clock.GetUtcNow() + options.Budget;
         var retries = Math.Clamp(settings.Retries, 0, RetrySchedule.MaxRetries);
@@ -203,6 +204,7 @@ public static class HookDispatcher
             var sender = senders.For(channel);
             var sent = 0;
             var failed = 0;
+            var refusedHere = 0;
             var unattempted = 0;
             var starved = 0;
             string? lastError = null;
@@ -238,8 +240,6 @@ public static class HookDispatcher
                     continue;
                 }
 
-                failed++;
-                blocked[m] = true;
                 lastError = result.Error;
 
                 // A dead relay is dead. Retrying it once per message multiplies the spend by the
@@ -247,8 +247,24 @@ public static class HookDispatcher
                 // so the next one still goes.
                 if (result.Status == 0 || result.Status >= 500)
                 {
+                    failed++;
+                    blocked[m] = true;
                     abandoned = true;
+                    continue;
                 }
+
+                // And because a 4xx is about the message, it is counted against the message and
+                // not against the channel. Both used to land in `failed` and `blocked`, which had
+                // two consequences that between them made the documented convergence impossible.
+                //
+                // The message never advanced its job's state, so the planner called the same
+                // incident new every run and re-sent it to every healthy channel. And the channel
+                // recorded `succeeded: sent > 0` - one message through counting as the channel
+                // working - so its breaker never counted past zero and never opened. The comment
+                // above HookDispatcher and docs/notifications.md both said the breaker resolved
+                // exactly this. It could not: it was never told.
+                refused[m]++;
+                refusedHere++;
             }
 
             outcomes.Add(new ChannelOutcome
@@ -271,6 +287,19 @@ public static class HookDispatcher
                 diagnostics.Add(Starved(
                     $"{channel.Display}: {starved} message(s) were never sent - this channel's "
                     + "share of the notification budget ran out."));
+            }
+
+            if (refusedHere > 0)
+            {
+                diagnostics.Add(new CliDiagnostic
+                {
+                    Severity = Severity.Warning,
+                    Code = DiagnosticCode.NotifyMessageRefused,
+                    Message = $"{channel.Display} refused {refusedHere} message(s) outright: {lastError}",
+                    Remedy = "The channel itself is working and the other messages went. "
+                           + "This one will be refused again, so it is not queued: check the "
+                           + "message size limit and anything the destination templates on.",
+                });
             }
 
             if (sent + failed == 0)
@@ -306,7 +335,11 @@ public static class HookDispatcher
         var delivered = new List<PlannedNotification>();
         for (var m = 0; m < messages.Count; m++)
         {
-            if (accepted[m] > 0 && !blocked[m])
+            // Accepted somewhere, or permanently refused everywhere it was tried, and blocked by
+            // nothing that might work later. A message nothing will ever take has to stop being
+            // planned, or it is re-sent to the healthy channels nightly and for ever; LR5006 is
+            // what keeps that from being silent.
+            if (!blocked[m] && (accepted[m] > 0 || refused[m] > 0))
             {
                 delivered.Add(messages[m]);
             }

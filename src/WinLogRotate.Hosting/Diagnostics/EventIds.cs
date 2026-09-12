@@ -107,6 +107,7 @@ public static class EventIds
         DiagnosticCode.NotifyCircuitOpen => 152,
         DiagnosticCode.NotifyStateUnreadable => 153,
         DiagnosticCode.NotifyBudgetClamped => 154,
+        DiagnosticCode.NotifyMessageRefused => 156,
 
         // 9xxx - security.
         DiagnosticCode.ConfigDirectoryInsecure => 190,

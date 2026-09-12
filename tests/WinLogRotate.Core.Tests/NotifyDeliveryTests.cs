@@ -41,6 +41,17 @@ public sealed class NotifyDeliveryTests : IDisposable
 
         public int Attempts { get; private set; }
 
+        /// <summary>Whether an attempt that outlasts its timeout is reported as one.</summary>
+        /// <remarks>
+        /// This fake ignored its <c>timeout</c> entirely, which made the suite structurally blind
+        /// to the case that matters most for the breaker: a healthy relay that is simply slow. A
+        /// real sender cancelled at its deadline returns a failure, so a channel can record
+        /// <c>sent = 2, failed = 1</c> without anything being wrong with it - and scoring a
+        /// channel as broken on any failure would then suppress a working destination after five
+        /// slow nights.
+        /// </remarks>
+        public bool HonourTimeout { get; set; }
+
         public SendResult Send(ResolvedChannel channel, NotifyMessage message, TimeSpan timeout)
         {
             Attempts++;
@@ -49,6 +60,11 @@ public sealed class NotifyDeliveryTests : IDisposable
             if (Cost > TimeSpan.Zero)
             {
                 clock.Advance(Cost);
+            }
+
+            if (HonourTimeout && Cost > timeout)
+            {
+                return SendResult.Failed(0, "timed out");
             }
 
             return Answer(Attempts);
@@ -543,4 +559,102 @@ public sealed class NotifyDeliveryTests : IDisposable
         stored.ConsecutiveFailures.ShouldBe(1);
         stored.LastError.ShouldBe("relay down");
     }
+    /// <summary>
+    /// A message one channel will never accept stops being re-sent to the ones that will.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// <c>HookDispatcher</c>'s own remarks said the breaker prevented this: "it fails
+    /// breaker_after times, opens, and everything converges", and <c>docs/notifications.md</c>
+    /// costed it at "about five duplicate alerts on the healthy ones". Neither held for a channel
+    /// that refuses <i>one</i> message and delivers the rest.
+    /// </para>
+    /// <para>
+    /// Two counters did it. The refused message never reached <c>Delivered</c>, so its job's state
+    /// never advanced and the planner called the same incident new on every run; and the channel
+    /// recorded <c>succeeded: sent &gt; 0</c>, so one message getting through counted as the
+    /// channel working and <c>BreakerPolicy.Record</c> wiped the failure count to zero. It never
+    /// counted past zero, so it never opened, so it never stopped blocking. For ever.
+    /// </para>
+    /// <para>
+    /// A non-retryable 4xx is about the message - the dispatcher's own comment says so - so it is
+    /// counted against the message now. The channel stays healthy, which it is; the message stops
+    /// being planned, because nothing will ever take it; and LR5006 says so rather than letting
+    /// it go quiet.
+    /// </para>
+    /// </remarks>
+    [Fact]
+    public void AMessageAChannelWillNeverAcceptStopsBlockingThatJob()
+    {
+        var settings = NotifySettings.Default with
+        {
+            To = ["eventlog:", "webhook.slack"],
+            Retries = 0,
+            BreakerAfter = 5,
+            RemindAfter = TimeSpan.Zero,
+        };
+
+        CliDiagnostic[] failing =
+        [
+            new()
+            {
+                Severity = Severity.Error,
+                Code = DiagnosticCode.FileLocked,
+                Message = "Access denied",
+                Job = "iis",
+                Path = @"C:\logs\a.log",
+            },
+        ];
+
+        var state = State();
+
+        foreach (var (job, baseline) in NotificationPlanner
+                     .PlanFor(Run(), [], settings, state, _clock.GetUtcNow()).Baseline)
+        {
+            state.SetJob(job, baseline);
+        }
+
+        _clock.Advance(TimeSpan.FromHours(24));
+
+        var deliveries = 0;
+        var refusals = 0;
+
+        for (var run = 0; run < 8; run++)
+        {
+            var good = new FakeSender(_clock);
+
+            // 413: the digest is larger than this endpoint will take. It will be larger tomorrow
+            // too, which is exactly what makes it not the channel's fault.
+            var picky = new FakeSender(_clock) { Answer = _ => SendResult.Failed(413, "too large") };
+
+            var plan = NotificationPlanner.PlanFor(
+                Run(), failing, settings, state, _clock.GetUtcNow());
+
+            var report = Dispatch(plan, state,
+                [(Channel("eventlog", HookScheme.EventLog), good),
+                 (Channel("webhook.slack", HookScheme.Http), picky)], settings);
+
+            deliveries += good.Attempts;
+            refusals += report.Diagnostics.Count(d => d.Code == DiagnosticCode.NotifyMessageRefused);
+
+            foreach (var message in report.Delivered)
+            {
+                state.SetJob(message.Job, message.NextState);
+            }
+
+            foreach (var (job, next) in plan.Baseline)
+            {
+                state.SetJob(job, next);
+            }
+
+            _clock.Advance(TimeSpan.FromHours(24));
+        }
+
+        // The whole point. Eight runs, and the healthy channel is told once - not eight times,
+        // and not the "about five" the breaker was supposed to cost.
+        deliveries.ShouldBe(1, "the incident is one incident, however one channel feels about it");
+
+        refusals.ShouldBe(1, "and the refusal is reported, on the run it happened");
+    }
+
 }

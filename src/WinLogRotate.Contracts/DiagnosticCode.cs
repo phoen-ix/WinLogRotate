@@ -207,6 +207,26 @@ public static class DiagnosticCode
     /// deadline. See the remark on 0x41306 in docs/diagnostics.md.</summary>
     public const string NotifyBudgetClamped = "LR5005";
 
+    /// <summary>
+    /// A channel refused one message permanently, and will refuse it again.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// A non-retryable 4xx is about the message, not the channel - a digest too large for the
+    /// endpoint, a job name a webhook template will not take. The channel is healthy and the rest
+    /// of the run's messages go through it.
+    /// </para>
+    /// <para>
+    /// It exists because the alternative was silence that never ended. An undelivered message
+    /// does not advance its job's state, so the planner called the same incident new on every
+    /// run and re-sent it to every healthy channel, for ever - which
+    /// <c>HookDispatcher</c>'s remarks and <c>docs/notifications.md</c> both said the breaker
+    /// prevented. It did not: the channel recorded a success every run, because one message
+    /// getting through was counted as the channel working.
+    /// </para>
+    /// </remarks>
+    public const string NotifyMessageRefused = "LR5006";
+
     // 9xxx - security. Never suppressed, never merely warned about.
     /// <summary>conf.d is writable by a non-administrator. All hooks and all
     /// dangerous-path overrides are refused for the entire run.</summary>

@@ -1052,6 +1052,7 @@ public partial class ArchitectureTests
         [nameof(DiagnosticCode.NotifyCircuitOpen)] = ["DoctorCommand.cs", "HookDispatcher.cs"],
         [nameof(DiagnosticCode.NotifyStateUnreadable)] = ["NotifyCommand.cs", "NotifyPhase.cs"],
         [nameof(DiagnosticCode.NotifyBudgetClamped)] = ["HookDispatcher.cs", "NotifyPhase.cs"],
+        [nameof(DiagnosticCode.NotifyMessageRefused)] = ["HookDispatcher.cs"],
         [nameof(DiagnosticCode.ConfigDirectoryInsecure)] = ["DoctorCommand.cs", "HookSupport.cs", "HostCommand.cs"],
         [nameof(DiagnosticCode.DangerousPathRefused)] = ["ConfigValidator.cs", "Diagnose.cs", "GlobCommand.cs"],
         [nameof(DiagnosticCode.HookRefused)] = ["ConfigValidator.cs", "HookPlan.cs"],

@@ -276,6 +276,18 @@ time, and a **suppressed channel no longer blocks**. In practice one broken dest
 five duplicate alerts on the healthy ones, then everything converges. `notify status` shows which
 channels are suppressed; `notify reset` clears one.
 
+**A refused message is not a broken channel**, and it converges differently. A non-retryable `4xx`
+— a digest larger than the endpoint accepts, a job name a template will not take — is about that
+one message: the channel is healthy, the run's other messages go through it, and this one will be
+refused again tomorrow. So it is counted against the message, reported as **`LR5006`**, and not
+queued.
+
+> **Fixed in v0.12.0.** Before it, a channel that refused one message and delivered the rest
+> recorded a success every run — one message through counted as the channel working — so its
+> breaker never counted past zero and never opened, while the refused message never advanced its
+> job's state. The paragraph above promised five duplicates and convergence. The real cost was
+> unbounded: the same alert to every healthy channel, every night, indefinitely.
+
 | Setting | Default | |
 |---|---|---|
 | `budget` | `30s` | wall clock for the **whole** phase, not per target |
