@@ -173,16 +173,48 @@ jobs:
       # Turns "zero dependencies" from a claim in the README into an assertion. A native
       # image may import from OS DLLs and nothing else; an hostfxr/hostpolicy import means
       # it is not actually self-contained.
+      #
+      # This step used to be unable to fail in three ways, all of which end the same: a green
+      # check over an import list nobody read.
+      #
+      #   - A missing dumpbin exited 0 with a warning annotation. Get-ChildItem over a wildcard
+      #     that matches nothing returns empty without erroring, so a Visual Studio layout change
+      #     on the runner image - which is what the canary job exists to warn about - silently
+      #     disarmed the only place the shipped binary is ever linked.
+      #   - dumpbin's own exit code was never read.
+      #   - There was no floor on the parse. A localised or reformatted /DEPENDENTS listing yields
+      #     an empty match set, an empty forbidden set, and a pass. Every native image imports
+      #     kernel32.dll, so an empty list is proof the parse broke, not proof the image is clean.
       - name: Dependency gate
         shell: pwsh
         run: |
           $dumpbin = Get-ChildItem "$env:ProgramFiles*\Microsoft Visual Studio\*\*\VC\Tools\MSVC\*\bin\Hostx64\x64\dumpbin.exe" |
                      Select-Object -First 1
-          if (-not $dumpbin) { Write-Host '::warning::dumpbin not found; skipping import check'; exit 0 }
-          $imports = & $dumpbin /DEPENDENTS publish-cli/winlogrotate.exe |
+          if (-not $dumpbin) {
+            throw ('dumpbin was not found under Visual Studio, so the self-containment of the ' +
+                   'binary this job exists to link cannot be checked. Fix the path rather than ' +
+                   'skipping: a gate that disarms itself is worse than no gate.')
+          }
+
+          $listing = & $dumpbin /DEPENDENTS publish-cli/winlogrotate.exe
+          if ($LASTEXITCODE -ne 0) { throw "dumpbin exited $LASTEXITCODE; its output cannot be trusted" }
+
+          $imports = $listing |
                      Select-String -Pattern '^\s{4}(\S+\.dll)$' -AllMatches |
                      ForEach-Object { $_.Matches.Groups[1].Value.ToLower() }
           $imports | ForEach-Object { "imports $_" }
+
+          # The positive control, in the spirit of the unheld-file probe further down this file:
+          # if the thing that MUST be there is not found, everything below is noise. Every native
+          # Windows image reaches the kernel, either directly or through the API sets - so this
+          # fails on a parse that produced nothing without asserting which spelling it used.
+          $core = $imports | Where-Object { $_ -eq 'kernel32.dll' -or $_ -like 'api-ms-win-core-*' }
+          if (-not $core) {
+            throw ("the import list names no kernel import, which every native image has - so the " +
+                   "listing was not parsed and the check below would pass on nothing. " +
+                   "Found: $($imports -join ', ')")
+          }
+
           $forbidden = $imports | Where-Object { $_ -match 'hostfxr|hostpolicy|coreclr|clrjit|System\.' }
           if ($forbidden) { throw "not self-contained - imports $($forbidden -join ', ')" }
 
