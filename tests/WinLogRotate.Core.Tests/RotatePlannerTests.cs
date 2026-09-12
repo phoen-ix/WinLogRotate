@@ -74,6 +74,31 @@ public class RotatePlannerTests
         return RotateJobPlanner.Plan(job, [generation], verdicts, Now);
     }
 
+    /// <summary>
+    /// Plans against a whole directory, through the discovery the product really uses.
+    /// </summary>
+    /// <remarks>
+    /// <see cref="PlanFor"/> hands the planner an archive list chosen by the test, which can only
+    /// ever show that the planner copes with what the test thought of. This starts from the files
+    /// and lets <see cref="LogSeries.Discover"/> decide what the job's archives are - so the input
+    /// is one the product produces, not one an author believed in.
+    /// </remarks>
+    private static JobPlan PlanOver(EffectiveJob job, FakeFiles files)
+    {
+        var live = files.All.Single(f => WinPath.FileName(f.Path) == "app.log");
+
+        var verdicts = new Dictionary<string, DueVerdict>
+        {
+            [live.Path] = new() { Due = true, Reason = DueReason.Scheduled, Explanation = "a new day has begun" },
+        };
+
+        return RotateJobPlanner.Plan(job, LogSeries.Discover(job, [live], files), verdicts, Now);
+    }
+
+    /// <summary>The directory the plan would leave behind.</summary>
+    private static Outcome After(EffectiveJob job, FakeFiles files) =>
+        Outcome.Of(PlanOver(job, files), files);
+
     [Fact]
     public void ALogThatIsNotDueIsSkippedWithTheReason()
     {
@@ -282,6 +307,48 @@ public class RotatePlannerTests
         var plan = PlanFor(Job(compress: false), F("app.log"));
 
         plan.Operations.ShouldNotContain(o => o.Action == PlannedAction.Compress);
+    }
+
+    // ---- the directory a plan leaves behind -------------------------------------------------
+
+    /// <summary>
+    /// An ordinary numbered rotation leaves the chain it promises.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// The simplest case there is, asserted the way nothing in this file asserted anything until
+    /// now: not that an operation of some kind exists, but that a named file ends up at a named
+    /// place. Every test above stops at the plan, which is why a plan that renames a file it has
+    /// already deleted, or deletes the newest archive while reporting the oldest, could pass all
+    /// eighteen of them.
+    /// </para>
+    /// <para>
+    /// This case the planner already gets right. It is here to show the model is faithful before
+    /// anything rests on it - and it is the only fact in this section that was green when it was
+    /// written.
+    /// </para>
+    /// </remarks>
+    [Fact]
+    public void APlainNumberedRotationLeavesTheChainItPromises()
+    {
+        var files = new FakeFiles(
+            @"C:\logs\app.log", @"C:\logs\app.log.1", @"C:\logs\app.log.2");
+
+        var after = After(Job(rotate: 4, compress: false), files);
+
+        after.Names.ShouldBe(["app.log", "app.log.1", "app.log.2", "app.log.3"]);
+
+        // Each generation moved up exactly one, and the live log became the first.
+        after.Became("app.log").ShouldBe(["app.log.1"]);
+        after.Became("app.log.1").ShouldBe(["app.log.2"]);
+        after.Became("app.log.2").ShouldBe(["app.log.3"]);
+
+        // The recreated log is not the one that was archived - it is a new empty file, and the
+        // distinction is what lets a later assertion say which file a deletion really took.
+        after.At(@"C:\logs\app.log")!.Origin.ShouldBeNull();
+
+        after.Missing.ShouldBeEmpty();
+        after.Clobbered.ShouldBeEmpty();
     }
 }
 

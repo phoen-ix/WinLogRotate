@@ -18,30 +18,8 @@ namespace WinLogRotate.Core.Tests;
 /// </remarks>
 public sealed class LogSeriesTests
 {
-    /// <summary>A file system that is a dictionary, so discovery is testable without one.</summary>
-    private sealed class FakeFiles(params string[] paths) : IArchiveSource
-    {
-        private readonly Dictionary<string, MatchedFile> _files = paths.ToDictionary(
-            p => p,
-            p => new MatchedFile
-            {
-                Path = p,
-                Length = 10,
-                LastWriteUtc = new DateTimeOffset(2020, 1, 1, 0, 0, 0, TimeSpan.Zero),
-            },
-            StringComparer.OrdinalIgnoreCase);
-
-        public List<string> Probed { get; } = [];
-
-        public MatchedFile? Find(string path)
-        {
-            Probed.Add(path);
-            return _files.GetValueOrDefault(path);
-        }
-
-        public IReadOnlyList<MatchedFile> Glob(string pattern) =>
-            [.. _files.Values.Where(f => Globbing.Glob.IsMatch(f.Path, pattern))];
-    }
+    // FakeFiles now lives in SeriesFixtures.cs: what a plan does to a directory has to be asserted
+    // against the same directory discovery walked, and that needs one definition, not two.
 
     private static EffectiveJob Job(
         bool dateExt = false, int rotate = 5, int? maxAge = null,

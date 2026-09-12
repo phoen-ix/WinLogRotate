@@ -23,4 +23,14 @@
     <ProjectReference Include="../../src/WinLogRotate.Hosting/WinLogRotate.Hosting.csproj" />
   </ItemGroup>
 
+  <ItemGroup>
+    <!-- Linked, not referenced. The directory model a rotation plan is judged against has to be
+         the same one on both legs - a second copy could drift, and then the Linux pins would be
+         agreeing with a model that no longer describes what Windows does. A ProjectReference to
+         WinLogRotate.Core.Tests is not an option: it is an executable test project of its own, and
+         referencing it would run that suite twice and drag its Cli and Gui.Model references onto
+         this one. -->
+    <Compile Include="../WinLogRotate.Core.Tests/SeriesFixtures.cs" Link="SeriesFixtures.cs" />
+  </ItemGroup>
+
 </Project>
