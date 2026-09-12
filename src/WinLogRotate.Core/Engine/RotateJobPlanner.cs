@@ -141,7 +141,15 @@ public static class RotateJobPlanner
 
         // Step 3: shift downward from the top so a move never lands on a file that has not yet
         // been moved itself. rotate = -1 keeps everything, so nothing is disposed by count.
-        var highest = job.Rotate < 0 ? byIndex.Keys.DefaultIfEmpty(job.Start - 1).Max() : job.Rotate + job.Start - 1;
+        //
+        // The top of the chain as it actually is, not the top of the retention window. Starting at
+        // rotate + start - 1 meant every index above the window was read out of the directory,
+        // held in byIndex, and then never visited: not shifted, not deleted, invisible to
+        // everything except maxage. That is exactly the state LogSeries.MaxNumberedProbe exists to
+        // find - its remark names an operator who lowers rotate from 14 to 7 and says nothing else
+        // will ever tidy app.log.8 through app.log.14 - and the planner threw the list away, so
+        // the probes bought nothing.
+        var highest = byIndex.Keys.DefaultIfEmpty(job.Start - 1).Max();
 
         for (var index = highest; index >= job.Start; index--)
         {

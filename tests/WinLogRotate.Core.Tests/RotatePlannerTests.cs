@@ -343,6 +343,66 @@ public class RotatePlannerTests
     }
 
     /// <summary>
+    /// Archives above the retention count are tidied, not orphaned.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// The shift started at the top of the retention <i>window</i> rather than the top of the
+    /// chain, so with <c>rotate = 3</c> every index from 4 upward was read out of the directory,
+    /// held, and never visited - not shifted, not deleted, reachable only by <c>maxage</c>, which
+    /// is optional. An operator who lowers <c>rotate</c> from 14 to 7 left seven archives on the
+    /// disk for ever.
+    /// </para>
+    /// <para>
+    /// This sits deliberately beside <c>LogSeriesTests.StragglersFromAReducedRotateCountAreStillFound</c>,
+    /// which proves discovery finds all seven at a cost of up to
+    /// <c>LogSeries.MaxNumberedProbe</c> existence checks per log per run. That test said they are
+    /// found; nothing said they are acted on, and they were not.
+    /// </para>
+    /// </remarks>
+    [Fact]
+    public void StragglersAboveTheRetentionCountAreTidiedRatherThanOrphaned()
+    {
+        var files = new FakeFiles(@"C:\logs\app.log");
+        for (var index = 1; index <= 7; index++)
+        {
+            files.Add($@"C:\logs\app.log.{index}");
+        }
+
+        var after = After(Job(rotate: 3, compress: false), files);
+
+        // rotate = 3 keeps three, and the ones a reduced count left behind are gone.
+        after.Names.ShouldBe(["app.log", "app.log.1", "app.log.2", "app.log.3"]);
+
+        foreach (var straggler in new[] { "app.log.4", "app.log.5", "app.log.6", "app.log.7" })
+        {
+            after.Lost(straggler).ShouldBeTrue($"{straggler} is above the window and nothing else tidies it");
+        }
+
+        after.Missing.ShouldBeEmpty();
+    }
+
+    /// <summary>
+    /// A chain with holes keeps its topmost archive rather than losing it to its position.
+    /// </summary>
+    /// <remarks>
+    /// A gap is ordinary - somebody deleted one - and the count pass declines to dispose of an
+    /// index when the chain holds fewer files than <c>rotate</c>. The archive shifts up instead,
+    /// and now that the top of the chain is reachable it is disposed of on a later run rather than
+    /// stranded. Deleting it here would take an operator's only archive a cycle early.
+    /// </remarks>
+    [Fact]
+    public void ASparseChainKeepsItsTopmostArchive()
+    {
+        var files = new FakeFiles(@"C:\logs\app.log", @"C:\logs\app.log.3");
+
+        var after = After(Job(rotate: 3, compress: false), files);
+
+        after.Lost("app.log.3").ShouldBeFalse();
+        after.Became("app.log.3").ShouldBe(["app.log.4"]);
+    }
+
+    /// <summary>
     /// A file both rules condemn is deleted once, and says which rule took it.
     /// </summary>
     /// <remarks>
