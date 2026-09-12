@@ -1414,4 +1414,184 @@ public partial class ArchitectureTests
             .ShouldBe([4, 5, 9, 10],
                 "a lowercase instruction is still an instruction, and /SD inside a message is not a default");
     }
+    /// <summary>One job in a workflow file: its id, and every line from its key to the next one.</summary>
+    private readonly record struct WorkflowJob(string Id, string Text);
+
+    [GeneratedRegex(@"^  ([A-Za-z0-9_-]+):[ \t]*$", RegexOptions.Multiline | RegexOptions.Compiled)]
+    private static partial Regex WorkflowJobKey();
+
+    /// <summary>
+    /// The jobs declared in <c>.github/workflows/ci.yml</c>.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// Indentation parsing rather than a YAML library, because this project's test suite carries
+    /// three package references and none of them reads YAML. It is enough for the questions asked
+    /// here, all of which are about keys at a known depth, and the floor below is what stops a
+    /// reformat turning these rules into no rules.
+    /// </para>
+    /// <para>
+    /// Scanning starts at the <c>jobs:</c> line on purpose: <c>push:</c>, <c>schedule:</c> and the
+    /// rest of the trigger block sit at the same indentation as a job id and are not jobs.
+    /// </para>
+    /// </remarks>
+    private static WorkflowJob[] WorkflowJobs()
+    {
+        var path = Path.Combine(RepoRoot.Find().FullName, ".github", "workflows", "ci.yml");
+        File.Exists(path).ShouldBeTrue($"{path} is where the pipeline lives");
+
+        var text = File.ReadAllText(path).Replace("\r", string.Empty, StringComparison.Ordinal);
+
+        var start = text.IndexOf("\njobs:\n", StringComparison.Ordinal);
+        start.ShouldBeGreaterThan(0, "the workflow declares no jobs block");
+
+        var body = text[(start + "\njobs:\n".Length)..];
+        var keys = WorkflowJobKey().Matches(body);
+
+        var jobs = keys
+            .Select((m, n) => new WorkflowJob(
+                m.Groups[1].Value,
+                body[m.Index..(n + 1 < keys.Count ? keys[n + 1].Index : body.Length)]))
+            .ToArray();
+
+        // The floor every rule below inherits. A parse that stopped matching would make each of
+        // them pass while asserting nothing about anything, which is the failure this whole file
+        // exists to prevent.
+        jobs.Length.ShouldBeGreaterThan(5, "found almost no jobs, so the parse has stopped working");
+
+        return jobs;
+    }
+
+    /// <summary>The value of a top-level key inside one job, including folded continuations.</summary>
+    private static string JobKey(WorkflowJob job, string key)
+    {
+        var marker = $"\n    {key}:";
+        var at = job.Text.IndexOf(marker, StringComparison.Ordinal);
+        if (at < 0)
+        {
+            return string.Empty;
+        }
+
+        var value = new System.Text.StringBuilder();
+        foreach (var line in job.Text[(at + 1)..].Split('\n').Skip(1).Prepend(job.Text[(at + 1)..].Split('\n')[0]))
+        {
+            if (value.Length > 0 && !line.StartsWith("      ", StringComparison.Ordinal))
+            {
+                break;
+            }
+
+            value.Append(line).Append(' ');
+        }
+
+        return value.ToString();
+    }
+
+    [GeneratedRegex(@"^    continue-on-error:[ \t]*true[ \t]*$", RegexOptions.Multiline | RegexOptions.Compiled)]
+    private static partial Regex JobMayFail();
+
+    [GeneratedRegex(@"^    timeout-minutes:[ \t]*([0-9]+)[ \t]*$", RegexOptions.Multiline | RegexOptions.Compiled)]
+    private static partial Regex JobHangBudget();
+
+    [GeneratedRegex(@"\b(always|cancelled|failure|success)\s*\(", RegexOptions.Compiled)]
+    private static partial Regex StatusFunction();
+
+    /// <summary>
+    /// Nothing is released without every gate having passed.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// This repository published a release from a commit whose CI was red. <c>ci.yml</c> and
+    /// <c>release.yml</c> both fired on a push to main and were wholly independent, so commit
+    /// ac81774 failed <c>installer-smoke</c> and shipped v0.9.0 with six assets in the same
+    /// minute. The release path's whole quality gate was one <c>dotnet test</c>.
+    /// </para>
+    /// <para>
+    /// Three things are asserted, and all three are needed. The publishing job is found by the
+    /// fact that it <b>publishes</b> rather than by its name, or moving the upload step into
+    /// another job would evade every rule here. Its <c>needs</c> must cover every other job that
+    /// is capable of failing. And its <c>if:</c> must contain no status function, because
+    /// <c>always()</c>, <c>failure()</c>, <c>cancelled()</c> or <c>success()</c> anywhere in that
+    /// expression replaces the implicit "every need succeeded" and silently restores exactly the
+    /// behaviour this rule exists to prevent - a <c>needs:</c> list that holds nothing back.
+    /// </para>
+    /// <para>
+    /// A job marked <c>continue-on-error</c> is excluded, because a dependent runs even when such
+    /// a job fails. Depending on one would look like a gate and be none.
+    /// </para>
+    /// </remarks>
+    [Fact]
+    public void NothingIsReleasedWithoutEveryGateHavingPassed()
+    {
+        var jobs = WorkflowJobs();
+
+        var publishers = jobs
+            .Where(j => j.Text.Contains("softprops/action-gh-release", StringComparison.Ordinal))
+            .ToArray();
+
+        var publisher = publishers.ShouldHaveSingleItem(
+            "exactly one job may publish a release - none means the upload vanished, two means it "
+            + "happens twice");
+
+        var needs = JobKey(publisher, "needs");
+        needs.ShouldNotBeNullOrWhiteSpace($"'{publisher.Id}' publishes and depends on nothing");
+
+        var gates = jobs
+            .Where(j => j.Id != publisher.Id)
+            .Where(j => !JobMayFail().IsMatch(j.Text))
+            .Select(j => j.Id)
+            .ToArray();
+
+        gates.Length.ShouldBeGreaterThan(3, "almost nothing was classified as a gate");
+
+        var ungated = gates
+            .Where(id => !Regex.IsMatch(needs, $@"[\[\s,]{Regex.Escape(id)}[\]\s,]"))
+            .ToArray();
+
+        ungated.ShouldBeEmpty(
+            $"'{publisher.Id}' can publish while these have not passed: {string.Join(", ", ungated)}");
+
+        StatusFunction().IsMatch(JobKey(publisher, "if")).ShouldBeFalse(
+            "a status function in the publishing job's if: replaces the implicit success() over "
+            + "needs, so every gate above would be advisory");
+    }
+
+    /// <summary>
+    /// Every job declares how long it may hang for.
+    /// </summary>
+    /// <remarks>
+    /// The default is six hours. The signature failure of this pipeline is a hang - the whole
+    /// reason an NSIS MessageBox must carry a silent default is that an unattended install which
+    /// meets one never returns - and three of installer-smoke's waits are unbounded. Six hours of
+    /// a held runner reports that as a timeout rather than as a diagnosis.
+    /// </remarks>
+    [Fact]
+    public void EveryJobDeclaresAHangBudget()
+    {
+        var jobs = WorkflowJobs();
+
+        jobs.Where(j => !JobHangBudget().IsMatch(j.Text)).Select(j => j.Id)
+            .ShouldBeEmpty("jobs with no timeout-minutes, which may therefore hang for six hours");
+
+        // A floor on the numbers themselves rather than on how many were found: counting matches
+        // against the collection they were derived from is a comparison with itself.
+        var smoke = jobs.Single(j => j.Id == "installer-smoke");
+        int.Parse(JobHangBudget().Match(smoke.Text).Groups[1].Value, CultureInfo.InvariantCulture)
+            .ShouldBeInRange(10, 90, "installer-smoke's budget has stopped being a real number");
+    }
+
+    /// <summary>
+    /// The runner canary is the only job allowed to fail.
+    /// </summary>
+    /// <remarks>
+    /// <c>continue-on-error</c> makes a job's verdict advisory, and a second one appearing quietly
+    /// is how a gate stops being a gate. Anchored to the job key's own indentation: the literal
+    /// also appears in two comments in this file, and installer-smoke's body is eight hundred
+    /// lines of PowerShell in which a matching line could hide.
+    /// </remarks>
+    [Fact]
+    public void TheOnlyJobAllowedToFailIsTheRunnerCanary()
+    {
+        WorkflowJobs().Where(j => JobMayFail().IsMatch(j.Text)).Select(j => j.Id)
+            .ShouldBe(["runner-canary"]);
+    }
 }
