@@ -11,12 +11,6 @@
     <IsTestProject>true</IsTestProject>
     <TrimmerSingleWarn>false</TrimmerSingleWarn>
 
-    <!-- For [LibraryImport] on LockFileEx, which is the only way to take a SHARED byte-range
-         lock: FileStream.Lock takes an exclusive one, and an exclusive lock denies reads, so it
-         fails the copy instead of the truncation. Same reasoning as Core and the GUI - the
-         generated marshalling stubs are unsafe by construction and no hand-written unsafe code
-         exists here. -->
-    <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
   </PropertyGroup>
 
   <ItemGroup>

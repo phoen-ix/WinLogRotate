@@ -26,6 +26,25 @@ public sealed record CompressionResult
 /// </remarks>
 public static class Compressor
 {
+    /// <summary>Removes a staging file, and does not care if it was never there.</summary>
+    /// <remarks>
+    /// Best effort on purpose: this runs on the way out of a failure, and an exception here would
+    /// replace the real one with a worse one. Same shape as <c>AtomicJson.TryDelete</c>.
+    /// </remarks>
+    private static void TryDelete(string path)
+    {
+        try
+        {
+            File.Delete(path);
+        }
+        catch (IOException)
+        {
+        }
+        catch (UnauthorizedAccessException)
+        {
+        }
+    }
+
     /// <summary>The extension a given type appends.</summary>
     public static string Extension(CompressType type) => type switch
     {
@@ -49,40 +68,60 @@ public static class Compressor
         var before = info.Length;
         var modified = new DateTimeOffset(info.LastWriteTimeUtc, TimeSpan.Zero);
 
-        RetryPolicy.Execute(() =>
+        // The try opens here, before the write, not after it. Scoped to the stamp and the move it
+        // would clean up after the two rarest failures and leave the most ordinary one - a full
+        // disk, or an unreadable source - orphaning a .tmp that nothing in this product ever
+        // collects: discovery probes exact names, and LogSeriesTests pins that a .tmp is
+        // deliberately not found. AtomicJson.Write is the shape being followed.
+        //
+        // The retry units stay separate inside it. Retrying is about transient contention;
+        // cleaning up is about what is left behind when retrying has finished failing.
+        try
         {
-            using var input = new FileStream(
-                source, FileMode.Open, FileAccess.Read,
-                // Share generously: antivirus and indexers will be looking at this file too,
-                // and denying them turns a scan into a failed rotation.
-                FileShare.ReadWrite | FileShare.Delete,
-                bufferSize: 81920, FileOptions.SequentialScan);
-
-            using var output = new FileStream(temp, FileMode.Create, FileAccess.Write, FileShare.None);
-
-            if (type == CompressType.Gzip)
+            RetryPolicy.Execute(() =>
             {
-                GzipWriter.Compress(input, output, source, modified, level);
-            }
-            else
-            {
-                using var archive = new ZipArchive(output, ZipArchiveMode.Create, leaveOpen: true);
-                var entry = archive.CreateEntry(Path.GetFileName(source), level);
-                entry.LastWriteTime = modified;
-                using var entryStream = entry.Open();
-                input.CopyTo(entryStream);
-            }
+                using var input = new FileStream(
+                    source, FileMode.Open, FileAccess.Read,
+                    // Share generously: antivirus and indexers will be looking at this file too,
+                    // and denying them turns a scan into a failed rotation.
+                    FileShare.ReadWrite | FileShare.Delete,
+                    bufferSize: 81920, FileOptions.SequentialScan);
 
-            output.Flush();
-            output.Flush(flushToDisk: true);
-        }, retryCount, retryIntervalMs);
+                using var output = new FileStream(temp, FileMode.Create, FileAccess.Write, FileShare.None);
 
-        // The archive carries the log's own timestamp, not the moment we compressed it.
-        // Age-based retention reads mtime, so stamping "now" here would make every archive
-        // look brand new and quietly defeat maxage.
-        File.SetLastWriteTimeUtc(temp, modified.UtcDateTime);
+                if (type == CompressType.Gzip)
+                {
+                    GzipWriter.Compress(input, output, source, modified, level);
+                }
+                else
+                {
+                    using var archive = new ZipArchive(output, ZipArchiveMode.Create, leaveOpen: true);
+                    var entry = archive.CreateEntry(Path.GetFileName(source), level);
+                    entry.LastWriteTime = modified;
+                    using var entryStream = entry.Open();
+                    input.CopyTo(entryStream);
+                }
 
-        File.Move(temp, destination, overwrite: true);
+                output.Flush();
+                output.Flush(flushToDisk: true);
+            }, retryCount, retryIntervalMs);
+
+            // The archive carries the log's own timestamp, not the moment we compressed it.
+            // Age-based retention reads mtime, so stamping "now" here would make every archive
+            // look brand new and quietly defeat maxage. Retried too: an antivirus handle on the
+            // file we have just written is the same transient as any other, and this used to sit
+            // outside every retry in the method.
+            RetryPolicy.Execute(
+                () => File.SetLastWriteTimeUtc(temp, modified.UtcDateTime), retryCount, retryIntervalMs);
+
+            RetryPolicy.Execute(
+                () => File.Move(temp, destination, overwrite: true), retryCount, retryIntervalMs);
+        }
+        catch
+        {
+            TryDelete(temp);
+            throw;
+        }
 
         var after = new FileInfo(destination).Length;
 

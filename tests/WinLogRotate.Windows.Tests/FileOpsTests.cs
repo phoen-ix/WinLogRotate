@@ -2,7 +2,6 @@ using System.Runtime.InteropServices;
 using Microsoft.Win32.SafeHandles;
 using Shouldly;
 using WinLogRotate.Core.Io;
-using WinLogRotate.Core.Safety;
 using WinLogRotate.Core.State;
 using Xunit;
 
@@ -16,7 +15,7 @@ namespace WinLogRotate.Windows.Tests;
 /// <c>CopyTruncate</c> - the one operation that empties a customer's log in place - had never been
 /// executed by anything but a real installation.
 /// </remarks>
-public sealed partial class FileOpsTests : IDisposable
+public sealed class FileOpsTests : IDisposable
 {
     private readonly DirectoryInfo _dir = Directory.CreateTempSubdirectory("winlogrotate-fileops-");
 
@@ -115,82 +114,19 @@ public sealed partial class FileOpsTests : IDisposable
         File.Exists(archive + ".part").ShouldBeFalse();
     }
 
-    /// <summary>
-    /// A cut that keeps failing leaves the archive it already committed alone.
-    /// </summary>
-    /// <remarks>
-    /// <para>
-    /// The archive is committed before the live log is emptied, so everything depends on what a
-    /// failure after that point retries. It used to retry the whole call: the second attempt
-    /// measured a source the first had already truncated, copied nothing, and moved the nothing
-    /// over the archive it had just saved - returning normally, so the run reported a success and
-    /// the rotation clock advanced.
-    /// </para>
-    /// <para>
-    /// A shared byte-range lock is what makes the cut fail on demand: it leaves reads alone, so
-    /// the copy completes and the archive is committed, and denies writes, so the truncation
-    /// cannot apply. The exclusive lock this reached for first is no use - it would fail the copy
-    /// instead, and the phase under test would never run.
-    /// </para>
-    /// </remarks>
-    [Fact]
-    public void ACutThatKeepsFailingLeavesTheArchiveAlone()
-    {
-        WindowsOnly.Require();
-
-        var source = Log(4096);
-        var archive = Path("app.log.1");
-
-        using var blocker = new FileStream(
-            source, FileMode.Open, FileAccess.ReadWrite, FileShare.ReadWrite | FileShare.Delete);
-
-        SharedLock(blocker, 0, 4096);
-
-        var retries = new List<int>();
-
-        Should.Throw<IOException>(() => FileOps.CopyTruncate(
-            source, archive, truncate: true,
-            attempts: 3, intervalMs: 1,
-            onRetry: (_, e) => retries.Add(RetryPolicy.ErrorCode(e))));
-
-        // The failure really was the transient one, retried the full number of times - without
-        // this the assertion below would hold for a call that never got as far as the cut.
-        retries.ShouldBe([Win32Error.LockViolation, Win32Error.LockViolation]);
-
-        new FileInfo(archive).Length.ShouldBe(
-            4096, "the cut failed; the archive it had already committed must be untouched");
-    }
-
-    /// <summary>
-    /// A shared lock: readers are let through, writers are not.
-    /// </summary>
-    /// <remarks>
-    /// FileStream.Lock takes an exclusive one, which denies reads as well - so it cannot express
-    /// "let the copy finish and stop the truncation", which is the only arrangement that puts a
-    /// failure where this test needs one.
-    /// </remarks>
-    private static unsafe void SharedLock(FileStream file, long offset, long length)
-    {
-        var overlapped = new NativeOverlapped
-        {
-            OffsetLow = unchecked((int)(offset & 0xFFFFFFFF)),
-            OffsetHigh = unchecked((int)(offset >> 32)),
-        };
-
-        if (!LockFileEx(
-                file.SafeFileHandle, 0, 0,
-                unchecked((uint)(length & 0xFFFFFFFF)), unchecked((uint)(length >> 32)),
-                &overlapped))
-        {
-            throw new IOException($"could not take a shared lock: {Marshal.GetLastWin32Error()}");
-        }
-    }
-
-    [LibraryImport("kernel32.dll", SetLastError = true)]
-    [return: MarshalAs(UnmanagedType.Bool)]
-    private static unsafe partial bool LockFileEx(
-        SafeFileHandle file, uint flags, uint reserved,
-        uint countLow, uint countHigh, NativeOverlapped* overlapped);
+    // There is no test here for "a cut that keeps failing leaves the archive alone", and the
+    // reason is worth recording rather than leaving as an absence.
+    //
+    // Provoking it needs the truncation to fail while the copy succeeds, which needs a lock that
+    // permits reads and denies writes over the range the cut touches. A shared byte-range lock is
+    // exactly that, and it does not work here: Windows associates byte-range locks with the
+    // LOCKING PROCESS, not with the handle, so a blocker opened by the test does not bind the
+    // product's handle a few frames up the same stack. This was written, pushed, and observed to
+    // let the truncation straight through.
+    //
+    // A second process holding the lock would work. That is a real fixture, not a line of setup,
+    // and it belongs to whoever decides this branch is worth that. What guards the behaviour
+    // meanwhile is the split itself and ArchitectureTests.NothingRetriesTheWholeCopyTruncate.
 
     /// <summary>
     /// Bytes the writer appends during the copy are conserved, not dropped.

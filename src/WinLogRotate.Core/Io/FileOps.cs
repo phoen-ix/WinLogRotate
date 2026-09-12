@@ -160,28 +160,39 @@ public static class FileOps
         var length = RandomAccess.GetLength(handle);
         var staging = destination + ".part";
 
-        using (var output = new FileStream(staging, FileMode.Create, FileAccess.Write, FileShare.None))
+        try
         {
-            var buffer = new byte[81920];
-            var offset = 0L;
-
-            while (offset < length)
+            using (var output = new FileStream(staging, FileMode.Create, FileAccess.Write, FileShare.None))
             {
-                var wanted = (int)Math.Min(buffer.Length, length - offset);
-                var read = RandomAccess.Read(handle, buffer.AsSpan(0, wanted), offset);
-                if (read == 0)
+                var buffer = new byte[81920];
+                var offset = 0L;
+
+                while (offset < length)
                 {
-                    break;
+                    var wanted = (int)Math.Min(buffer.Length, length - offset);
+                    var read = RandomAccess.Read(handle, buffer.AsSpan(0, wanted), offset);
+                    if (read == 0)
+                    {
+                        break;
+                    }
+
+                    output.Write(buffer, 0, read);
+                    offset += read;
                 }
 
-                output.Write(buffer, 0, read);
-                offset += read;
+                output.Flush(flushToDisk: true);
             }
 
-            output.Flush(flushToDisk: true);
+            File.Move(staging, destination, overwrite: true);
+        }
+        catch
+        {
+            // The staging file is ours and nothing else will ever collect it: discovery probes
+            // exact names, so a .part is invisible to retention for ever.
+            TryDelete(staging);
+            throw;
         }
 
-        File.Move(staging, destination, overwrite: true);
         return length;
     }
 
@@ -243,6 +254,25 @@ public static class FileOps
         // leave a NUL gap beginning, and the detector samples at exactly this offset - so it has
         // to be what the file really is, not what the arithmetic above expected.
         return RandomAccess.GetLength(handle);
+    }
+
+    /// <summary>Removes a staging file, and does not care if it was never there.</summary>
+    /// <remarks>
+    /// Best effort: this runs on the way out of a failure, and throwing here would replace the
+    /// real error with a worse one.
+    /// </remarks>
+    private static void TryDelete(string path)
+    {
+        try
+        {
+            File.Delete(path);
+        }
+        catch (IOException)
+        {
+        }
+        catch (UnauthorizedAccessException)
+        {
+        }
     }
 
     /// <summary>Makes a directory, and every level above it that is missing.</summary>

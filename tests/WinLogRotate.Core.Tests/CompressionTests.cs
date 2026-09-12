@@ -130,4 +130,43 @@ public sealed class CompressionTests : IDisposable
     [InlineData("nonsense", CompressionLevel.Optimal)]
     public void LogrotateCompressionOptionsMapToDotNetLevels(string? option, CompressionLevel expected) =>
         Compressor.MapLevel(option).ShouldBe(expected);
+    /// <summary>
+    /// A compression that fails leaves no staging file behind.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// Nothing in this product ever collects one. Discovery probes the exact names a job would
+    /// have written, and <c>LogSeriesTests</c> pins that a <c>.tmp</c> is deliberately not among
+    /// them - so an orphan sits in the log directory for ever, in the one tool whose job is to
+    /// stop log directories filling up.
+    /// </para>
+    /// <para>
+    /// The failure has to land after the staging file exists, or there is nothing to clean up and
+    /// this proves nothing - the first version of this test blocked the staging path itself and
+    /// was green against the unfixed code. A directory where the archive must go fails the move
+    /// instead, which is the last step and reaches it with the staging file written.
+    /// </para>
+    /// </remarks>
+    [Fact]
+    public void AFailedCompressionLeavesNoTemporaryBehind()
+    {
+        var source = Path.Combine(_dir.FullName, "app.log.1");
+        File.WriteAllText(source, "something to compress");
+
+        var length = new FileInfo(source).Length;
+
+        Directory.CreateDirectory(source + ".zip");
+
+        Should.Throw<Exception>(() => Compressor.Compress(
+            source, CompressType.Zip, retryCount: 1, retryIntervalMs: 1));
+
+        // Controls. The move is what failed, which means the staging file had been written and
+        // stamped by then - without these, a compression that fell over before choosing a staging
+        // name would satisfy the assertion below while proving nothing.
+        Directory.Exists(source + ".zip").ShouldBeTrue("the obstruction must still be what it was");
+        new FileInfo(source).Length.ShouldBe(length, "the source is only deleted after a success");
+
+        File.Exists(source + ".zip.tmp").ShouldBeFalse(
+            "a staging file nothing in the product ever collects was left in the log directory");
+    }
 }
