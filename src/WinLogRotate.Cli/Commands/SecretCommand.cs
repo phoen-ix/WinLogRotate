@@ -242,7 +242,9 @@ internal static class SecretCommand
 
         // Only now the config. The temporary file TomlFile.Save writes is a sibling of
         // config.toml, so it inherits the configuration directory's descriptor exactly as the
-        // original did - there is nothing extra to harden here.
+        // original did - but not its owner, which is why ConfigWrites.Config exists: the file
+        // left in place was created by this process, and an elevated administrator's created
+        // objects are owned by that account rather than by BUILTIN\Administrators.
         // Split once: NotifyProvider.Name is "kind.name", and the name half may itself contain a
         // dot if it was quoted in the header. Concatenating into a dotted string and splitting it
         // again turns [notify.email."my.relay"] into a four-part path that matches no table - so
@@ -257,7 +259,7 @@ internal static class SecretCommand
 
         try
         {
-            file.Save();
+            ConfigWrites.Config(file);
         }
         catch (Exception e) when (e is IOException or UnauthorizedAccessException)
         {

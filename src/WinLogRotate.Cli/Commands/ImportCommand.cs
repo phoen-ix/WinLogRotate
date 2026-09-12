@@ -77,7 +77,7 @@ internal static class ImportCommand
                 suffix++;
             }
 
-            File.WriteAllText(path, job.Toml);
+            ConfigWrites.Job(path, job.Toml);
             written.Add(path);
 
             ctx.Output.Line($"  {Path.GetFileName(path)}");

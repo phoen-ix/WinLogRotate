@@ -225,4 +225,47 @@ public sealed class ConfDirHardeningTests : IDisposable
         finding.ExpectedForScope.ShouldBeFalse();
     }
 
+
+    /// <summary>
+    /// A job file this product writes is left owned by Administrators.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// The premise the gate's per-file owner rule stands on, and it is a premise about Windows,
+    /// not about our arithmetic - so it can only be established here. An elevated
+    /// administrator's created objects are owned by that account's own SID and not by
+    /// <c>BUILTIN\Administrators</c>; this test asserts that after
+    /// <see cref="ConfigFileOwner.Claim"/> the file is owned by the group.
+    /// </para>
+    /// <para>
+    /// If this ever starts failing, hooks go off across the estate on the next edit of any job
+    /// file, silently. The Linux leg pins that the writers call it; only this pins that calling
+    /// it does anything.
+    /// </para>
+    /// </remarks>
+    [Fact]
+    public void AClaimedFileIsOwnedByAdministrators()
+    {
+        WindowsOnly.Require();
+
+        var confd = _root.CreateSubdirectory("conf.d");
+        Harden(confd);
+
+        var path = Path.Combine(confd.FullName, "iis.toml");
+        File.WriteAllText(path, "name = \"iis\"\n");
+
+        var before = new FileInfo(path)
+            .GetAccessControl(AccessControlSections.Owner)
+            .GetOwner(typeof(SecurityIdentifier));
+
+        ConfigFileOwner.Claim(path).ShouldBeTrue(
+            "the runner is elevated and in the Administrators group, so it can give a file away");
+
+        var after = new FileInfo(path)
+            .GetAccessControl(AccessControlSections.Owner)
+            .GetOwner(typeof(SecurityIdentifier));
+
+        after.ShouldNotBeNull().Value.ShouldBe(Sddl.WellKnown.Administrators,
+            $"the file was owned by {before} when it was created");
+    }
 }
