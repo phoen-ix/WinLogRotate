@@ -174,6 +174,59 @@ public sealed class PlanExecutorTests : IDisposable
         public LinkTarget Resolve(string path) => LinkTarget.At(to);
     }
 
+    /// <summary>A resolver that cannot say where anything leads.</summary>
+    /// <remarks>
+    /// ERROR_ACCESS_DENIED, because that is the ordinary way this happens: a junction to a share
+    /// this account may not open, or to a directory whose permissions changed since the plan was
+    /// made. The plan may be seconds old.
+    /// </remarks>
+    private sealed class Unresolvable : ILinkResolver
+    {
+        public LinkTarget Resolve(string path) => LinkTarget.Unresolvable(5);
+    }
+
+    /// <summary>
+    /// A directory whose real location cannot be established is not acted on.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// The executor used to fall back to the spelled path when resolution failed, arguing that an
+    /// unresolvable path was then no worse guarded than before. But the spelling is exactly what
+    /// the guard cannot trust at this point, and this is the last check before a file is
+    /// destroyed - the plan may be seconds old, and a directory can be swapped for a junction in
+    /// between.
+    /// </para>
+    /// <para>
+    /// <c>FileEnumerator.Vet</c> has answered the identical question by refusing since it was
+    /// written. One product cannot hold two opinions about whether an unverifiable link may be
+    /// acted on, and the half that deletes files was the half that said yes.
+    /// </para>
+    /// <para>
+    /// Asserted on the verdict rather than on the failure count: <c>CheckPath</c> turns down a
+    /// Unix path as not absolute, so on the Linux leg this executor refuses everything it is
+    /// given, and a test that only counted failures would pass with the change removed entirely.
+    /// </para>
+    /// </remarks>
+    [Fact]
+    public void ADirectoryThatCannotBeResolvedIsNotActedOn()
+    {
+        var plan = PlanDeleting("a.log.gz");
+
+        var result = new PlanExecutor(
+                _journal,
+                new PathGuard(new GuardOptions { ProtectedRoots = [] }),
+                _clock,
+                new Unresolvable())
+            .Execute(plan, Job(), dryRun: false);
+
+        result.Failed.ShouldBe(1);
+        result.Completed.ShouldBe(0);
+        File.Exists(Path.Combine(_dir.FullName, "a.log.gz")).ShouldBeTrue("and it was not deleted");
+
+        var refusal = result.Diagnostics.ShouldHaveSingleItem();
+        refusal.Message.ShouldNotBeNull().ShouldContain("could not be established");
+    }
+
     /// <summary>
     /// The last-moment check asks where the file really is, not where it is spelled.
     /// </summary>

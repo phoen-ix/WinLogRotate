@@ -100,7 +100,7 @@ public sealed class PlanExecutor(
         var rotated = new List<string>();
 
         // For the life of this call. A plan touches a handful of directories and dozens of files.
-        var resolved = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+        var resolved = new Dictionary<string, string?>(StringComparer.OrdinalIgnoreCase);
 
         foreach (var op in plan.Operations)
         {
@@ -135,7 +135,14 @@ public sealed class PlanExecutor(
 
             bool Refused(string path)
             {
-                var decision = guard.CheckPath(Resolved(path, resolved), job.GuardScope);
+                // Unverifiable, not allowed. Resolved returns null when it could not establish
+                // where a directory really leads, and the guard's own vocabulary already has a
+                // verdict for that - reached here by asking it, so the message and the remedy are
+                // the ones the enumerator gives for the same condition.
+                var decision = Resolved(path, resolved) is { } real
+                    ? guard.CheckPath(real, job.GuardScope)
+                    : guard.UnresolvableLink(path, "the directory could not be resolved", 0);
+
                 if (decision.IsAllowed)
                 {
                     return false;
@@ -203,15 +210,26 @@ public sealed class PlanExecutor(
     }
 
     /// <summary>
-    /// The path as the file system sees it, with each directory resolved at most once.
+    /// The path as the file system sees it, with each directory resolved at most once - or null
+    /// when where it really leads could not be established.
     /// </summary>
     /// <remarks>
+    /// <para>
     /// Per directory rather than per operation: a job of forty archives in one folder pays one
-    /// open, not forty. On the rare failure the spelled path is used, which is exactly what the
-    /// guard checked before this milestone - so an unresolvable path is no worse guarded than it
-    /// used to be, rather than being let through.
+    /// open, not forty.
+    /// </para>
+    /// <para>
+    /// Null rather than the spelled path. This used to fall back to the spelling when the
+    /// directory would not resolve, on the argument that an unresolvable path was then no worse
+    /// guarded than before - but the spelling is exactly what the guard cannot trust here, and
+    /// this is the last check before a file is deleted. <c>FileEnumerator.Vet</c> has answered
+    /// the identical question by refusing since it was written, and one product cannot hold two
+    /// opinions about whether an unverifiable link may be acted on. The bias is stated in
+    /// <c>ConfDirGuard</c>'s own words: a false refusal costs an operation and prints why; a
+    /// false acceptance deletes files behind a junction somebody planted.
+    /// </para>
     /// </remarks>
-    private string Resolved(string path, Dictionary<string, string> cache)
+    private string? Resolved(string path, Dictionary<string, string?> cache)
     {
         var directory = WinPath.DirectoryName(path);
 
@@ -223,8 +241,13 @@ public sealed class PlanExecutor(
         if (!cache.TryGetValue(directory, out var real))
         {
             var target = (links ?? new LinkResolver()).Resolve(directory);
-            real = target.Resolved && target.FinalPath is { } final ? final : directory;
+            real = target.Resolved && target.FinalPath is { } final ? final : null;
             cache[directory] = real;
+        }
+
+        if (real is null)
+        {
+            return null;
         }
 
         // Rebuilt only when the directory really moved. Recombining an unchanged path would put
