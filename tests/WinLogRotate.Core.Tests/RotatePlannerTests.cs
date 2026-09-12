@@ -383,6 +383,50 @@ public class RotatePlannerTests
     }
 
     /// <summary>
+    /// rotate = 0 keeps no generations, on either path.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// <c>docs/configuration.md</c> defines <c>rotate</c> as how many old generations to keep, and
+    /// <c>0</c> as discarding immediately. It kept one. On the numbered path <c>highest</c> was
+    /// <c>rotate + start - 1</c>, which is <c>0</c>, so the loop never ran and <c>app.log.1</c>
+    /// survived for ever, replaced each run only because <c>MoveFileEx</c> overwrites. On the
+    /// dateext path the new archive simply outlived the pass.
+    /// </para>
+    /// <para>
+    /// The log is still rotated rather than emptied. The rotation clock advances from
+    /// <c>ExecutionResult.Rotated</c>, which the executor fills from renames and copies alone, so
+    /// a plan that deleted the live log instead of moving it would leave the job due again every
+    /// time it was considered.
+    /// </para>
+    /// </remarks>
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public void RotateZeroLeavesNoArchivesOnEitherPath(bool dateExt)
+    {
+        var files = new FakeFiles(@"C:\logs\app.log");
+        files.Add(dateExt ? @"C:\logs\app.log-20260905.gz" : @"C:\logs\app.log.1");
+
+        var after = After(Job(rotate: 0, dateExt: dateExt), files);
+
+        after.Names.ShouldBe(["app.log"]);
+
+        // And the log the writer will find is a new empty file, not the one that was archived.
+        after.At(@"C:\logs\app.log")!.Origin.ShouldBeNull();
+        after.Missing.ShouldBeEmpty();
+    }
+
+    /// <summary>An archive about to be discarded is not compressed on the way.</summary>
+    [Fact]
+    public void RotateZeroDoesNotCompressWhatItIsAboutToDelete()
+    {
+        var plan = PlanOver(Job(rotate: 0, compress: true), new FakeFiles(@"C:\logs\app.log"));
+
+        plan.Operations.ShouldNotContain(o => o.Action == PlannedAction.Compress);
+    }
+
+    /// <summary>
     /// A chain with holes keeps its topmost archive rather than losing it to its position.
     /// </summary>
     /// <remarks>

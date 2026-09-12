@@ -193,7 +193,8 @@ public static class RotateJobPlanner
         }
 
         // Step 4: the live log itself.
-        AddLiveRotation(job, live, ArchiveNaming.FirstRotation(job, live.Path, now), operations, verdict);
+        AddLiveRotation(
+            job, live, ArchiveNaming.FirstRotation(job, live.Path, now), operations, verdict);
     }
 
     /// <summary>
@@ -338,10 +339,23 @@ public static class RotateJobPlanner
         AddMaxAgeDeletions(job, generation.Archives, operations, now);
     }
 
+    /// <param name="discard">
+    /// Whether the archive this rotation produces is kept. <c>rotate = 0</c> keeps no generations,
+    /// so it is deleted in the same pass and never compressed on the way.
+    /// </param>
+    /// <remarks>
+    /// The log is still rotated rather than simply emptied, and that is not decoration: the
+    /// rotation clock advances from <c>ExecutionResult.Rotated</c>, which the executor fills from
+    /// renames and copies alone. A plan for <c>rotate = 0</c> that deleted the live log instead of
+    /// moving it would never mark the log as rotated, so the job would be due again every time it
+    /// was considered, for ever.
+    /// </remarks>
     private static void AddLiveRotation(
         EffectiveJob job, MatchedFile live, string target, List<PlannedOp> operations,
         DueVerdict verdict)
     {
+        var discard = job.Rotate == 0;
+
         // The resolved strategy where the caller worked one out, the configured one otherwise.
         var strategy = verdict.Strategy ?? job.LockStrategy;
 
@@ -385,8 +399,9 @@ public static class RotateJobPlanner
         }
 
         // Compression of the newest generation is deferred by exactly one cycle when
-        // delaycompress is set - that is the entire point of the directive.
-        if (job.CompressType != CompressType.None && !job.DelayCompress)
+        // delaycompress is set - that is the entire point of the directive. And an archive this
+        // same pass is about to discard is not worth reading and writing first.
+        if (job.CompressType != CompressType.None && !job.DelayCompress && !discard)
         {
             operations.Add(new PlannedOp
             {
@@ -394,6 +409,17 @@ public static class RotateJobPlanner
                 Source = target,
                 Destination = target + Compressor.Extension(job.CompressType),
                 Reason = $"compress = {job.CompressType.ToString().ToLowerInvariant()}",
+                Bytes = live.Length,
+            });
+        }
+
+        if (discard)
+        {
+            operations.Add(new PlannedOp
+            {
+                Action = PlannedAction.Delete,
+                Source = target,
+                Reason = "rotate = 0 keeps no generations",
                 Bytes = live.Length,
             });
         }

@@ -60,7 +60,7 @@ Frequency keywords are mutually exclusive and last-one-wins, exactly as in logro
 
 | Key | Type | Default | What it does |
 |---|---|---|---|
-| `rotate` | int | `7` | How many old generations to keep. `0` discards immediately; `-1` keeps everything and prunes by `maxage` alone. |
+| `rotate` | int | `7` | How many old generations to keep, exactly — dated or numbered. `0` discards immediately; `-1` keeps everything and prunes by `maxage` alone. |
 | `start` | int | `1` | The number the first archive gets, so `app.log.1`. |
 | `maxage` | days | *(none)* | Delete archives older than this, whatever `rotate` says. |
 | `minage` | days | *(none)* | Refuse to rotate a log younger than this. |
@@ -69,6 +69,13 @@ Frequency keywords are mutually exclusive and last-one-wins, exactly as in logro
 | `maxfiles` | int | `1000` | Refuse a pattern matching more files than this. A pattern matching 40,000 files is a typo far more often than a plan. |
 
 Setting `minsize` above `maxsize` cancels both, and is reported.
+
+**`rotate = 0` still rotates.** The log is moved aside so the writer gets a fresh file, and the
+archive is deleted in the same pass rather than compressed first — the rotation clock only
+advances for a log that was really moved, so a job that merely emptied its log would be due again
+every time it was considered. With `lockstrategy = copytruncate` that means the log is copied in
+full to an archive removed seconds later, so the volume needs room for one copy in order to keep
+nothing.
 
 ### Archiving
 
