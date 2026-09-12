@@ -21,6 +21,26 @@ public sealed record ExecutionResult
     public IReadOnlyList<CliDiagnostic> Diagnostics { get; init; } = [];
 
     /// <summary>
+    /// How many of each action actually completed.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// <see cref="Completed"/> is one number for a plan that compresses, deletes and renames, so
+    /// a caller wanting to say "n compressed, m removed" could not ask and counted the
+    /// <i>plan</i> instead - which reports an operation the guard refused as one that happened.
+    /// <see cref="JournalMaintenance"/> did exactly that, and additionally subtracted the run's
+    /// whole failure count from its compressed tally, so one failed delete could make the number
+    /// of compressed files negative.
+    /// </para>
+    /// <para>
+    /// Completions only. A failure is in <see cref="Failed"/> and <see cref="Errors"/>, a skip is
+    /// in <see cref="Skipped"/>, and what was merely intended is in the plan.
+    /// </para>
+    /// </remarks>
+    public IReadOnlyDictionary<PlannedAction, int> CompletedBy { get; init; } =
+        new Dictionary<PlannedAction, int>();
+
+    /// <summary>
     /// Live logs that were actually moved out of the way.
     /// </summary>
     /// <remarks>
@@ -48,6 +68,7 @@ public sealed class PlanExecutor(
     public ExecutionResult Execute(JobPlan plan, EffectiveJob job, bool dryRun)
     {
         var completed = 0;
+        var completedBy = new Dictionary<PlannedAction, int>();
         var failed = 0;
         var skipped = 0;
         long freed = 0;
@@ -110,6 +131,7 @@ public sealed class PlanExecutor(
             {
                 var bytes = Apply(op, job);
                 completed++;
+                completedBy[op.Action] = completedBy.GetValueOrDefault(op.Action) + 1;
                 if (op.Action == PlannedAction.Delete)
                 {
                     freed += op.Bytes;
@@ -151,6 +173,7 @@ public sealed class PlanExecutor(
             BytesFreed = freed,
             Errors = errors,
             Diagnostics = diagnostics,
+            CompletedBy = completedBy,
             Rotated = rotated,
         };
     }

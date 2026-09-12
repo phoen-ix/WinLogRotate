@@ -85,8 +85,16 @@ public static class JournalMaintenance
     /// Tidies the journal directory. Call this <b>before</b> opening today's writer, so the
     /// pass never touches a file it is itself holding open.
     /// </summary>
+    /// <param name="links">
+    /// The link resolver the executor guards against, for the reason
+    /// <see cref="PlanExecutor"/> takes one. Tests need a pass in which every operation is
+    /// refused - the only state in which the old arithmetic could go negative - and the refusal
+    /// has to happen on both CI legs, so it cannot be borrowed from the Linux leg's habit of
+    /// turning down a Unix path as not absolute.
+    /// </param>
     public static JournalMaintenanceResult Run(
-        string journalDirectory, JournalSettings settings, TimeProvider clock)
+        string journalDirectory, JournalSettings settings, TimeProvider clock,
+        Io.ILinkResolver? links = null)
     {
         if (!settings.Enabled)
         {
@@ -104,13 +112,16 @@ public static class JournalMaintenance
         // A NullJournal on purpose: journaling the journal's own tidy-up into the file being
         // tidied is a small infinite regress, and the summary is reported to the caller
         // instead, which records one line once the real writer is open.
-        var executor = new PlanExecutor(new NullJournal(), Guard, clock);
+        var executor = new PlanExecutor(new NullJournal(), Guard, clock, links);
         var result = executor.Execute(plan, job, dryRun: false);
 
         return new JournalMaintenanceResult
         {
-            Compressed = plan.Operations.Count(o => o.Action == PlannedAction.Compress) - result.Failed,
-            Deleted = plan.Operations.Count(o => o.Action == PlannedAction.Delete),
+            // What the executor did, not what the plan intended. Counting the plan reported a
+            // delete the guard refused as one that happened, and subtracting the run's whole
+            // failure count from the compressed tally let one failed delete make it negative.
+            Compressed = result.CompletedBy.GetValueOrDefault(PlannedAction.Compress),
+            Deleted = result.CompletedBy.GetValueOrDefault(PlannedAction.Delete),
             BytesFreed = result.BytesFreed,
             Errors = result.Errors,
         };

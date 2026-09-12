@@ -138,6 +138,62 @@ public sealed class JournalMaintenanceTests : IDisposable
     }
 
     /// <summary>
+    /// A guard that refuses everything, on every platform.
+    /// </summary>
+    /// <remarks>
+    /// The executor checks where a path really leads, not how it is spelled, so redirecting the
+    /// directory into a protected root is enough to have every operation refused. It has to be
+    /// done this way rather than by leaning on the Linux leg turning down a Unix path: the pure
+    /// suite runs on windows-2025 too, where a temp directory is under no protected root and
+    /// every operation would succeed - inverting each assertion below.
+    /// </remarks>
+    private sealed class Redirect : Io.ILinkResolver
+    {
+        public Io.LinkTarget Resolve(string path) => Io.LinkTarget.At(@"C:\Windows\System32");
+    }
+
+    /// <summary>
+    /// A pass in which nothing succeeded reports nothing done.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// The numbers reported here are printed to the operator by <c>run</c>, and they counted the
+    /// <i>plan</i>: <c>Deleted</c> was the number of deletes the pass intended, so a journal
+    /// directory the guard refuses - a portable install under Program Files is the ordinary way
+    /// to get one - reported every file as removed while none was. <c>Compressed</c> subtracted
+    /// the pass's whole failure count, across every action, from the number of compressions it
+    /// planned, so one failed delete could make it negative.
+    /// </para>
+    /// <para>
+    /// The refusal is the point: it is the only state in which the two arithmetic expressions
+    /// and the truth diverge, and nothing in this file reached it, because every other fact here
+    /// stops at <c>PlanFor</c>.
+    /// </para>
+    /// </remarks>
+    [Fact]
+    public void APassInWhichEverythingWasRefusedReportsNothingDone()
+    {
+        for (var day = 0; day <= 10; day++)
+        {
+            Seed(day);
+        }
+
+        var plan = JournalMaintenance.PlanFor(_dir.FullName, Settings(retain: 3), _clock.GetUtcNow());
+        plan.Operations.ShouldContain(o => o.Action == PlannedAction.Compress);
+        plan.Operations.ShouldContain(o => o.Action == PlannedAction.Delete);
+
+        var result = JournalMaintenance.Run(_dir.FullName, Settings(retain: 3), _clock, new Redirect());
+
+        result.Errors.ShouldNotBeEmpty("the guard must have refused the pass for this to assert anything");
+        result.Compressed.ShouldBe(0);
+        result.Deleted.ShouldBe(0);
+        result.DidAnything.ShouldBeFalse();
+
+        // Still there, which is what makes the numbers above lies rather than merely odd.
+        Directory.GetFiles(_dir.FullName, "journal-*.ndjson").Length.ShouldBe(11);
+    }
+
+    /// <summary>
     /// The compressed archives must still be readable, or the history is preserved in name
     /// only.
     /// </summary>
