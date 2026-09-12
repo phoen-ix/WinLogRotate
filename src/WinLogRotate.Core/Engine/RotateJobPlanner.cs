@@ -19,13 +19,22 @@ public sealed record LogGeneration
 /// <remarks>
 /// The ordering within one pass matters and is taken from upstream:
 /// <list type="number">
+/// <item><description>condemn by age, against the names the files have now, before anything
+/// moves;</description></item>
 /// <item><description>compress the generation <c>delaycompress</c> deferred last time, so the
-/// chain is uniformly named before anything moves;</description></item>
-/// <item><description>shift the numbered chain upward, from the highest index down, so nothing
-/// is overwritten before it has been moved;</description></item>
-/// <item><description>rename the live log into the first generation;</description></item>
-/// <item><description>dispose of whatever fell off the end.</description></item>
+/// chain is uniformly named before anything moves - and so the shift moves the compressed
+/// name;</description></item>
+/// <item><description>shift the numbered chain upward, from the top of the chain down, so nothing
+/// is overwritten before it has been moved. Whatever the count disposes of falls out of this same
+/// pass rather than being collected afterwards;</description></item>
+/// <item><description>rename the live log into the first generation.</description></item>
 /// </list>
+/// <para>
+/// The first item is the one that is easy to get wrong, and was. A plan is a list executed in
+/// order, so a deletion decided after a rename has been queued names a path that by then holds a
+/// different file - and <see cref="PlannedOp.Reason"/> promises to say which rule condemned
+/// <i>this</i> file, which it cannot do if the file it names is not the file that goes.
+/// </para>
 /// </remarks>
 public static class RotateJobPlanner
 {
@@ -86,6 +95,10 @@ public static class RotateJobPlanner
         var live = generation.Live;
         var byIndex = ChainByIndex(job, generation, report);
 
+        // Step 1: age. Decided against the names the files have now and emitted before anything
+        // moves, so the reason names the file that goes. See AddMaxAgeDeletions.
+        var condemned = AddMaxAgeDeletions(job, generation.Archives, operations, now);
+
         // Whether the count will dispose of this index rather than shift it. Asked before the
         // catch-up compress as well as inside the shift, because compressing a generation this
         // same pass is about to delete is work done to fill a bin - and with rotate = 1 that is
@@ -93,14 +106,14 @@ public static class RotateJobPlanner
         bool Doomed(int index) =>
             job.Rotate >= 0 && index >= job.Rotate + job.Start - 1 && byIndex.Count >= job.Rotate;
 
-        // Step 1: the generation delaycompress deferred last time. Compressing it now means the
+        // Step 2: the generation delaycompress deferred last time. Compressing it now means the
         // shift below operates on a uniformly-named chain. This also covers the awkward case
         // where an operator turned delaycompress off and left one uncompressed file stranded
         // among compressed ones.
         if (job is { DelayCompress: true, CompressType: not CompressType.None }
             && !Doomed(job.Start)
             && byIndex.TryGetValue(job.Start, out var newest)
-            && newest.FirstOrDefault(a => !a.IsCompressed) is { } deferred)
+            && newest.FirstOrDefault(a => !a.IsCompressed && !condemned.Contains(a.Path)) is { } deferred)
         {
             var archive = deferred.Path + Compressor.Extension(job.CompressType);
 
@@ -126,7 +139,7 @@ public static class RotateJobPlanner
             };
         }
 
-        // Step 2: shift downward from the top so a move never lands on a file that has not yet
+        // Step 3: shift downward from the top so a move never lands on a file that has not yet
         // been moved itself. rotate = -1 keeps everything, so nothing is disposed by count.
         var highest = job.Rotate < 0 ? byIndex.Keys.DefaultIfEmpty(job.Start - 1).Max() : job.Rotate + job.Start - 1;
 
@@ -145,6 +158,13 @@ public static class RotateJobPlanner
 
             foreach (var archive in at)
             {
+                // Age already took it. Shifting or deleting it again would name a file this plan
+                // removed a few operations ago.
+                if (condemned.Contains(archive.Path))
+                {
+                    continue;
+                }
+
                 operations.Add(doomed
                     ? new PlannedOp
                     {
@@ -164,11 +184,8 @@ public static class RotateJobPlanner
             }
         }
 
-        // Step 3: the live log itself.
+        // Step 4: the live log itself.
         AddLiveRotation(job, live, ArchiveNaming.FirstRotation(job, live.Path, now), operations, verdict);
-
-        // Step 4: age-based disposal, on top of the count.
-        AddMaxAgeDeletions(job, generation.Archives, operations, now);
     }
 
     /// <summary>
@@ -374,39 +391,64 @@ public static class RotateJobPlanner
         }
     }
 
-    private static void AddMaxAgeDeletions(
+    /// <summary>
+    /// Condemns every archive past <c>maxage</c>, and reports which.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// This ran last, after the shift had already been queued, and condemned
+    /// <c>archive.Path</c> - the name the file had <b>before</b> the shift. A plan is a list
+    /// executed in order, so by the time the deletion was reached the shift had moved a different
+    /// file under that name. With <c>rotate = 10</c>, <c>maxage = 30</c>, yesterday's
+    /// <c>app.log.1.gz</c> and a 45-day-old <c>app.log.2.gz</c>, the plan renamed the old one to
+    /// <c>.3.gz</c>, renamed yesterday's to <c>.2.gz</c>, and then deleted <c>.2.gz</c> - taking
+    /// yesterday's archive and reporting, in the journal and in the envelope, that it had removed
+    /// a file from a month ago. The one thing this reason string exists to say was the one thing
+    /// it got wrong.
+    /// </para>
+    /// <para>
+    /// Deciding first, against the names on disk, is what makes the sentence true. The shift then
+    /// sees a gap, which it already treats as ordinary - <c>LogSeries</c> probes the whole window
+    /// because "a gap in the chain is ordinary - somebody deleted one".
+    /// </para>
+    /// <para>
+    /// Where both rules condemn one file, age is now the reason recorded rather than the count.
+    /// That is the deliberate consequence of deciding first: age is the rule evaluated against the
+    /// name the file actually has, and the count is a statement about a position the file has not
+    /// reached yet.
+    /// </para>
+    /// </remarks>
+    /// <returns>The paths condemned, so no later pass acts on a file this one removed.</returns>
+    private static HashSet<string> AddMaxAgeDeletions(
         EffectiveJob job, IReadOnlyList<ArchiveFile> archives,
         List<PlannedOp> operations, DateTimeOffset now)
     {
+        var condemned = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+
         if (job.MaxAge is not { } maxAge)
         {
-            return;
+            return condemned;
         }
 
         var cutoff = now.AddDays(-maxAge);
-        var already = operations
-            .Where(o => o.Action == PlannedAction.Delete)
-            .Select(o => o.Source)
-            .ToHashSet(StringComparer.OrdinalIgnoreCase);
 
         foreach (var archive in archives)
         {
-            if (already.Contains(archive.Path))
+            var age = archive.Stamp ?? archive.LastWriteUtc;
+            if (age >= cutoff || !condemned.Add(archive.Path))
             {
                 continue;
             }
 
-            var age = archive.Stamp ?? archive.LastWriteUtc;
-            if (age < cutoff)
+            operations.Add(new PlannedOp
             {
-                operations.Add(new PlannedOp
-                {
-                    Action = PlannedAction.Delete,
-                    Source = archive.Path,
-                    Reason = $"maxage = {maxAge} days; this one is from {age:yyyy-MM-dd}",
-                    Bytes = archive.Length,
-                });
-            }
+                Action = PlannedAction.Delete,
+                Source = archive.Path,
+                Reason = $"maxage = {maxAge} days; this one is from {age:yyyy-MM-dd}",
+                Bytes = archive.Length,
+            });
         }
+
+        return condemned;
     }
 }

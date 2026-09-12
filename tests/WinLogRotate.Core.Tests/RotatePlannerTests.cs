@@ -301,16 +301,72 @@ public class RotatePlannerTests
 
     // ---- other directives ----------------------------------------------------------------
 
+    /// <summary>
+    /// maxage deletes the file it names.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// The age pass ran last, after the shift was already queued, and condemned the name the file
+    /// had before the shift. Operations execute in list order, so the plan renamed the 45-day-old
+    /// <c>app.log.2.gz</c> up to <c>.3.gz</c>, renamed yesterday's <c>app.log.1.gz</c> down into
+    /// <c>.2.gz</c>, and then deleted <c>.2.gz</c> - destroying yesterday's archive while telling
+    /// the operator, in the journal and in the envelope, that it had removed a file from a month
+    /// ago. The month-old one survived.
+    /// </para>
+    /// <para>
+    /// The subject of the delete operation is <c>app.log.2.gz</c> either way, which is exactly why
+    /// the old assertion - the reason string alone - could not fail. What discriminates is the
+    /// <b>order</b>, and the only way to see order is to ask which file is left.
+    /// </para>
+    /// </remarks>
     [Fact]
     public void MaxAgeDeletesOldArchivesOnTopOfTheCount()
     {
-        var plan = PlanFor(Job(rotate: 10, maxAge: 30), F("app.log"),
-            F("app.log.1.gz", 1), F("app.log.2.gz", 45));
+        var files = new FakeFiles(@"C:\logs\app.log")
+            .Add(@"C:\logs\app.log.1.gz", Now.AddDays(-1))
+            .Add(@"C:\logs\app.log.2.gz", Now.AddDays(-45));
 
-        plan.Operations
-            .Where(o => o.Action == PlannedAction.Delete)
-            .ShouldHaveSingleItem()
-            .Reason.ShouldContain("maxage = 30");
+        var job = Job(rotate: 10, maxAge: 30);
+        var plan = PlanOver(job, files);
+
+        var deleted = plan.Operations.Where(o => o.Action == PlannedAction.Delete).ShouldHaveSingleItem();
+        deleted.Reason.ShouldContain("maxage = 30");
+
+        var after = Outcome.Of(plan, files);
+
+        // The old archive is gone and yesterday's is not. Under the defect this was the other way
+        // round, with the same operation subject and the same reason string.
+        after.Lost("app.log.2.gz").ShouldBeTrue("the 45-day-old archive is the one maxage condemned");
+        after.Became("app.log.1.gz").ShouldBe(["app.log.2.gz"]);
+
+        after.Missing.ShouldBeEmpty();
+    }
+
+    /// <summary>
+    /// A file both rules condemn is deleted once, and says which rule took it.
+    /// </summary>
+    /// <remarks>
+    /// The age pass used to dedupe against deletions already in the list, which worked only
+    /// because it ran last. Deciding first empties that set, so the protection now runs the other
+    /// way and the count pass skips what age has taken. Without it one file gets two delete
+    /// operations, the second of which names a path that is no longer there.
+    /// </remarks>
+    [Fact]
+    public void AFileBothRulesCondemnIsDeletedOnce()
+    {
+        var files = new FakeFiles(@"C:\logs\app.log")
+            .Add(@"C:\logs\app.log.1.gz", Now.AddDays(-1))
+            .Add(@"C:\logs\app.log.2.gz", Now.AddDays(-2))
+            .Add(@"C:\logs\app.log.3.gz", Now.AddDays(-90));
+
+        var job = Job(rotate: 3, maxAge: 30);
+        var plan = PlanOver(job, files);
+
+        var deleted = plan.Operations.Where(o => o.Action == PlannedAction.Delete).ShouldHaveSingleItem();
+        WinPath.FileName(deleted.Source).ShouldBe("app.log.3.gz");
+        deleted.Reason.ShouldContain("maxage", Case.Insensitive);
+
+        Outcome.Of(plan, files).Missing.ShouldBeEmpty();
     }
 
     [Fact]
