@@ -874,6 +874,177 @@ public partial class ArchitectureTests
             + "document a withdrawal, or withdraw a documented row");
     }
 
+    [GeneratedRegex(@"new\s+CliDiagnostic\s*\{|new\(\)\s*\{", RegexOptions.Compiled)]
+    private static partial Regex DiagnosticInitialiser();
+
+    [GeneratedRegex(@"Severity\s*=\s*Severity\.(\w+)", RegexOptions.Compiled)]
+    private static partial Regex SeverityAssignment();
+
+    [GeneratedRegex(@"Code\s*=\s*DiagnosticCode\.(\w+)", RegexOptions.Compiled)]
+    private static partial Regex CodeAssignment();
+
+    [GeneratedRegex(@"DiagnosticCode\.(\w+)", RegexOptions.Compiled)]
+    private static partial Regex CodeMention();
+
+    /// <summary>
+    /// A code raised from exactly one place is documented at the severity that place raises it.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// The Type column had never been checked against anything, and the existing table test says
+    /// out loud that it deliberately does not - because <c>LR3003</c> is legitimately Error,
+    /// Warning and Info depending on circumstance, and asserting on it would fail on documented,
+    /// intentional behaviour. True of <c>LR3003</c>, and used as a reason to check none of them.
+    /// Two rows were wrong: 121 said Warning and is raised as an Error, and 124 said Warning and
+    /// is raised as an Info - the severity at which <c>RotationRunner.Report</c> would have
+    /// counted a healthy first run's baseline among a run's failures.
+    /// </para>
+    /// <para>
+    /// <b>The scan validates its own coverage, which is the part that matters.</b> Diagnostics are
+    /// built two ways here: object initialisers, which this reads, and helpers like
+    /// <c>Diagnose.Failure</c> and <c>diagnostics.Warn</c>, which it cannot. So for each code it
+    /// counts every mention of <c>DiagnosticCode.X</c> in <c>src</c> and compares that with the
+    /// number of initialisers it actually parsed. Equal means it saw every emitter and may speak;
+    /// unequal means a helper is in play and it says nothing. Without that check
+    /// <c>LR9005</c> would be judged on one of its two emitters and reported as a mismatch it is
+    /// not.
+    /// </para>
+    /// <para>
+    /// <c>Severity.Critical</c> maps to an Error row, because the registered
+    /// <c>TypesSupported</c> is 7 and there is no fourth event type - the same reason the document
+    /// gives.
+    /// </para>
+    /// </remarks>
+    [Fact]
+    public void ASingleEmitterCodeIsDocumentedAtItsOwnSeverity()
+    {
+        var root = RepoRoot.Find().FullName;
+
+        var sources = Directory
+            .EnumerateFiles(Path.Combine(root, "src"), "*.cs", SearchOption.AllDirectories)
+            .Where(f => !f.Contains(Path.Combine("obj", ""), StringComparison.Ordinal))
+            .ToArray();
+
+        // The two files that name every code without raising any of them: one declares them, the
+        // other maps them to event IDs. Counting their mentions as emitters would put every code
+        // permanently out of the scan's reach.
+        var declarations = new[] { "DiagnosticCode.cs", "EventIds.cs" };
+
+        var emitted = new Dictionary<string, List<Severity>>(StringComparer.Ordinal);
+        var mentions = new Dictionary<string, int>(StringComparer.Ordinal);
+
+        foreach (var file in sources)
+        {
+            var text = File.ReadAllText(file);
+
+            if (!declarations.Contains(Path.GetFileName(file), StringComparer.Ordinal))
+            {
+                foreach (Match m in CodeMention().Matches(text))
+                {
+                    mentions[m.Groups[1].Value] = mentions.GetValueOrDefault(m.Groups[1].Value) + 1;
+                }
+            }
+
+            foreach (Match start in DiagnosticInitialiser().Matches(text))
+            {
+                var block = Braced(text, start.Index + start.Length - 1);
+                var severity = SeverityAssignment().Match(block);
+                var code = CodeAssignment().Match(block);
+
+                if (severity.Success && code.Success)
+                {
+                    (emitted.TryGetValue(code.Groups[1].Value, out var list)
+                        ? list
+                        : emitted[code.Groups[1].Value] = []).Add(
+                            Enum.Parse<Severity>(severity.Groups[1].Value));
+                }
+            }
+        }
+
+        emitted.Count.ShouldBeGreaterThan(20, "the initialisers should have been found and parsed");
+
+        var codes = typeof(DiagnosticCode)
+            .GetFields(BindingFlags.Public | BindingFlags.Static)
+            .Where(f => f.IsLiteral && f.FieldType == typeof(string))
+            .Select(f => (f.Name, Code: (string)f.GetRawConstantValue()!))
+            .ToArray();
+
+        var documented = DocumentedTypes(Path.Combine(root, "docs", "diagnostics.md"));
+        documented.Count.ShouldBeGreaterThan(25, "the Type column should have been read");
+
+        var judged = new List<string>();
+        var wrong = new List<string>();
+
+        foreach (var (name, code) in codes)
+        {
+            // Every emitter accounted for, or this code is none of the scan's business.
+            if (!emitted.TryGetValue(name, out var raised) || raised.Count != mentions.GetValueOrDefault(name))
+            {
+                continue;
+            }
+
+            var types = raised.Select(EventType).Distinct().ToArray();
+
+            if (types.Length != 1 || !documented.TryGetValue(code, out var row))
+            {
+                continue;
+            }
+
+            judged.Add(code);
+
+            if (!row.Type.Equals(types[0], StringComparison.OrdinalIgnoreCase))
+            {
+                wrong.Add($"{code} ({row.Id}) is documented {row.Type} and raised {types[0]}");
+            }
+        }
+
+        // Tracks a quantity that moves. A scan that stopped parsing, or a completeness check that
+        // silently excluded everything, would judge nothing and agree with itself.
+        judged.Count.ShouldBeGreaterThan(12, "too few codes were judged for this to mean anything");
+
+        wrong.ShouldBeEmpty("docs/diagnostics.md names a Type the code does not raise");
+    }
+
+    /// <summary>Critical is written as an Error event: TypesSupported is 7 and there is no fourth.</summary>
+    private static string EventType(Severity severity) => severity switch
+    {
+        Severity.Info => "Info",
+        Severity.Warning => "Warning",
+        _ => "Error",
+    };
+
+    /// <summary>The text of one brace-balanced block, starting at its opening brace.</summary>
+    private static string Braced(string text, int open)
+    {
+        var depth = 0;
+
+        for (var i = open; i < text.Length; i++)
+        {
+            if (text[i] == '{')
+            {
+                depth++;
+            }
+            else if (text[i] == '}' && --depth == 0)
+            {
+                return text[open..(i + 1)];
+            }
+        }
+
+        return text[open..];
+    }
+
+    private static Dictionary<string, (int Id, string Type)> DocumentedTypes(string doc) =>
+        File.ReadAllLines(doc)
+            .Select(line => DocumentedType().Match(line))
+            .Where(m => m.Success)
+            .ToDictionary(
+                m => m.Groups[3].Value,
+                m => (int.Parse(m.Groups[1].Value, CultureInfo.InvariantCulture), m.Groups[2].Value),
+                StringComparer.Ordinal);
+
+    [GeneratedRegex(@"^\|\s*(\d+)\s*\|\s*([^|]*?)\s*\|[^|]*\|\s*`(LR\d{4})`\s*\|", RegexOptions.Compiled)]
+    private static partial Regex DocumentedType();
+
     /// <summary>
     /// Every event ID this product declares is named by code that can emit it.
     /// </summary>

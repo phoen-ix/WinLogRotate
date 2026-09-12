@@ -164,7 +164,15 @@ public sealed class RotationRunnerTests : IDisposable
         plan.Operations.ShouldHaveSingleItem().Action.ShouldBe(PlannedAction.Skip);
         plan.Operations[0].Reason.ShouldContain("first time");
 
-        reported.ShouldHaveSingleItem().Code.ShouldBe(DiagnosticCode.FirstRunBaseline);
+        var baseline = reported.ShouldHaveSingleItem();
+        baseline.Code.ShouldBe(DiagnosticCode.FirstRunBaseline);
+
+        // Info, and asserted rather than assumed. At Warning or above Report puts it in `errors`,
+        // which RunCommand publishes as the --json errors array, and a healthy first run then
+        // reports a failure it did not have - which it once did. docs/diagnostics.md said Warning
+        // for as long as the row existed; the document was wrong, and nothing here contradicted
+        // it.
+        baseline.Severity.ShouldBe(Severity.Info);
 
         // And the clock is started, so tomorrow it is due like anything else.
         state.Get(@"C:\logs\app.log").ShouldNotBeNull().LastRotated.ShouldBe(Now);
@@ -587,7 +595,7 @@ public sealed class RotationRunnerTests : IDisposable
             [Live()],
             new RunOptions(), Now, reported.Add);
 
-        reported.ShouldContain(d => d.Code == DiagnosticCode.NotDueYet);
+        reported.ShouldContain(d => d.Code == DiagnosticCode.NotDueYet && d.Severity == Severity.Info);
     }
 
     /// <summary>

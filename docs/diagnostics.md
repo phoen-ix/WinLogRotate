@@ -67,7 +67,20 @@ See [notifications](notifications.md) for how to configure it.
 The **Type** column is the type these events normally carry. It is derived from the severity of
 the diagnostic at the time, and a few codes legitimately appear at more than one - a refused path
 is an Error from the configuration validator and from the runtime guard, but an override of the
-same guard is a Warning. The **ID** never varies, which is what an alert rule should match on.
+same guard is a Warning. `LR3003` is the one written as *varies*, because its three types mean
+three genuinely different things; the others are listed at the type they normally carry. The
+**ID** never varies, which is what an alert rule should match on.
+
+Where a code has exactly one emitter, a unit test now reads the severity out of the source and
+fails if this column disagrees. It found two rows that had been wrong since they were written:
+121 said Warning and is an Error, and 124 said Warning and is an Info - which matters, because at
+Warning a first-run baseline would be counted among the failures of a run that had not failed.
+
+`Severity.Info` is **not** mirrored to the Application log: the sink takes Warning and above, on
+the grounds that a system log is not where progress belongs. So 122, 123 and 124 will not appear
+in Event Viewer however the job is configured. They are in this table because the ID is also what
+the journal and the `--json` envelope carry, and because an ID an alert rule can look up should
+mean the same thing wherever it is read.
 
 | ID | Type | Condition | Code |
 |---:|---|---|---|
@@ -78,10 +91,10 @@ same guard is a Warning. The **ID** never varies, which is what an alert rule sh
 | 115 | Error | The verb needs a platform this is not | `LR1005` |
 | 116 | Error | The invocation ended unexpectedly; what was done is unknown | `LR1006` |
 | 120 | Warning | A job was skipped | `LR2001` |
-| 121 | Warning | A log file was missing | `LR2002` |
+| 121 | Error | A job matched no files and did not say `missingok` | `LR2002` |
 | 122 | Info | A log was due but held back by `notifempty` | `LR2003` |
 | 123 | Info | A log was due but held back by `minsize` or `minage` | `LR2004` |
-| 124 | Warning | First run: a baseline was recorded | `LR2005` |
+| 124 | Info | First run: a baseline was recorded | `LR2005` |
 | 130 | Error | A rotation failed | `LR3001` |
 | 131 | Error | The file was locked by another process | `LR3002` |
 | 132 | *varies* | The configured lock strategy was unavailable | `LR3003` |
