@@ -191,4 +191,21 @@ public static class DiagnosticCode
     /// repaired. Never silent: a repair nobody is told about is indistinguishable from a
     /// problem that never existed.</summary>
     public const string SecretStoreUnreadable = "LR9007";
+
+    /// <summary>
+    /// The secret store could not be written, so nothing was stored.
+    /// </summary>
+    /// <remarks>
+    /// Deliberately not <see cref="InternalError"/>, which this was by default because nothing
+    /// caught it: a full disk or a locked file is not "a defect in the product", and telling an
+    /// operator that nothing about what was done can be relied on is wrong twice over here -
+    /// <c>AtomicJson</c> writes a temporary sibling and moves it, so a failure leaves the previous
+    /// contents exactly as they were and nothing is half written.
+    /// <para>
+    /// Distinct from <see cref="SecretStoreUnreadable"/>, which is about integrity - a store that
+    /// cannot be decrypted, or a key that was repaired. Those go to different people: one is a
+    /// disk, the other is a machine that may have been tampered with.
+    /// </para>
+    /// </remarks>
+    public const string SecretStoreUnwritable = "LR9008";
 }

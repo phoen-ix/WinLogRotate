@@ -109,6 +109,7 @@ public static class EventIds
         DiagnosticCode.SecretMissing => 194,
         DiagnosticCode.SecretInPlainConfig => 195,
         DiagnosticCode.SecretStoreUnreadable => 196,
+        DiagnosticCode.SecretStoreUnwritable => 197,
 
         _ => Unclassified,
     };

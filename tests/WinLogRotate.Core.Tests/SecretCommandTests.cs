@@ -238,6 +238,35 @@ public sealed class SecretCommandTests : IDisposable
         _sink.Diagnostics.ShouldContain(d => d.Remedy != null && d.Remedy.Contains("@secret:"));
     }
 
+    /// <summary>
+    /// A store that cannot be written is a failure to store, not a defect in the product.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// Four call sites saved with nothing around them, so a full disk or a locked file reached
+    /// <c>CommandContext.Guarded</c> and came out as <c>LR1006</c> - "a defect in the product,
+    /// not a problem with the machine", above a remedy saying nothing about what was done can be
+    /// relied on. Wrong twice over: <c>AtomicJson</c> writes a temporary sibling and moves it, so
+    /// a failure leaves the previous contents exactly as they were and nothing is half written.
+    /// </para>
+    /// <para>
+    /// Obstructed the way this file already obstructs a configuration save - a directory where
+    /// the temporary sibling wants to go - which fails the same way on both legs.
+    /// </para>
+    /// </remarks>
+    [Fact]
+    public void AStoreThatCannotBeWrittenIsAFailureToStore()
+    {
+        File.WriteAllText(ConfigPath, PlaintextConfig);
+        Directory.CreateDirectory(StorePath + ".tmp");
+
+        SetForProvider(new FakePlatform(), "email.relay", "password").ShouldBe(ExitCode.Errors);
+
+        _sink.Diagnostics.ShouldContain(d => d.Code == DiagnosticCode.SecretStoreUnwritable);
+
+        File.Exists(StorePath).ShouldBeFalse("nothing was stored, which is what the remedy says");
+    }
+
     [Fact]
     public void SetSecretRefusesAProviderThatIsNotThere()
     {

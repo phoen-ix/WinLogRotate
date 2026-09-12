@@ -83,10 +83,10 @@ internal static class SecretCommand
             return unusable;
         }
 
-        var owner = paths.Scope == InstallScope.PerUser ? platform.CurrentUserSid : null;
-
-        store.Set(name, value, WhoAmI(), TimeProvider.System)
-             .Save(TimeProvider.System, harden: temp => platform.Harden(temp, owner));
+        if (!Stored(ctx, store.Set(name, value, WhoAmI(), TimeProvider.System), paths, platform))
+        {
+            return ctx.Output.Complete<SecretResult>("secret set", ExitCode.Errors, null);
+        }
 
         Journal(paths, name, "set");
 
@@ -233,10 +233,10 @@ internal static class SecretCommand
             return unusable;
         }
 
-        var owner = paths.Scope == InstallScope.PerUser ? platform.CurrentUserSid : null;
-
-        store.Set(name, value, WhoAmI(), TimeProvider.System)
-             .Save(TimeProvider.System, harden: temp => platform.Harden(temp, owner));
+        if (!Stored(ctx, store.Set(name, value, WhoAmI(), TimeProvider.System), paths, platform))
+        {
+            return ctx.Output.Complete<SecretResult>(Verb, ExitCode.Errors, null);
+        }
 
         Journal(paths, name, "set");
 
@@ -325,6 +325,42 @@ internal static class SecretCommand
             Path = paths.SecretsFile,
             Names = [name],
         });
+    }
+
+    /// <summary>
+    /// Writes the store, or says why it could not be. True when it was written.
+    /// </summary>
+    /// <remarks>
+    /// Four call sites saved with nothing around them, so a full disk or a locked file reached
+    /// CommandContext.Guarded and came out as LR1006: "a defect in the product, not a problem
+    /// with the machine", above a remedy saying nothing about what was done can be relied on.
+    /// Wrong twice - AtomicJson writes a temporary sibling and moves it, so a failure leaves the
+    /// previous contents exactly as they were.
+    /// </remarks>
+    private static bool Stored(
+        CommandContext ctx, SecretStore store, InstallPaths paths, ISecretPlatform platform)
+    {
+        var owner = paths.Scope == InstallScope.PerUser ? platform.CurrentUserSid : null;
+
+        try
+        {
+            store.Save(TimeProvider.System, harden: temp => platform.Harden(temp, owner));
+            return true;
+        }
+        catch (Exception e) when (e is IOException or UnauthorizedAccessException)
+        {
+            ctx.Output.Diagnostic(new CliDiagnostic
+            {
+                Severity = Severity.Error,
+                Code = DiagnosticCode.SecretStoreUnwritable,
+                Message = $"The secret store could not be written: {e.Message}",
+                Path = paths.SecretsFile,
+                Remedy = "Nothing was stored, and what was there is unchanged. "
+                       + "Check free space and the permissions on that file.",
+            });
+
+            return false;
+        }
     }
 
     /// <summary>One diagnostic and an error exit, which this verb does in eight places.</summary>
@@ -436,8 +472,10 @@ internal static class SecretCommand
             return ctx.Output.Complete<SecretResult>("secret remove", ExitCode.Errors, null);
         }
 
-        var owner = paths.Scope == InstallScope.PerUser ? platform.CurrentUserSid : null;
-        store.Remove(name).Save(TimeProvider.System, harden: temp => platform.Harden(temp, owner));
+        if (!Stored(ctx, store.Remove(name), paths, platform))
+        {
+            return ctx.Output.Complete<SecretResult>("secret remove", ExitCode.Errors, null);
+        }
 
         Journal(paths, name, "remove");
         ctx.Output.Line($"Removed '{name}'.");
@@ -576,8 +614,10 @@ internal static class SecretCommand
             names.Add(name);
         }
 
-        var owner = paths.Scope == InstallScope.PerUser ? platform.CurrentUserSid : null;
-        store.Save(TimeProvider.System, harden: temp => platform.Harden(temp, owner));
+        if (!Stored(ctx, store, paths, platform))
+        {
+            return ctx.Output.Complete<SecretResult>("secret import", ExitCode.Errors, null);
+        }
 
         foreach (var name in names)
         {
