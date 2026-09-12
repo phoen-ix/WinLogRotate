@@ -294,6 +294,12 @@ public sealed class ConfDirHardeningTests : IDisposable
         var paths = new InstallPaths { Scope = InstallScope.Portable, Root = _root.FullName };
         Directory.CreateDirectory(paths.ConfigDirectory);
 
+        // Hardened first, and that is the whole point of the fixture: the state this test starts
+        // from is the state the old repair left behind and reported as correct. A bare temp
+        // subdirectory is writable by the account that made it, so without this the premise
+        // below is false and the test proves nothing about files.
+        Harden(new DirectoryInfo(paths.ConfigDirectory));
+
         var path = Path.Combine(paths.ConfigDirectory, "app.toml");
         File.WriteAllText(path, "name = \"app\"\n");
 
