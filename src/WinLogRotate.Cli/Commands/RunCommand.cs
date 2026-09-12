@@ -239,6 +239,24 @@ internal static class RunCommand
 
         var report = runner.Run(config, options with { Started = started });
 
+        // Read before Complete, while the writer is still alive. A disk that filled mid-rotation
+        // used to throw out of Write - between two halves of a rotation - and reach
+        // CommandContext.Guarded as LR1006, reporting a run that was half done as a defect in the
+        // product. It is latched now, so this is the one place it is said.
+        if (durable is JournalWriter { Fault: { } fault })
+        {
+            ctx.Output.Diagnostic(new CliDiagnostic
+            {
+                Severity = Severity.Warning,
+                Code = DiagnosticCode.JournalUnavailable,
+                Message = $"The journal stopped accepting entries partway through: {fault.Message}",
+                Path = paths.JournalDirectory,
+                Job = JournalMaintenance.JobName,
+                Remedy = "The rotation went ahead. This run's record is incomplete; "
+                       + "check free space on that directory.",
+            });
+        }
+
         // The per-operation report used to be hand-printed here, from report.Plans, in a format
         // of its own - a second renderer for facts the sinks already had, reaching only the
         // channel --json throws away. The sinks render it now, from the events the tee carries,

@@ -25,6 +25,7 @@ public sealed class JournalWriter : IJournal
     private readonly StreamWriter _writer;
     private readonly TimeProvider _clock;
     private readonly Lock _gate = new();
+    private Exception? _fault;
 
     public string RunId { get; }
 
@@ -78,6 +79,33 @@ public sealed class JournalWriter : IJournal
         return new JournalWriter(writer, path, runId ?? Journaling.RunId.New(clock), clock);
     }
 
+    /// <summary>
+    /// The first failure to write, if there was one. Latched, so the rest of the run is quiet.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// <c>Write</c> flushes every line, so a disk that fills mid-rotation throws on the very next
+    /// entry - and unguarded that exception came out through <c>CommandContext.Guarded</c> as
+    /// <c>LR1006</c>, <i>between</i> two halves of a rotation, with the run reported as a defect
+    /// in the product. A rotation must not stop because its diary is full.
+    /// </para>
+    /// <para>
+    /// Latched rather than reported per line, because the same disk fails every line: a run of
+    /// forty jobs would otherwise report the same condition a few hundred times, which is how an
+    /// administrator learns to filter this source out.
+    /// </para>
+    /// </remarks>
+    public Exception? Fault
+    {
+        get
+        {
+            lock (_gate)
+            {
+                return _fault;
+            }
+        }
+    }
+
     public void Write(CliEvent entry)
     {
         var stamped = entry with
@@ -96,14 +124,41 @@ public sealed class JournalWriter : IJournal
 
         lock (_gate)
         {
-            _writer.WriteLine(line);
-            _writer.Flush();
+            if (_fault is not null)
+            {
+                return;
+            }
+
+            try
+            {
+                _writer.WriteLine(line);
+                _writer.Flush();
+            }
+            catch (Exception e) when (e is IOException or ObjectDisposedException)
+            {
+                _fault = e;
+            }
         }
     }
 
     public void Dispose()
     {
-        _writer.Flush();
-        _writer.Dispose();
+        lock (_gate)
+        {
+            try
+            {
+                _writer.Flush();
+            }
+            catch (Exception e) when (e is IOException or ObjectDisposedException)
+            {
+                // Swallowed, and only here. Dispose runs after the verb has decided its exit code
+                // and written its envelope, so throwing turns a run that succeeded into exit 4
+                // from CommandContext.Guarded - reporting a defect in the product about work that
+                // was already finished and already reported.
+                _fault ??= e;
+            }
+
+            _writer.Dispose();
+        }
     }
 }

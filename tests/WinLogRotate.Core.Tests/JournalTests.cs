@@ -37,6 +37,60 @@ public sealed class JournalTests : IDisposable
         Reason = reason,
     };
 
+    /// <summary>
+    /// A journal that stops accepting entries does not take the run with it.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// <c>Write</c> flushes every line, so a disk that fills mid-rotation throws on the very next
+    /// entry - and unguarded that exception left the writer, left the runner, and reached
+    /// <c>CommandContext.Guarded</c> as <c>LR1006</c> <i>between two halves of a rotation</i>:
+    /// the run reported as a defect in the product, having renamed a log and not yet recreated
+    /// it. A rotation must not stop because its diary is full.
+    /// </para>
+    /// <para>
+    /// Simulated by disposing the writer underneath itself, which is the one way to make a real
+    /// <c>StreamWriter</c> refuse from a test without a full disk. What matters is that the
+    /// throw is caught, latched and answerable afterwards, not which exception it was.
+    /// </para>
+    /// </remarks>
+    [Fact]
+    public void AJournalThatStopsAcceptingEntriesDoesNotStopTheRun()
+    {
+        var writer = JournalWriter.Open(_dir.FullName, _clock);
+
+        writer.Write(Deletion(@"C:\logs\a.log.gz", "before"));
+        writer.Fault.ShouldBeNull("a healthy journal has nothing to report");
+
+        writer.Dispose();
+
+        Should.NotThrow(() => writer.Write(Deletion(@"C:\logs\b.log.gz", "after")));
+
+        writer.Fault.ShouldNotBeNull("the failure is remembered, so the run can report it once");
+
+        // Latched: the same disk fails every line, and a run of forty jobs reporting the same
+        // condition a few hundred times is how an administrator learns to filter this source out.
+        var first = writer.Fault;
+        Should.NotThrow(() => writer.Write(Deletion(@"C:\logs\c.log.gz", "again")));
+        writer.Fault.ShouldBeSameAs(first);
+    }
+
+    /// <summary>Disposing twice does not throw, which is when it would do the most damage.</summary>
+    /// <remarks>
+    /// Dispose runs after the verb has decided its exit code and written its envelope, so a throw
+    /// here turns a run that succeeded into exit 4 from the guard - a defect reported about work
+    /// that was finished and already accounted for.
+    /// </remarks>
+    [Fact]
+    public void DisposingAJournalTwiceIsQuiet()
+    {
+        var writer = JournalWriter.Open(_dir.FullName, _clock);
+        writer.Write(Deletion(@"C:\logs\a.log.gz", "reason"));
+
+        writer.Dispose();
+        Should.NotThrow(writer.Dispose);
+    }
+
     [Fact]
     public void EntriesRoundTrip()
     {
