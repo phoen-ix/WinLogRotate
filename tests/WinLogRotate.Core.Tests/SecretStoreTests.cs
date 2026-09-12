@@ -283,19 +283,48 @@ public sealed class SecretStoreTests : IDisposable
         File.Exists(Path + ".tmp").ShouldBeFalse();
     }
 
+    /// <summary>
+    /// The file is hardened before any ciphertext is in it.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// A file created in the configuration directory inherits that directory's "every local user
+    /// may read" entry, so the permissions have to be set before the secret is in the file - not
+    /// merely before it takes its real name.
+    /// </para>
+    /// <para>
+    /// This test used to assert that the path handed to <c>harden</c> ended in <c>.tmp</c>, which
+    /// is satisfied just as well by writing the whole store and hardening afterwards - which is
+    /// what the code did. A complete, readable copy of the secret store sat on disk under a
+    /// predictable name until the next call returned.
+    /// </para>
+    /// <para>
+    /// So the assertion is made from inside the callback, at the only moment that settles it:
+    /// what is in the file when the hardening runs. Hardening cannot be done while the write
+    /// handle is held - the descriptor is set through a second open and <c>FileShare.None</c>
+    /// denies it - so the file is created empty, hardened, and then written.
+    /// </para>
+    /// </remarks>
     [Fact]
-    public void TheHardeningIsAppliedBeforeTheFileTakesItsRealName()
+    public void TheFileIsHardenedBeforeAnyCiphertextIsInIt()
     {
-        // Order matters: a file created in the configuration directory inherits that
-        // directory's "every local user may read" ACE, so permissions have to be set while it
-        // is still the temporary file.
         string? hardened = null;
-        Load().Set("k", SecretString.From("x"), null, _clock)
-              .Save(_clock, harden: p => hardened = p);
+        long? bytesAtHardening = null;
 
-        hardened.ShouldNotBeNull();
-        hardened.ShouldEndWith(".tmp");
+        Load().Set("k", SecretString.From("x"), null, _clock)
+              .Save(_clock, harden: p =>
+              {
+                  hardened = p;
+                  bytesAtHardening = new FileInfo(p).Length;
+              });
+
+        hardened.ShouldNotBeNull().ShouldEndWith(".tmp");
+
+        bytesAtHardening.ShouldBe(0,
+            "the permissions are set before the secret is written, not after");
+
         File.Exists(Path).ShouldBeTrue();
+        new FileInfo(Path).Length.ShouldBeGreaterThan(0, "and the store really was written");
     }
 
     [Fact]

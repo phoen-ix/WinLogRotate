@@ -35,12 +35,19 @@ public static class AtomicJson
 
         var temp = path + ".tmp";
 
-        using (var stream = new FileStream(temp, FileMode.Create, FileAccess.Write, FileShare.None))
-        using (var writer = new StreamWriter(stream))
+        // Created empty, hardened, and only then written. The order is the whole point: this used
+        // to write the content, close the handle, and harden afterwards - so between those two
+        // steps a complete copy of the file sat on disk under a predictable name, carrying
+        // whatever the directory hands out, which for the configuration directory is read access
+        // for every local user. For the secret store that is the ciphertext.
+        //
+        // Hardening cannot be done while the handle is held: the descriptor is set through a
+        // second open, and FileShare.None - which is correct for the write - denies it. So the
+        // file is created and closed empty first. Anything that races into the gap finds nothing
+        // in it.
+        using (File.Create(temp))
         {
-            writer.Write(json);
-            writer.Flush();
-            stream.Flush(flushToDisk: true);
+            // Closed immediately. Nothing is written here.
         }
 
         try
@@ -51,6 +58,14 @@ public static class AtomicJson
         {
             TryDelete(temp);
             throw;
+        }
+
+        using (var stream = new FileStream(temp, FileMode.Create, FileAccess.Write, FileShare.None))
+        using (var writer = new StreamWriter(stream))
+        {
+            writer.Write(json);
+            writer.Flush();
+            stream.Flush(flushToDisk: true);
         }
 
         File.Move(temp, path, overwrite: true);
@@ -64,8 +79,12 @@ public static class AtomicJson
         }
         catch (IOException)
         {
-            // Best effort. The caller is already throwing, and the temporary file carries the
-            // same protection the real one would have had.
+            // Best effort, and now safe to be: this is only reached when hardening failed, so
+            // whatever is left behind is precisely the file that did NOT get the protection the
+            // real one would have had. It is empty, because the content is written afterwards -
+            // which is why the ordering above was changed. The previous excuse here, that the
+            // temporary file "carries the same protection the real one would have had", was
+            // false on the one path that reaches this.
         }
         catch (UnauthorizedAccessException)
         {
