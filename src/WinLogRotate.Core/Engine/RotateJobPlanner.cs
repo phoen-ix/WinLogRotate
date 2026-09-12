@@ -1,3 +1,4 @@
+using WinLogRotate.Contracts;
 using WinLogRotate.Core.Compression;
 using WinLogRotate.Core.Configuration;
 using WinLogRotate.Core.Globbing;
@@ -28,11 +29,18 @@ public sealed record LogGeneration
 /// </remarks>
 public static class RotateJobPlanner
 {
+    /// <param name="report">
+    /// Where the planner says something that is not an operation. It stays a pure function of its
+    /// inputs - it opens nothing and asks the file system nothing - but "this chain holds two
+    /// spellings of one generation" is not expressible as a <see cref="PlannedOp"/>, because both
+    /// files are acted on and neither is the subject.
+    /// </param>
     public static JobPlan Plan(
         EffectiveJob job,
         IReadOnlyList<LogGeneration> generations,
         IReadOnlyDictionary<string, DueVerdict> verdicts,
-        DateTimeOffset now)
+        DateTimeOffset now,
+        Action<CliDiagnostic>? report = null)
     {
         var operations = new List<PlannedOp>();
 
@@ -59,7 +67,7 @@ public static class RotateJobPlanner
             }
             else
             {
-                PlanNumbered(job, generation, operations, now, verdict);
+                PlanNumbered(job, generation, operations, now, verdict, report);
             }
         }
 
@@ -73,20 +81,18 @@ public static class RotateJobPlanner
 
     private static void PlanNumbered(
         EffectiveJob job, LogGeneration generation, List<PlannedOp> operations, DateTimeOffset now,
-        DueVerdict verdict)
+        DueVerdict verdict, Action<CliDiagnostic>? report)
     {
         var live = generation.Live;
-        var byIndex = generation.Archives
-            .Where(a => a.Index is not null)
-            .ToDictionary(a => a.Index!.Value, a => a);
+        var byIndex = ChainByIndex(job, generation, report);
 
         // Step 1: the generation delaycompress deferred last time. Compressing it now means the
         // shift below operates on a uniformly-named chain. This also covers the awkward case
         // where an operator turned delaycompress off and left one uncompressed file stranded
         // among compressed ones.
         if (job is { DelayCompress: true, CompressType: not CompressType.None }
-            && byIndex.TryGetValue(job.Start, out var deferred)
-            && !deferred.IsCompressed)
+            && byIndex.TryGetValue(job.Start, out var newest)
+            && newest.FirstOrDefault(a => !a.IsCompressed) is { } deferred)
         {
             operations.Add(new PlannedOp
             {
@@ -104,32 +110,38 @@ public static class RotateJobPlanner
 
         for (var index = highest; index >= job.Start; index--)
         {
-            if (!byIndex.TryGetValue(index, out var archive))
+            if (!byIndex.TryGetValue(index, out var at))
             {
                 continue;
             }
 
-            // Anything past the retention count falls off rather than shifting up.
-            if (job.Rotate >= 0 && index >= job.Rotate + job.Start - 1 && byIndex.Count >= job.Rotate)
-            {
-                operations.Add(new PlannedOp
-                {
-                    Action = PlannedAction.Delete,
-                    Source = archive.Path,
-                    Reason = $"rotate = {job.Rotate} keeps {job.Rotate} generation(s)",
-                    Bytes = archive.Length,
-                });
-                continue;
-            }
+            // Anything past the retention count falls off rather than shifting up. Where one index
+            // holds two spellings they go together, in both directions: the pair is one generation
+            // as far as retention is concerned, and splitting it would delete an archive on the
+            // strength of a guess about which of the two is redundant.
+            var doomed = job.Rotate >= 0
+                && index >= job.Rotate + job.Start - 1
+                && byIndex.Count >= job.Rotate;
 
-            operations.Add(new PlannedOp
+            foreach (var archive in at)
             {
-                Action = PlannedAction.Rename,
-                Source = archive.Path,
-                Destination = ArchiveNaming.Numbered(job, live.Path, index + 1, archive.IsCompressed),
-                Reason = $"shifting generation {index} to {index + 1}",
-                Bytes = archive.Length,
-            });
+                operations.Add(doomed
+                    ? new PlannedOp
+                    {
+                        Action = PlannedAction.Delete,
+                        Source = archive.Path,
+                        Reason = $"rotate = {job.Rotate} keeps {job.Rotate} generation(s)",
+                        Bytes = archive.Length,
+                    }
+                    : new PlannedOp
+                    {
+                        Action = PlannedAction.Rename,
+                        Source = archive.Path,
+                        Destination = ArchiveNaming.Numbered(job, live.Path, index + 1, archive.IsCompressed),
+                        Reason = $"shifting generation {index} to {index + 1}",
+                        Bytes = archive.Length,
+                    });
+            }
         }
 
         // Step 3: the live log itself.
@@ -137,6 +149,81 @@ public static class RotateJobPlanner
 
         // Step 4: age-based disposal, on top of the count.
         AddMaxAgeDeletions(job, generation.Archives, operations, now);
+    }
+
+    /// <summary>
+    /// The numbered chain grouped by index, in the order <see cref="FileSeries.Order"/> put it.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// A list per index rather than one file per index, because an index can legitimately hold
+    /// two files. <see cref="LogSeries"/> probes both spellings of every index on purpose, and
+    /// <see cref="FileSeries.Classify"/> strips the compression suffix before reading the index -
+    /// so <c>app.log.1</c> and <c>app.log.1.gz</c> both answer 1. Keying a dictionary on that
+    /// threw <see cref="ArgumentException"/>, which is in no catch filter anywhere: the run ended
+    /// at <c>ExitCode.InternalError</c> and abandoned every job after it.
+    /// </para>
+    /// <para>
+    /// It is not an exotic state. <c>RunCommand</c>'s own recovery path warns that a killed run
+    /// may have left "an uncompressed archive about" and says the planners are written to cope -
+    /// so the run that told the operator it had happened was the run that died on it.
+    /// </para>
+    /// <para>
+    /// Both files are kept and both shift, because neither can be shown to be the redundant one.
+    /// <see cref="Compressor.Compress"/> stamps the archive with the source's own modification
+    /// time, so a pair left by an interrupted compression is indistinguishable by date; and a pair
+    /// left by a <c>delaycompress</c> chain that failed to shift is two genuinely different
+    /// generations. Guessing wrong deletes an archive, so the pair travels up the chain together
+    /// and falls off the end together, and the operator is told it is there.
+    /// </para>
+    /// </remarks>
+    private static Dictionary<int, List<ArchiveFile>> ChainByIndex(
+        EffectiveJob job, LogGeneration generation, Action<CliDiagnostic>? report)
+    {
+        var byIndex = new Dictionary<int, List<ArchiveFile>>();
+
+        foreach (var archive in generation.Archives)
+        {
+            if (archive.Index is not { } index)
+            {
+                continue;
+            }
+
+            if (!byIndex.TryGetValue(index, out var at))
+            {
+                byIndex[index] = at = [];
+            }
+
+            at.Add(archive);
+        }
+
+        if (report is null)
+        {
+            return byIndex;
+        }
+
+        foreach (var (index, at) in byIndex.OrderBy(p => p.Key))
+        {
+            if (at.Count < 2)
+            {
+                continue;
+            }
+
+            report(new CliDiagnostic
+            {
+                Severity = Severity.Warning,
+                Code = DiagnosticCode.DuplicateGeneration,
+                Message = $"'{job.Name}' generation {index} is held by "
+                        + string.Join(" and ", at.Select(a => WinPath.FileName(a.Path)))
+                        + ".",
+                Remedy = "Both were kept and both shift together, because they cannot be told "
+                       + "apart from here - an interrupted compression leaves a copy with the same "
+                       + "timestamp as its archive, and so does a chain that failed to shift. "
+                       + "Compare the contents before removing either.",
+            });
+        }
+
+        return byIndex;
     }
 
     private static void PlanDateExt(

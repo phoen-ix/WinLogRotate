@@ -840,7 +840,7 @@ public sealed class RotationRunner(
             }
         }
 
-        var plan = RotateJobPlanner.Plan(job, LogSeries.Discover(job, consider, _archives), due, now);
+        var plan = RotateJobPlanner.Plan(job, LogSeries.Discover(job, consider, _archives), due, now, report);
 
         // Prepended rather than threaded through the planner, which stays pure and knows nothing
         // about the file system. A directory has to exist before anything is moved into it.

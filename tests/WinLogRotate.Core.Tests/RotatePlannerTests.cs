@@ -350,6 +350,73 @@ public class RotatePlannerTests
         after.Missing.ShouldBeEmpty();
         after.Clobbered.ShouldBeEmpty();
     }
+
+    /// <summary>
+    /// Two spellings of one generation are survivable, and both are kept.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// <c>LogSeries</c> probes both spellings of every index on purpose, and
+    /// <c>FileSeries.Classify</c> strips the compression suffix before reading the index, so
+    /// <c>app.log.1</c> and <c>app.log.1.gz</c> both answer 1. The planner keyed a dictionary on
+    /// that and <c>ToDictionary</c> threw <c>ArgumentException</c> - a type in no catch filter
+    /// anywhere, so the whole invocation ended at exit 4 and abandoned every job after it.
+    /// </para>
+    /// <para>
+    /// It arrives by ordinary means. <c>RunCommand</c>'s recovery path warns that a killed run may
+    /// have left "an uncompressed archive about" and assures the operator the planners cope; the
+    /// delaycompress chain produced the same pair every night on its own; and an operator who
+    /// gzips an archive by hand produces it in one command.
+    /// </para>
+    /// <para>
+    /// Driven from a directory rather than a handed-over archive list, because what is under test
+    /// is that discovery and the planner disagree about what an index is. Feeding the pair in by
+    /// hand would only show the planner is fragile.
+    /// </para>
+    /// </remarks>
+    [Fact]
+    public void BothSpellingsOfOneGenerationAreSurvivable()
+    {
+        var files = new FakeFiles(
+            @"C:\logs\app.log", @"C:\logs\app.log.1", @"C:\logs\app.log.1.gz");
+
+        var after = Should.NotThrow(() => After(Job(rotate: 3, compress: true), files));
+
+        // Neither is chosen against: they are one generation as far as retention is concerned, so
+        // they shift together and keep their own spellings.
+        after.Became("app.log.1").ShouldBe(["app.log.2"]);
+        after.Became("app.log.1.gz").ShouldBe(["app.log.2.gz"]);
+        after.Lost("app.log.1").ShouldBeFalse();
+        after.Lost("app.log.1.gz").ShouldBeFalse();
+    }
+
+    /// <summary>The operator is told, because the state is evidence something did not finish.</summary>
+    [Fact]
+    public void ADuplicatedGenerationIsReported()
+    {
+        var files = new FakeFiles(
+            @"C:\logs\app.log", @"C:\logs\app.log.1", @"C:\logs\app.log.1.gz");
+
+        var live = files.All.Single(f => WinPath.FileName(f.Path) == "app.log");
+        var verdicts = new Dictionary<string, DueVerdict>
+        {
+            [live.Path] = new() { Due = true, Reason = DueReason.Scheduled, Explanation = "due" },
+        };
+
+        var job = Job(rotate: 3, compress: true);
+        var said = new List<Contracts.CliDiagnostic>();
+
+        RotateJobPlanner.Plan(job, LogSeries.Discover(job, [live], files), verdicts, Now, said.Add);
+
+        var d = said.ShouldHaveSingleItem();
+        d.Code.ShouldBe(Contracts.DiagnosticCode.DuplicateGeneration);
+        d.Message.ShouldContain("app.log.1");
+        d.Message.ShouldContain("app.log.1.gz");
+
+        // It must not tell anyone to delete one of them - that is the judgement the planner
+        // declined to make, and the remedy is where it would leak back in.
+        d.Remedy.ShouldNotBeNull().ShouldNotContain("delete ", Case.Insensitive);
+    }
 }
 
 public class ArchiveNamingTests

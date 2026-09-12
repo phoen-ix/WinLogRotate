@@ -50,6 +50,26 @@ public static class DiagnosticCode
     /// </remarks>
     public const string HookFailed = "LR3103";
 
+    /// <summary>
+    /// One rotation index is held by two files - <c>app.log.1</c> beside <c>app.log.1.gz</c>.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// Both are kept and both shift. The planner will not choose between them, because neither
+    /// can be shown to be the redundant one: <c>Compressor</c> stamps an archive with its source's
+    /// own modification time, so a pair left by a compression that was interrupted between writing
+    /// the archive and deleting the original is indistinguishable by date - and a pair left by a
+    /// <c>delaycompress</c> chain that failed to shift is two genuinely different generations.
+    /// </para>
+    /// <para>
+    /// Warning rather than Error: the rotation completes and nothing is lost. It is worth a line
+    /// because the state is evidence that something earlier did not finish, and because a
+    /// directory quietly carrying two spellings of every generation is not what the operator
+    /// configured.
+    /// </para>
+    /// </remarks>
+    public const string DuplicateGeneration = "LR3104";
+
     // 4xxx - host / scheduling
     public const string NoRunHost = "LR4001";
     public const string HostDrift = "LR4002";
