@@ -29,6 +29,10 @@ public sealed class JobsPage : UserControl
         _configDir = configDir;
 
         _grid.Columns.Add("name", "Job");
+
+        // Between the name and the kind, because it changes what everything after it means: a
+        // disabled job's schedule and retention describe what would happen, not what will.
+        _grid.Columns.Add("state", "State");
         _grid.Columns.Add("kind", "Kind");
         _grid.Columns.Add("paths", "Paths");
         _grid.Columns.Add("policy", "Policy");
@@ -77,45 +81,31 @@ public sealed class JobsPage : UserControl
             return;
         }
 
-        try
+        var view = JobsProjection.From(result.StdOut);
+
+        foreach (var job in view.Rows)
         {
-            using var document = JsonDocument.Parse(result.StdOut);
-            var jobs = document.RootElement.GetProperty("result").GetProperty("jobs");
+            var row = _grid.Rows[_grid.Rows.Add(
+                job.Name, job.Enabled ? "on" : "disabled", job.Kind, job.Paths, job.Policy)];
 
-            foreach (var job in jobs.EnumerateArray())
+            if (!job.Enabled)
             {
-                var kind = job.GetProperty("kind").GetString() ?? "";
-                var policy = kind.Equals("Manage", StringComparison.OrdinalIgnoreCase)
-                    ? $"keep {job.GetProperty("rotate").GetInt32()}, never touch the newest {job.GetProperty("liveFiles").GetInt32()}"
-                    : $"{job.GetProperty("schedule").GetString()?.ToLowerInvariant()}, keep {job.GetProperty("rotate").GetInt32()}";
-
-                _grid.Rows.Add(
-                    job.GetProperty("name").GetString() ?? "",
-                    kind.ToLowerInvariant(),
-                    string.Join("; ", job.GetProperty("paths").EnumerateArray()
-                        .Select(p => p.GetString() ?? "")),
-                    policy);
+                // Greyed as well as labelled. A word in a column is easy to read past on a page
+                // whose whole purpose is answering "what runs tonight".
+                row.DefaultCellStyle.ForeColor = Theme.Current.Muted;
             }
-
-            _status.ForeColor = Theme.Current.Muted;
-            _status.Text = _grid.Rows.Count == 0
-                ? "No jobs configured yet."
-                : $"{_grid.Rows.Count} job(s).";
         }
-        catch (Exception e) when (e is JsonException or KeyNotFoundException or InvalidOperationException)
+
+        _status.Text = view.Summary;
+        _status.ForeColor = view.Unreadable ? Theme.Current.Danger : Theme.Current.Muted;
+
+        if (view.Unreadable)
         {
             // A malformed envelope means a version mismatch far more often than a bug, so say
             // something more useful than "unexpected character".
-            //
-            // Wider than JsonException, because GetProperty throws KeyNotFoundException and
-            // GetInt32 throws InvalidOperationException - so an envelope that parses but is
-            // missing a field escaped this into an async void handler, in a process that
-            // installs no unhandled-exception handler.
-            _status.ForeColor = Theme.Current.Danger;
-            _status.Text = "Could not read the response from winlogrotate.exe.";
             LrDialog.Error(this, "Unexpected response",
                 "winlogrotate.exe returned something this window could not read. " +
-                "This usually means the two are different versions.", e.Message);
+                "This usually means the two are different versions.", result.StdOut);
         }
     }
 
