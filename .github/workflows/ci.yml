@@ -929,12 +929,19 @@ jobs:
 
           # Counted with the error suppressed at both ends, so an enumeration that failed for any
           # reason made both numbers 0 and the comparison below vacuous - on the assertion that
-          # System32 survived a refused junction. A floor first: if nothing was enumerated, the
-          # comparison is measuring nothing.
-          $before = @(Get-ChildItem 'C:\Windows\System32' -Filter *.log -ErrorAction SilentlyContinue).Count
-          if ($before -lt 1) {
-            throw 'no .log files were enumerated in System32, so the before/after comparison below would compare nothing'
+          # System32 survived a refused junction.
+          #
+          # The floor is on the enumeration working, not on the .log count. A clean Server 2025
+          # image has no .log files directly in System32 - they live in System32\LogFiles - so
+          # zero before and zero after is the correct, healthy answer here, and a floor on that
+          # count asserts something false. What has to be proved is that Get-ChildItem can read
+          # the directory at all, or both numbers are zero for the wrong reason.
+          $readable = @(Get-ChildItem 'C:\Windows\System32' -Filter *.dll -ErrorAction SilentlyContinue).Count
+          if ($readable -lt 1) {
+            throw 'System32 could not be enumerated, so the before/after comparison below would compare nothing'
           }
+
+          $before = @(Get-ChildItem 'C:\Windows\System32' -Filter *.log -ErrorAction SilentlyContinue).Count
 
           @(
             'schema = 1', '[job]', 'name = "junction"', 'kind = "rotate"',
