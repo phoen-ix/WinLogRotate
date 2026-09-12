@@ -32,6 +32,13 @@ public sealed class ExtendedPathGuardTests
         ProtectedRoots = [@"C:\Windows", @"C:\Program Files"],
     });
 
+    /// <summary>The same guard on a machine whose conf.d is hardened, so overrides are honoured.</summary>
+    private static PathGuard Honouring() => new(new GuardOptions
+    {
+        ProtectedRoots = [@"C:\Windows", @"C:\Program Files"],
+        Overrides = OverrideGate.Open,
+    });
+
     /// <summary>
     /// A protected location is protected however it is spelled.
     /// </summary>
@@ -136,4 +143,64 @@ public sealed class ExtendedPathGuardTests
     [InlineData(@"\\server\share\logs", @"\\server\share\logs")]
     public void UnprefixedNamesTheSameLocation(string path, string expected) =>
         WinPath.Unprefixed(path).ShouldBe(expected);
+
+    /// <summary>
+    /// The rule that refuses an override and the rule that grants one see the same directory.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// <c>CheckOverrideEntry</c> refuses an <c>allowdangerous</c> entry naming the whole of a
+    /// protected root - "the switch everyone flips once during an incident and never flips back".
+    /// It compared normalised spellings, while <c>GuardScope.Allows</c> grants the override
+    /// through <c>IsWithin</c>, which compares unprefixed ones. So <c>\\?\C:\Windows</c> was not
+    /// equal to <c>C:\Windows</c> for the refusal and was the same directory for the grant: the
+    /// broadest entry an operator could write was the one spelling the rule did not recognise.
+    /// </para>
+    /// <para>
+    /// The anchor is asserted beside the verdict because a second defect met here.
+    /// <c>Glob.HasWildcard</c> saw the <c>?</c> of the prefix as a wildcard, so
+    /// <c>GuardScope.AnchorOf</c> took its wildcard branch for a path that has none and returned
+    /// the <i>parent</i> of what was written - unlocking one directory more than the operator
+    /// asked for, which is the exact failure that method's own remarks were written to prevent.
+    /// </para>
+    /// </remarks>
+    [Theory]
+    [InlineData(@"C:\Windows")]
+    [InlineData(@"\\?\C:\Windows")]
+    public void AnOverrideNamingAWholeProtectedRootIsRefusedHoweverItIsSpelled(string entry)
+    {
+        Guard().CheckOverrideEntry(entry)
+            .Verdict.ShouldBe(GuardVerdict.ProtectedLocation, "the entry unlocks the whole root");
+
+        WinPath.Unprefixed(GuardScope.AnchorOf(entry)).ShouldBe(@"C:\Windows",
+            "and the rule that grants an override resolves it to that same directory");
+    }
+
+    /// <summary>
+    /// An override naming a directory below a protected root still works, spelled either way.
+    /// </summary>
+    /// <remarks>
+    /// The direction that keeps the fix from being "refuse every override". An entry may sit
+    /// below a protected location; it may not be one. The anchor assertion is the load-bearing
+    /// half: it is what says the entry unlocks the directory written rather than its parent.
+    /// </remarks>
+    [Theory]
+    [InlineData(@"C:\Windows\MyApp\logs")]
+    [InlineData(@"\\?\C:\Windows\MyApp\logs")]
+    public void AnOverrideBelowAProtectedRootIsStillAccepted(string entry)
+    {
+        Guard().CheckOverrideEntry(entry).IsAllowed.ShouldBeTrue();
+
+        WinPath.Unprefixed(GuardScope.AnchorOf(entry)).ShouldBe(@"C:\Windows\MyApp\logs",
+            "the entry unlocks what it names, not the directory above it");
+    }
+
+    /// <summary>An extended-length path is not a pattern just because its prefix holds a '?'.</summary>
+    [Theory]
+    [InlineData(@"\\?\C:\logs\app.log", false)]
+    [InlineData(@"\\?\C:\logs\*.log", true)]
+    [InlineData(@"C:\logs\app.log", false)]
+    [InlineData(@"C:\logs\app?.log", true)]
+    public void APrefixIsNotAWildcard(string path, bool expected) =>
+        Glob.HasWildcard(path).ShouldBe(expected);
 }

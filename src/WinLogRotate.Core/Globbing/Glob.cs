@@ -52,8 +52,26 @@ public static class Glob
         MatchSegment(name.AsSpan(), pattern.AsSpan());
 
     /// <summary>True when the pattern contains any wildcard metacharacter.</summary>
+    /// <remarks>
+    /// The <c>?</c> in a <c>\\?\</c> prefix is not one, and reading it as one made
+    /// <c>GuardScope.AnchorOf</c> take its wildcard branch for a path that has none - so an
+    /// <c>allowdangerous</c> entry spelled that way unlocked its own <i>parent</i>, which is the
+    /// exact failure that method's remarks were written to prevent.
+    /// </remarks>
     public static bool HasWildcard(string pattern) =>
-        pattern.AsSpan().IndexOfAny('*', '?', '[') >= 0;
+        pattern.AsSpan(PrefixLength(pattern)).IndexOfAny('*', '?', '[') >= 0;
+
+    /// <summary>
+    /// How much of a pattern is a Win32 extended-length prefix, and therefore not pattern.
+    /// </summary>
+    /// <remarks>
+    /// Both spellings reach here - <c>\\?\</c> after separator normalisation, and the raw
+    /// forward-slash form an operator may paste - because this is asked of strings that have been
+    /// normalised and of strings that have not.
+    /// </remarks>
+    private static int PrefixLength(string pattern) =>
+        pattern.StartsWith(@"\\?\", StringComparison.Ordinal)
+        || pattern.StartsWith("//?/", StringComparison.Ordinal) ? 4 : 0;
 
     /// <summary>
     /// Whether any file <b>strictly below</b> <paramref name="directory"/> could match
@@ -145,7 +163,7 @@ public static class Glob
         // and volume-root rules against the wrong directory entirely, and FileEnumerator would
         // have walked from the root of the current drive. The prefix itself is kept: it is what
         // makes a path longer than MAX_PATH work, and this result is handed to the OS.
-        var scanFrom = normalized.StartsWith(@"\\?\", StringComparison.Ordinal) ? 4 : 0;
+        var scanFrom = PrefixLength(normalized);
 
         var found = normalized.AsSpan(scanFrom).IndexOfAny('*', '?', '[');
         var firstWildcard = found < 0 ? -1 : found + scanFrom;

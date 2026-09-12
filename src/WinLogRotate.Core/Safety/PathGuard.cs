@@ -326,7 +326,14 @@ public sealed class PathGuard(GuardOptions options)
 
         foreach (var root in Options.ProtectedRoots)
         {
-            if (anchor.Equals(WinPath.Normalize(root), StringComparison.OrdinalIgnoreCase))
+            // Unprefixed on both sides, because GuardScope.Allows compares that way through
+            // IsWithin - and two spellings of one comparison is two answers to one question.
+            // Normalized, '\\?\C:\Windows' is not equal to 'C:\Windows', so an entry naming the
+            // whole of a protected root passed this rule; unlocking it then worked, because the
+            // rule that grants the override does unprefix. The most dangerous entry an operator
+            // could write was the one spelling this refused to recognise.
+            if (WinPath.Unprefixed(anchor).Equals(
+                    WinPath.Unprefixed(root), StringComparison.OrdinalIgnoreCase))
             {
                 return new GuardDecision
                 {
