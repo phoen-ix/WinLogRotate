@@ -88,6 +88,12 @@ public sealed class NotificationsPage : UserControl
         var result = await _cli.RunAsync(
             CliArgs.For(_configDir, "notify", "show", "--json")).ConfigureAwait(true);
 
+        // Cleared before the failure is reported, not after. Returning early left the previous
+        // refresh's rows on screen beside an error status line, so a refresh that failed looked
+        // exactly like one that succeeded a minute ago - and the operator reads rows, not the
+        // line underneath them.
+        _grid.Rows.Clear();
+
         if (!result.Ok)
         {
             _status.ForeColor = Theme.Current.Danger;
@@ -103,8 +109,6 @@ public sealed class NotificationsPage : UserControl
 
             return;
         }
-
-        _grid.Rows.Clear();
 
         try
         {
@@ -196,14 +200,24 @@ public sealed class NotificationsPage : UserControl
         _status.Text = "Sending...";
 
         var result = await _cli.RunAsync(
-            CliArgs.For(_configDir, "notify", "test")).ConfigureAwait(true);
+            CliArgs.For(_configDir, "notify", "test", "--json")).ConfigureAwait(true);
 
-        // notify test always exits 0 - a webhook outage is not a rotation failure - so the text
-        // is what says whether anything arrived.
-        LrDialog.Show(this, result.StdOut.Contains("FAILED", StringComparison.Ordinal)
-                ? DialogKind.Warning
-                : DialogKind.Info,
-            "Send test", "Nothing was recorded: no history and no breaker counters.", result.StdOut);
+        // notify test always exits 0 - a webhook outage is not a rotation failure - so the counts
+        // are what say whether anything arrived. Scraping stdout for the word FAILED was a text
+        // contract nothing pins, and it could not tell "sent to none" from "sent to three".
+        var view = NotifyTestProjection.From(result);
+
+        LrDialog.Show(
+            this,
+            view.Tone switch
+            {
+                CheckTone.Clean => DialogKind.Info,
+                CheckTone.Warning => DialogKind.Warning,
+                _ => DialogKind.Error,
+            },
+            "Send test",
+            view.Message,
+            view.Details);
 
         _status.Text = "Test finished.";
     }
