@@ -248,10 +248,99 @@ public static class LogrotateImporter
         return new ImportedJob
         {
             SuggestedFileName = name.ToLowerInvariant().Replace(' ', '-') + ".toml",
-            Toml = body.ToString(),
+            Toml = KeepTheLastOfEachKey(body.ToString()),
             Warnings = warnings,
             NeedsReview = needsReview,
         };
+    }
+
+    /// <summary>
+    /// Where one TOML key was written more than once, keeps the last and drops the rest.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// <b>Without this the importer's normal output does not parse.</b>
+    /// <c>LogrotateParser</c> hands every block its file's globals in front of its own directives
+    /// - which is upstream's rule - and nothing de-duplicates them, so the stock
+    /// <c>/etc/logrotate.conf</c> shape, globals at the top and blocks below, emits
+    /// <c>rotate</c> or <c>compress</c> twice. TOML makes a duplicate key an error, so the file
+    /// <c>import</c> had just written was one the loader refused, and until the previous commit
+    /// that refusal stopped every rotation on the machine.
+    /// </para>
+    /// <para>
+    /// The nine collisions are every directive logrotate lets you repeat plus every pair that
+    /// writes one key here: <c>rotate</c>, <c>start</c>, <c>maxage</c>, <c>minage</c>,
+    /// <c>size</c>, <c>minsize</c>, <c>maxsize</c> and <c>olddir</c> repeated;
+    /// <c>compress</c>/<c>nocompress</c>, <c>dateext</c>/<c>nodateext</c>,
+    /// <c>missingok</c>/<c>nomissingok</c>, <c>notifempty</c>/<c>ifempty</c>,
+    /// <c>copytruncate</c>/<c>copy</c>, and <c>monthly N</c> beside <c>yearly N</c>, which both
+    /// write <c>monthday</c>.
+    /// </para>
+    /// <para>
+    /// <b>Last, not first</b>, because that is what logrotate does - it prints
+    /// "note: 'daily' overrides previously specified 'weekly'" as it reads - and because a block
+    /// directive comes after the global it is meant to override. The surviving line keeps its own
+    /// position, so the file still reads in the order it was written.
+    /// </para>
+    /// <para>
+    /// The frequency flags are deliberately left alone. <c>weekly</c> and <c>daily</c> are two
+    /// TOML keys, not one, so emitting both is legal - and since the binder now resolves them by
+    /// document order, keeping both preserves exactly what the operator wrote.
+    /// </para>
+    /// <para>
+    /// A key is derived from the text because every line here is written by the method above, in
+    /// one shape: a setting starts at column zero as <c>key = value</c>, and anything else is a
+    /// comment, a TODO or part of a list and keeps its place.
+    /// </para>
+    /// </remarks>
+    private static string KeepTheLastOfEachKey(string toml)
+    {
+        var lines = toml.Split(Environment.NewLine);
+        var lastAt = new Dictionary<string, int>(StringComparer.Ordinal);
+
+        for (var i = 0; i < lines.Length; i++)
+        {
+            if (KeyOf(lines[i]) is { } key)
+            {
+                lastAt[key] = i;
+            }
+        }
+
+        var kept = new StringBuilder();
+
+        for (var i = 0; i < lines.Length; i++)
+        {
+            if (KeyOf(lines[i]) is { } key && lastAt[key] != i)
+            {
+                continue;
+            }
+
+            if (i < lines.Length - 1)
+            {
+                kept.AppendLine(lines[i]);
+            }
+            else
+            {
+                kept.Append(lines[i]);
+            }
+        }
+
+        return kept.ToString();
+    }
+
+    /// <summary>The TOML key a generated line sets, or null when the line sets nothing.</summary>
+    private static string? KeyOf(string line)
+    {
+        var equals = line.IndexOf('=', StringComparison.Ordinal);
+
+        if (equals <= 0 || line.StartsWith('#') || line.StartsWith(' '))
+        {
+            return null;
+        }
+
+        var key = line[..equals].TrimEnd();
+
+        return key.Length > 0 && key.All(c => char.IsLetterOrDigit(c) || c == '_') ? key : null;
     }
 
     private static string SuggestName(LogrotateStanza stanza, int index)

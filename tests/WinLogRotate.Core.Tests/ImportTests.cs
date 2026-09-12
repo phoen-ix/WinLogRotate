@@ -105,6 +105,62 @@ public class LogrotateImporterTests
             }
             """).Toml.ShouldContain("enabled = false");
 
+    /// <summary>
+    /// The stock shape of a logrotate configuration imports to TOML that parses.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// Globals at the top, blocks below - which is what <c>/etc/logrotate.conf</c> looks like on
+    /// every distribution - and the two collide. <c>LogrotateParser</c> hands each block its
+    /// file's globals in front of its own directives, upstream's rule, and nothing de-duplicated
+    /// them; TOML makes a duplicate key an error. So <c>import</c> wrote a file the loader
+    /// refused, reported success, and put it in the live <c>conf.d</c>. Until the previous commit
+    /// that refusal then stopped every rotation on the machine.
+    /// </para>
+    /// <para>
+    /// <c>TheOutputIsValidTomlThatOurOwnBinderAccepts</c> could not see it: its fixture has no
+    /// globals and no directive that collides, so it never reaches the concatenation at all.
+    /// </para>
+    /// <para>
+    /// The values are asserted, not just the parse. Emitting neither <c>rotate</c> nor
+    /// <c>compress</c> would also produce a file that parses, and would be a different way of
+    /// losing what the operator wrote.
+    /// </para>
+    /// </remarks>
+    [Fact]
+    public void TheStockGlobalsAndBlockShapeImportsToTomlThatParses()
+    {
+        var job = Import("""
+            weekly
+            rotate 4
+            compress
+
+            "C:/nginx/logs/*.log" {
+                daily
+                rotate 14
+                nocompress
+                missingok
+            }
+            """);
+
+        var bag = new DiagnosticBag();
+        var bound = ConfigBinder.BindJob(TomlFile.Parse(job.Toml, "imported.toml"), bag);
+
+        bag.HasErrors.ShouldBeFalse("the file import just wrote has to be one the loader accepts");
+        bound = bound.ShouldNotBeNull();
+
+        // The block's value, not the global's. Keeping the first would parse just as well and be
+        // the wrong answer - logrotate says so out loud as it reads: "note: 'daily' overrides
+        // previously specified 'weekly'".
+        bound.Rotate.ShouldBe(14);
+        bound.Compress.ShouldBe(false);
+        bound.MissingOk.ShouldBe(true);
+
+        // Both frequency flags survive, because they are two TOML keys rather than one - and the
+        // binder resolves them by document order, so the block's daily still wins.
+        bound.Schedule.ShouldBe(Schedule.Daily);
+    }
+
     [Fact]
     public void TheOutputIsValidTomlThatOurOwnBinderAccepts()
     {
