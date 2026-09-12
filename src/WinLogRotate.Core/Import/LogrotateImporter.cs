@@ -1,5 +1,6 @@
 using System.Globalization;
 using System.Text;
+using WinLogRotate.Contracts;
 using WinLogRotate.Core.Configuration;
 
 namespace WinLogRotate.Core.Import;
@@ -38,6 +39,50 @@ public static class LogrotateImporter
         var names = UniqueNames(stanzas);
 
         return [.. stanzas.Select((stanza, index) => Convert(stanza, sourceName, names[index]))];
+    }
+
+    /// <summary>
+    /// Whether a generated job loads, and what stops it if it does not.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// <c>import</c> wrote its output into the live <c>conf.d</c> and returned
+    /// <c>ExitCode.Ok</c> without ever reading it back. Three separate faults made that a file
+    /// the loader refused - a duplicate key, a duplicate job name, a job with no paths - and each
+    /// was the ordinary outcome for a real logrotate configuration rather than an edge case. The
+    /// three are fixed. This is the answer to the fourth.
+    /// </para>
+    /// <para>
+    /// It is not hypothetical. <c>rotate notanumber</c> - a typo logrotate would reject too -
+    /// still emits <c>rotate = notanumber</c>, and an <c>olddir</c> whose path contains a quote
+    /// still emits it unescaped. Both are found by reading the file back, and neither by any
+    /// amount of thinking about the emit switch.
+    /// </para>
+    /// <para>
+    /// The same two passes the loader makes, in the same order: parse, then bind. Warnings are
+    /// left out - an imported job is full of them by design, and a job that needs review is still
+    /// a job worth writing.
+    /// </para>
+    /// </remarks>
+    public static IReadOnlyList<ConfigDiagnostic> Check(ImportedJob job)
+    {
+        var bag = new DiagnosticBag();
+        var file = TomlFile.Parse(job.Toml, job.SuggestedFileName);
+
+        if (file.HasErrors)
+        {
+            foreach (var error in file.Errors)
+            {
+                bag.Error(job.SuggestedFileName, DiagnosticCode.ConfigInvalid, error.Message,
+                    error.Span.Start.Line + 1, error.Span.Start.Column + 1);
+            }
+        }
+        else
+        {
+            ConfigBinder.BindJob(file, bag);
+        }
+
+        return [.. bag.Items.Where(d => d.Severity >= Severity.Error)];
     }
 
     /// <summary>One name per stanza, and no two the same.</summary>

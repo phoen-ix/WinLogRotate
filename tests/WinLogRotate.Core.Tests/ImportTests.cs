@@ -106,6 +106,65 @@ public class LogrotateImporterTests
             """).Toml.ShouldContain("enabled = false");
 
     /// <summary>
+    /// Generated TOML that would not load is reported rather than handed back as a job.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// The backstop, and the reason it is not ceremony. Three separate faults made <c>import</c>
+    /// write a file the loader refused, each of them the ordinary outcome for a real logrotate
+    /// configuration rather than an edge case, and all three are now fixed. These two are what
+    /// was left after that: a typo logrotate itself would reject, copied verbatim into an integer
+    /// position, and a path containing a quote emitted without escaping it.
+    /// </para>
+    /// <para>
+    /// Neither was found by thinking about the emit switch. Both are found by reading the file
+    /// back, which is what the verb had never done.
+    /// </para>
+    /// </remarks>
+    [Theory]
+    [InlineData("rotate notanumber", "notanumber")]
+    [InlineData("olddir C:/arch\"ive", "ive")]
+    public void GeneratedTomlThatWillNotLoadIsReported(string directive, string expected)
+    {
+        var job = Import($$"""
+            C:/logs/a/*.log {
+                daily
+                {{directive}}
+            }
+            """);
+
+        var problems = LogrotateImporter.Check(job);
+
+        problems.ShouldNotBeEmpty("this generated TOML does not load");
+        problems[0].Message.ShouldContain(expected);
+    }
+
+    /// <summary>
+    /// A job that needs review is still a job worth writing.
+    /// </summary>
+    /// <remarks>
+    /// The other half, and the one a careless backstop loses. An imported job is full of TODOs by
+    /// design - that is what "nothing is guessed" means here - so <c>Check</c> weighs errors and
+    /// not warnings. A backstop that refused anything imperfect would refuse every import taken
+    /// off a Linux box.
+    /// </remarks>
+    [Fact]
+    public void AJobThatOnlyNeedsReviewStillLoads()
+    {
+        var job = Import("""
+            /var/log/nginx/*.log {
+                daily
+                su root adm
+                create 0640 root adm
+            }
+            """);
+
+        job.NeedsReview.ShouldBeTrue();
+        job.Warnings.ShouldNotBeEmpty();
+        LogrotateImporter.Check(job).ShouldBeEmpty("a job needing review still has to load");
+    }
+
+    /// <summary>
     /// Two blocks that suggest the same name get two names, and two loadable files.
     /// </summary>
     /// <remarks>
