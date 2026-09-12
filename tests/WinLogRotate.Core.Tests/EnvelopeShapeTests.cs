@@ -274,6 +274,8 @@ public sealed class EnvelopeShapeTests
                     StoredCredentials = 1,
                     SuppressedChannels = 0,
                     CertificatePinned = false,
+                    EventLog = "writable",
+                    EventLogExpected = true,
                 },
             }),
             "doctor");

@@ -8,6 +8,7 @@ using WinLogRotate.Core.Safety;
 using WinLogRotate.Core.Secrets;
 using WinLogRotate.Core.State;
 using WinLogRotate.Hosting;
+using WinLogRotate.Hosting.Diagnostics;
 using WinLogRotate.Hosting.Hosts;
 using WinLogRotate.Hosting.Security;
 
@@ -179,6 +180,20 @@ internal static class DoctorCommand
         ctx.Output.Line($"  tls           {(settings.ServerCertThumbprint is { Length: > 0 } ? "pinned" : "machine certificate store")}");
         ctx.Output.Line($"  stored creds  {stored}");
         ctx.Output.Line($"  suppressed    {suppressed}");
+
+        var (eventLog, eventLogExpected) = EventLogVerdict(
+            OperatingSystem.IsWindows(),
+            OperatingSystem.IsWindows() && EventLogWriter.IsRegistered(Names.EventLogSource),
+            paths.Scope);
+
+        ctx.Output.Line($"  event log     {EventLogLine(eventLog, eventLogExpected, paths.Scope)}");
+
+        if (eventLog == "unregistered" && eventLogExpected)
+        {
+            ctx.Output.Line("                reinstall to register it - the installer writes the "
+                + "registry entry, and creating one needs administrator");
+        }
+
         ctx.Output.Line("  live check    winlogrotate notify test");
 
         if (suppressed > 0)
@@ -201,8 +216,62 @@ internal static class DoctorCommand
             CertificatePinned = settings.ServerCertThumbprint is { Length: > 0 },
             StoredCredentials = stored,
             SuppressedChannels = suppressed,
+            EventLog = eventLog,
+            EventLogExpected = eventLogExpected,
         };
     }
+
+    /// <summary>
+    /// Whether this install can write to the Windows Event Log, and whether not being able to is
+    /// a fault.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// <c>docs/diagnostics.md</c> has said "winlogrotate doctor tells you which state you are in"
+    /// since the Event Log shipped, and doctor did not.
+    /// <see cref="EventLogWriter.IsRegistered"/> was written, public and documented, with exactly
+    /// one caller that was not this.
+    /// </para>
+    /// <para>
+    /// Only a per-machine install has a source: creating one needs administrator, so the
+    /// installer does it. Reporting a portable copy or a per-user install as broken would be
+    /// crying wolf at the person least able to act on it - the same judgement the conf.d ACL
+    /// section already makes, for the same reason.
+    /// </para>
+    /// <para>
+    /// Pure, and taking the answer rather than asking for it, so this runs on both CI legs. The
+    /// thing it is deciding about is Windows-only and no event source is registered on either
+    /// runner, which is exactly how the event log's allowance went untested for as long as it
+    /// lived inside the writer.
+    /// </para>
+    /// <para>
+    /// No diagnostic is raised, not even for the per-machine case that really is a fault. No
+    /// <see cref="DiagnosticCode"/> describes it, and adding one means a new event ID, a new
+    /// documented row and a new Type - a change to a published contract, which does not belong
+    /// hidden inside a doctor commit. The line says it plainly instead.
+    /// </para>
+    /// </remarks>
+    internal static (string State, bool Expected) EventLogVerdict(
+        bool supported, bool registered, InstallScope scope) => (supported, registered, scope) switch
+        {
+            (false, _, _) => ("unsupported", false),
+            (true, true, _) => ("writable", true),
+            (true, false, InstallScope.PerMachine) => ("unregistered", true),
+
+            // Portable and PerUser, listed rather than defaulted: a fourth scope should turn a
+            // test red rather than quietly inherit "this one is fine".
+            (true, false, InstallScope.Portable or InstallScope.PerUser) => ("unregistered", false),
+
+            _ => throw new ArgumentOutOfRangeException(nameof(scope), scope, "unknown install scope"),
+        };
+
+    private static string EventLogLine(string state, bool expected, InstallScope scope) => state switch
+    {
+        "writable" => "writable",
+        "unregistered" when expected => "NOT REGISTERED - nothing reaches Event Viewer",
+        "unregistered" => $"not registered - by design for a {scope} installation",
+        _ => "not checked (Windows only)",
+    };
 
     private static string Exists(bool present) => present ? "" : "  (missing)";
 

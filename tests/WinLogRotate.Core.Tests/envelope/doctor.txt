@@ -18,6 +18,8 @@ result.hooksAllowed : Boolean
 result.jobsDirectoryExists : Boolean
 result.notify.certificatePinned : Boolean
 result.notify.enabled : Boolean
+result.notify.eventLog : String
+result.notify.eventLogExpected : Boolean
 result.notify.storedCredentials : Number
 result.notify.suppressedChannels : Number
 result.notify.targets : Number

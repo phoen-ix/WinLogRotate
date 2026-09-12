@@ -178,6 +178,23 @@ public sealed record NotifyDoctorDto
     public required bool CertificatePinned { get; init; }
     public required int StoredCredentials { get; init; }
     public required int SuppressedChannels { get; init; }
+
+    /// <summary>
+    /// Whether this install can write to the Windows Event Log: <c>writable</c>,
+    /// <c>unregistered</c>, or <c>unsupported</c> off Windows.
+    /// </summary>
+    /// <remarks>
+    /// Here rather than beside <c>RunHost</c> because <c>eventlog:</c> is a notification target,
+    /// and because this is the one target whose delivery can be answered without touching the
+    /// network - which is the whole constraint this section is built around.
+    /// </remarks>
+    public required string EventLog { get; init; }
+
+    /// <summary>
+    /// True when an unregistered source is a fault rather than the ordinary state. Creating one
+    /// needs administrator, so the installer does it and only a per-machine install has one.
+    /// </summary>
+    public required bool EventLogExpected { get; init; }
 }
 
 /// <summary>

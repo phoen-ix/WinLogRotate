@@ -173,6 +173,8 @@ public sealed class EnvelopeEnumTests
                 StoredCredentials = 0,
                 SuppressedChannels = 0,
                 CertificatePinned = false,
+                EventLog = "unregistered",
+                EventLogExpected = false,
             },
         }));
 

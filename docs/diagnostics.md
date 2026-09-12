@@ -19,7 +19,17 @@ Informational progress does not: a system log is not where progress belongs.
 The source is registered by the installer, because creating one requires administrator rights
 and the unelevated CLI would otherwise fail on its first write. **A per-user install registers
 nothing**, deliberately — on such a machine nothing is written and nothing is reported as
-broken. `winlogrotate doctor` tells you which state you are in.
+broken. `winlogrotate doctor` tells you which state you are in, under **Notifications**:
+
+```
+  event log     writable
+  event log     not registered - by design for a PerUser installation
+  event log     NOT REGISTERED - nothing reaches Event Viewer
+```
+
+The third is the only one that is a fault: a per-machine install whose source was never created
+or has been removed. `doctor --json` carries the same answer as `notify.eventLog`, with
+`notify.eventLogExpected` saying whether a source was ever going to exist here.
 
 ### The `--json` exception
 
@@ -148,12 +158,15 @@ Get-WinEvent -FilterHashtable @{
 ```
 
 There is **no per-run summary event**, so silence is not proof that a run happened - a machine
-that never woke up looks exactly like a machine with nothing to rotate. `winlogrotate doctor`
-answers that question; the Application log answers *what went wrong*.
+that never woke up looks exactly like a machine with nothing to rotate. `winlogrotate journal`
+holds the record of what ran and when, and `winlogrotate doctor` says whether anything is
+registered to run at all. The Application log answers *what went wrong*.
 
 If a message reads *"The description for Event ID … cannot be found"*, the event source is
-registered but its `EventMessageFile` value is missing or wrong. Reinstall, or run
-`winlogrotate host repair`.
+registered but its `EventMessageFile` value is missing or wrong. **Reinstall** — the installer
+writes that registry value and creating one needs administrator. `winlogrotate host repair` will
+not help: it restores the run host and the configuration directory's permissions, and has never
+touched the event source.
 
 ## Why not `LastTaskResult`?
 
