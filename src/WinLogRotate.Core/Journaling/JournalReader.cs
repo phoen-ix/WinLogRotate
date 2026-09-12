@@ -1,4 +1,5 @@
 using System.Globalization;
+using System.IO.Compression;
 using System.Text.Json;
 using WinLogRotate.Contracts;
 
@@ -79,7 +80,8 @@ public sealed class JournalReader(string journalDirectory)
         }
 
         var files = Directory
-            .EnumerateFiles(journalDirectory, "journal-*.ndjson")
+            .EnumerateFiles(journalDirectory, "journal-*")
+            .Where(IsJournal)
             .OrderBy(f => f, StringComparer.Ordinal);
 
         foreach (var file in files)
@@ -108,13 +110,49 @@ public sealed class JournalReader(string journalDirectory)
             .OrderByDescending(r => r.RunId, StringComparer.Ordinal)
             .Take(take);
 
+    /// <summary>
+    /// The three shapes a journal file takes on disk, and the only three.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// The reader used to enumerate <c>journal-*.ndjson</c> alone, and the maintenance pass
+    /// compresses yesterday's file - <c>JournalSettings.Compress</c> defaults to <c>Zip</c>, so
+    /// this is what a default install does on its third run. <c>journal-2026-09-11.ndjson.zip</c>
+    /// does not match that pattern, nothing in the product decompressed, and
+    /// <c>Compressor</c> had already deleted the original.
+    /// </para>
+    /// <para>
+    /// So thirty days of forensic record became files the product could not open, while
+    /// <c>docs/diagnostics.md</c> promised "The full record is always in the journal" and the
+    /// Event Log's own allowance announcement told operators to run this verb for it.
+    /// <c>SkippedLines</c> stayed 0, because a file that is never enumerated has no lines to skip.
+    /// </para>
+    /// </remarks>
+    private static bool IsJournal(string path) =>
+        path.EndsWith(".ndjson", StringComparison.OrdinalIgnoreCase)
+        || path.EndsWith(".ndjson.zip", StringComparison.OrdinalIgnoreCase)
+        || path.EndsWith(".ndjson.gz", StringComparison.OrdinalIgnoreCase);
+
     private IEnumerable<CliEvent> ReadFile(string path)
     {
         // Share everything: a run may be appending to this very file while we read it.
         using var stream = new FileStream(
             path, FileMode.Open, FileAccess.Read,
             FileShare.ReadWrite | FileShare.Delete);
-        using var reader = new StreamReader(stream);
+
+        // Disposed in the reverse order they were opened, by the iterator, whichever branch ran.
+        // A zip's entry stream outlives nothing: the archive has to stay open around it.
+        using var archive = path.EndsWith(".zip", StringComparison.OrdinalIgnoreCase)
+            ? new ZipArchive(stream, ZipArchiveMode.Read)
+            : null;
+
+        var content = archive is not null
+            ? archive.Entries.Count > 0 ? archive.Entries[0].Open() : Stream.Null
+            : path.EndsWith(".gz", StringComparison.OrdinalIgnoreCase)
+                ? new GZipStream(stream, CompressionMode.Decompress)
+                : stream;
+
+        using var reader = new StreamReader(content);
 
         while (reader.ReadLine() is { } line)
         {

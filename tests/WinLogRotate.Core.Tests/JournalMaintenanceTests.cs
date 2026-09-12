@@ -194,14 +194,28 @@ public sealed class JournalMaintenanceTests : IDisposable
     }
 
     /// <summary>
-    /// The compressed archives must still be readable, or the history is preserved in name
-    /// only.
+    /// The maintenance pass leaves a journal the product can still open.
     /// </summary>
+    /// <remarks>
+    /// <para>
+    /// This used to be called <c>CompressedJournalsAreStillReadable</c>, under the doc comment
+    /// "The compressed archives must still be readable, or the history is preserved in name only"
+    /// - and it opened the archive with <c>ZipFile.OpenRead</c>. It proved the bytes survive.
+    /// <c>JournalReader</c> enumerated <c>journal-*.ndjson</c>, which cannot match a name ending
+    /// <c>.zip</c>, so the history was preserved in name only: exactly what the comment forbade,
+    /// asserted by a test named for forbidding it.
+    /// </para>
+    /// <para>
+    /// It now asks the reader, which is the only question worth asking.
+    /// <see cref="JournalRoundTripTests"/> carries the same property on both legs; this one is
+    /// here because it drives the real maintenance pass end to end, which needs the executor.
+    /// </para>
+    /// </remarks>
     [Fact]
-    public void CompressedJournalsAreStillReadable()
+    public void TheMaintenancePassLeavesAJournalTheProductCanOpen()
     {
         // Needs the executor, which speaks Windows paths. The decision to compress is covered
-        // platform-independently above; this asserts the bytes survive the round trip.
+        // platform-independently above, and the round trip in JournalRoundTripTests.
         Assert.SkipUnless(OperatingSystem.IsWindows(), "Executes file operations.");
 
         Seed(0, lines: 3);
@@ -209,11 +223,11 @@ public sealed class JournalMaintenanceTests : IDisposable
 
         JournalMaintenance.Run(_dir.FullName, Settings(), _clock);
 
-        var archive = Directory.GetFiles(_dir.FullName, "*.zip").ShouldHaveSingleItem();
-        using var zip = System.IO.Compression.ZipFile.OpenRead(archive);
-        using var reader = new StreamReader(zip.Entries.Single().Open());
+        Directory.GetFiles(_dir.FullName, "*.zip").ShouldHaveSingleItem(
+            "the fixture has to have compressed something for this to mean anything");
 
-        reader.ReadToEnd().Split('\n', StringSplitOptions.RemoveEmptyEntries).Length.ShouldBe(7);
+        new JournalReader(_dir.FullName).Read().Count().ShouldBe(
+            10, "every line of both days is still reachable through the reader");
     }
 
     [Fact]
