@@ -34,8 +34,10 @@
     <ManagePackageVersionsCentrally>false</ManagePackageVersionsCentrally>
   </PropertyGroup>
 
-  <!-- x64 only for 1.0. arm64 is wired into CI as a build-only gate so the code stays
-       arch-clean, but nothing arm64 ships until someone asks. -->
+  <!-- x64 only for 1.0. There is no arm64 gate: this said there was one, wired into CI as a
+       build-only check, and a grep for arm64 across the whole repository returned that sentence
+       and nothing else. A comment describing a check that does not exist is worse than no check,
+       because it stops anyone adding one. -->
   <PropertyGroup>
     <Platforms>AnyCPU</Platforms>
     <DefaultWinLogRotateRid>win-x64</DefaultWinLogRotateRid>

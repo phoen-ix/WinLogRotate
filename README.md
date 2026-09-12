@@ -298,7 +298,9 @@ directory it leaves behind, and one is carried out on real files on every Window
 
 Every push exercises an `installer-smoke` job on a fresh GitHub-hosted Windows Server 2025
 runner: it builds a real installer, installs it silently, and asserts the result — then
-upgrades, uninstalls, and does the per-user variant too.
+upgrades, uninstalls, and does the per-user variant too. **A release waits for it**, which it did
+not until v0.10.1: the release workflow was independent of CI, so v0.9.0 was published from a
+commit whose `installer-smoke` had failed.
 
 ```
 installed to C:\Program Files\WinLogRotate
@@ -320,8 +322,10 @@ upgrade took 18.3s
 Proven, on a real machine: the silent per-machine install; the configuration directory coming
 out with exactly the intended descriptor, protected and administrator-only; the Event Log source;
 PATH edited without harming what was already there; the scheduled task registered with every
-setting Task Scheduler gets wrong by default; **SYSTEM running the binary and actually deleting
-and compressing files**; an upgrade blocking on a held rotation mutex for 18.3s and resuming the
+setting Task Scheduler gets wrong by default; **SYSTEM running the binary and rotating a log
+nothing else could have rotated** — a size-triggered job staged below its threshold while the
+administrator runs go past, grown past it afterwards, with the archive asserted absent before the
+task starts; an upgrade blocking on a held rotation mutex for 18.3s and resuming the
 moment it was released; a silent uninstall keeping the configuration; `/PURGEDATA` removing it;
 and a per-user install leaving HKLM, the machine PATH and the Event Log alone.
 
@@ -335,12 +339,13 @@ from elevation rather than from the install.
 
 ### What has not
 
-- **The installed product still rotates one file, once, with compression off.** `installer-smoke`
-  runs a real `rotate` job as SYSTEM, and that is the configuration it runs — `rotate = 3`,
-  `compress = false`, from an empty directory. It is the one shape in which none of the five
-  planner defects above can occur, which is why they survived on a green pipeline. Multi-generation
-  chains, `delaycompress`, `maxage` and `dateext` are exercised against real files only by the
-  Windows unit suite, and against a directory model everywhere else.
+- **The installed product still rotates narrow configurations.** `installer-smoke` now asserts
+  the compressing job's whole output directory — which archives survive, that the live log was not
+  touched, and that the zip opens and holds the log it is named for — and gives the scheduled task
+  a size-triggered job only it can do. What it still does not exercise is `delaycompress`,
+  `maxage`, `dateext` or a multi-generation chain; those meet real files only in the Windows unit
+  suite, and a directory model everywhere else. Milestone 23's five planner defects all lived in
+  that gap.
 - **The GUI has never rendered.** No window, no theme, no dialog. The runner is Server and every
   install is silent, so the installer's own wizard pages have never been drawn either. That now
   includes the Notifications page and the credential dialog; the pipe *behind* that dialog is
