@@ -192,18 +192,71 @@ public class RotatePlannerTests
     }
 
     /// <summary>
-    /// The deferred file is compressed on the following run, before the shift, so the chain is
-    /// uniformly named by the time anything moves.
+    /// The deferred file is compressed on the following run, and the shift moves what
+    /// compression left behind.
     /// </summary>
+    /// <remarks>
+    /// <para>
+    /// This asserted only the source of the first Compress operation, which is why it stayed green
+    /// while the plan it described was unexecutable. <c>Compressor.Compress</c> deletes its source
+    /// once the archive is durable, and the chain was read before that step - so the shift went on
+    /// to emit <c>Rename app.log.1 -> app.log.2</c>, naming a file compression had consumed, and
+    /// naming it to the uncompressed spelling because the entry still said it was not compressed.
+    /// </para>
+    /// <para>
+    /// The consequence was not subtle: one failed operation and a non-zero exit every night, on
+    /// every job with <c>delaycompress</c> and compression both on, with <c>app.log.1.gz</c>
+    /// stranded at index 1 where the shift never reaches it and retention never counts it. The
+    /// class remark promised the opposite - that the chain is uniformly named before anything
+    /// moves - and now it is.
+    /// </para>
+    /// </remarks>
     [Fact]
     public void TheDeferredGenerationIsCompressedOnTheNextRun()
     {
-        var plan = PlanFor(Job(delayCompress: true), F("app.log"),
-            F("app.log.1"), F("app.log.2.gz"));
+        var files = new FakeFiles(
+            @"C:\logs\app.log", @"C:\logs\app.log.1", @"C:\logs\app.log.2.gz");
+
+        var job = Job(rotate: 3, delayCompress: true);
+        var plan = PlanOver(job, files);
 
         var catchUp = plan.Operations.First(o => o.Action == PlannedAction.Compress);
         WinPath.FileName(catchUp.Source).ShouldBe("app.log.1");
         catchUp.Reason.ShouldContain("delaycompress");
+
+        var after = Outcome.Of(plan, files);
+
+        // No operation named a file that was not there when the plan reached it.
+        after.Missing.ShouldBeEmpty();
+
+        // The deferred generation is the archive, under its compressed name, one index further up.
+        after.Became("app.log.1").ShouldBe(["app.log.2.gz"]);
+        after.Became("app.log.2.gz").ShouldBe(["app.log.3.gz"]);
+        after.Became("app.log").ShouldBe(["app.log.1"]);
+
+        after.Names.ShouldBe(["app.log", "app.log.1", "app.log.2.gz", "app.log.3.gz"]);
+    }
+
+    /// <summary>
+    /// A generation retention is about to delete is not compressed on its way to the bin.
+    /// </summary>
+    /// <remarks>
+    /// With <c>rotate = 1</c> the newest archive is also the one the count disposes of, so the
+    /// catch-up compress and the delete would name the same file in the same pass - spending a
+    /// full read and write of a multi-gigabyte archive to produce a file this plan then removes,
+    /// every run. <c>ManageJobPlanner</c> already declines to compress a condemned file; this is
+    /// the same rule on the numbered path.
+    /// </remarks>
+    [Fact]
+    public void AGenerationAboutToBeDeletedIsNotCompressedFirst()
+    {
+        var files = new FakeFiles(@"C:\logs\app.log", @"C:\logs\app.log.1");
+
+        var plan = PlanOver(Job(rotate: 1, delayCompress: true), files);
+
+        plan.Operations.ShouldNotContain(o => o.Action == PlannedAction.Compress);
+        plan.Operations.ShouldContain(o =>
+            o.Action == PlannedAction.Delete && o.Source.EndsWith("app.log.1", StringComparison.Ordinal));
     }
 
     // ---- dateext ------------------------------------------------------------------------

@@ -18,7 +18,7 @@ This page is the honest account of what matches, what differs, and what cannot e
 | `weekly 7` | Pure seven-day spacing, ignoring the weekday. |
 | `monthly 31` in February | Falls back to the last day of the month, or it would never fire. |
 | **`dateext` never overwrites** | Rotating twice inside one date-format period is an error, not a silent loss of the earlier archive. Numbered rotation overwrites silently, as upstream does. |
-| `delaycompress` | The newest generation stays uncompressed for one cycle, and is compressed at the start of the next run so the chain is uniformly named before anything shifts. |
+| `delaycompress` | The newest generation stays uncompressed for one cycle, and is compressed at the start of the next run so the chain is uniformly named before anything shifts. With `rotate = 1` or `rotate = 0` that generation is also the one retention disposes of this pass, so it is deleted rather than compressed first. |
 | Numbered shift order | From the highest index downward, so a move never lands on a file that has not itself moved yet. |
 | Exit codes 0, 1, 3 | Unchanged, and 1 still writes state - a failing job must not make the healthy ones re-rotate forever. |
 

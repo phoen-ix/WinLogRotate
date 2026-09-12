@@ -86,22 +86,44 @@ public static class RotateJobPlanner
         var live = generation.Live;
         var byIndex = ChainByIndex(job, generation, report);
 
+        // Whether the count will dispose of this index rather than shift it. Asked before the
+        // catch-up compress as well as inside the shift, because compressing a generation this
+        // same pass is about to delete is work done to fill a bin - and with rotate = 1 that is
+        // the newest archive, every run, for ever.
+        bool Doomed(int index) =>
+            job.Rotate >= 0 && index >= job.Rotate + job.Start - 1 && byIndex.Count >= job.Rotate;
+
         // Step 1: the generation delaycompress deferred last time. Compressing it now means the
         // shift below operates on a uniformly-named chain. This also covers the awkward case
         // where an operator turned delaycompress off and left one uncompressed file stranded
         // among compressed ones.
         if (job is { DelayCompress: true, CompressType: not CompressType.None }
+            && !Doomed(job.Start)
             && byIndex.TryGetValue(job.Start, out var newest)
             && newest.FirstOrDefault(a => !a.IsCompressed) is { } deferred)
         {
+            var archive = deferred.Path + Compressor.Extension(job.CompressType);
+
             operations.Add(new PlannedOp
             {
                 Action = PlannedAction.Compress,
                 Source = deferred.Path,
-                Destination = deferred.Path + Compressor.Extension(job.CompressType),
+                Destination = archive,
                 Reason = "delaycompress deferred this from the previous rotation",
                 Bytes = deferred.Length,
             });
+
+            // The shift must move what compression leaves behind, not what it consumed.
+            // Compressor.Compress deletes its source, and the chain was read before this step, so
+            // the shift went on to rename a file that no longer existed - and to rename it to the
+            // uncompressed name, because the entry still said IsCompressed = false. That is one
+            // failed operation and one archive stranded below the retention window, every night,
+            // on every job with delaycompress and compression both on.
+            newest[newest.IndexOf(deferred)] = deferred with
+            {
+                File = deferred.File with { Path = archive },
+                IsCompressed = true,
+            };
         }
 
         // Step 2: shift downward from the top so a move never lands on a file that has not yet
@@ -119,9 +141,7 @@ public static class RotateJobPlanner
             // holds two spellings they go together, in both directions: the pair is one generation
             // as far as retention is concerned, and splitting it would delete an archive on the
             // strength of a guess about which of the two is redundant.
-            var doomed = job.Rotate >= 0
-                && index >= job.Rotate + job.Start - 1
-                && byIndex.Count >= job.Rotate;
+            var doomed = Doomed(index);
 
             foreach (var archive in at)
             {
