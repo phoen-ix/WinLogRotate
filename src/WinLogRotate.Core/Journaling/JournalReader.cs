@@ -79,6 +79,18 @@ public sealed class JournalReader(string journalDirectory)
     /// </summary>
     public int SkippedLines { get; private set; }
 
+    /// <summary>
+    /// Journal files that could not be opened, or could not be read to the end.
+    /// </summary>
+    /// <remarks>
+    /// Distinct from <see cref="SkippedLines"/>, which counts lines inside a file that was read.
+    /// One unreadable file among thirty is a day lost; reporting it as torn lines would say the
+    /// day was read and found damaged, which is the opposite of what happened.
+    /// </remarks>
+    public IReadOnlyList<string> Unreadable => _unreadable;
+
+    private readonly List<string> _unreadable = [];
+
     public IEnumerable<CliEvent> Read(JournalFilter? filter = null)
     {
         if (!Directory.Exists(journalDirectory))
@@ -192,50 +204,129 @@ public sealed class JournalReader(string journalDirectory)
 
     private IEnumerable<CliEvent> ReadFile(string path)
     {
-        // Share everything: a run may be appending to this very file while we read it.
-        using var stream = new FileStream(
-            path, FileMode.Open, FileAccess.Read,
-            FileShare.ReadWrite | FileShare.Delete);
+        // Opened outside the iteration, because a yield return cannot live inside a try with a
+        // catch. So the open is a statement and the decision below is a null check.
+        FileStream? stream = null;
+        ZipArchive? archive = null;
+        StreamReader? reader = null;
 
-        // Disposed in the reverse order they were opened, by the iterator, whichever branch ran.
-        // A zip's entry stream outlives nothing: the archive has to stay open around it.
-        using var archive = path.EndsWith(".zip", StringComparison.OrdinalIgnoreCase)
-            ? new ZipArchive(stream, ZipArchiveMode.Read)
-            : null;
+        try
+        {
+            // Share everything: a run may be appending to this very file while we read it.
+            stream = new FileStream(
+                path, FileMode.Open, FileAccess.Read,
+                FileShare.ReadWrite | FileShare.Delete);
 
-        var content = archive is not null
-            ? archive.Entries.Count > 0 ? archive.Entries[0].Open() : Stream.Null
-            : path.EndsWith(".gz", StringComparison.OrdinalIgnoreCase)
+            // A zip's entry stream outlives nothing: the archive has to stay open around it.
+            archive = path.EndsWith(".zip", StringComparison.OrdinalIgnoreCase)
+                ? new ZipArchive(stream, ZipArchiveMode.Read)
+                : null;
+
+            reader = new StreamReader(Contents(path, stream, archive));
+        }
+        catch (Exception e) when (e is IOException
+                                      or UnauthorizedAccessException
+                                      or InvalidDataException)
+        {
+            // Recorded, not thrown. Opened inside the iterator, this exception travelled through
+            // JournalCommand's .ToArray() to CommandContext.Guarded and came back as LR1006,
+            // exit 4 - "This is a defect. Nothing about what was or was not done can be relied
+            // on" - about a directory in which twenty-nine other days were perfectly readable.
+            // The write half was guarded a milestone ago and docs/diagnostics.md has promised
+            // LR3106 rather than exit 4 ever since; it meant only the writer.
+            reader?.Dispose();
+            archive?.Dispose();
+            stream?.Dispose();
+
+            _unreadable.Add(path);
+        }
+
+        if (reader is null)
+        {
+            yield break;
+        }
+
+        using (stream)
+        using (archive)
+        using (reader)
+        {
+            while (true)
+            {
+                string? line;
+
+                try
+                {
+                    line = reader.ReadLine();
+                }
+                catch (Exception e) when (e is IOException or InvalidDataException)
+                {
+                    // The corruption that actually happens, and the one the open cannot see. A
+                    // zip with an intact central directory and a damaged entry body, or a gzip
+                    // with a valid header and a damaged deflate stream, throws here and not
+                    // there - and InvalidDataException does not derive from IOException, so
+                    // catching only the latter would have left the commonest case reaching exit
+                    // 4. A crash between Compressor writing its .tmp and moving it leaves
+                    // exactly this.
+                    _unreadable.Add(path);
+                    yield break;
+                }
+
+                if (line is null)
+                {
+                    yield break;
+                }
+
+                if (line.Length == 0)
+                {
+                    continue;
+                }
+
+                CliEvent? entry;
+                try
+                {
+                    entry = JsonSerializer.Deserialize(line, CliEventJson.Default.CliEvent);
+                }
+                catch (JsonException)
+                {
+                    SkippedLines++;
+                    continue;
+                }
+
+                if (entry is null)
+                {
+                    SkippedLines++;
+                    continue;
+                }
+
+                yield return entry;
+            }
+        }
+    }
+
+    /// <summary>The NDJSON inside one journal file, whatever it is wrapped in.</summary>
+    /// <remarks>
+    /// An archive holding anything but one entry throws rather than reading its first. Compressor
+    /// writes exactly one, named for the file it compressed; any other number was not written by
+    /// this product, and reading part of a record as the whole of it is worse than saying the day
+    /// could not be read. Zero entries used to be <c>Stream.Null</c> - a silently empty day, no
+    /// skipped lines, no casualty, nothing said at all.
+    /// </remarks>
+    private static Stream Contents(string path, FileStream stream, ZipArchive? archive)
+    {
+        if (archive is null)
+        {
+            return path.EndsWith(".gz", StringComparison.OrdinalIgnoreCase)
                 ? new GZipStream(stream, CompressionMode.Decompress)
                 : stream;
-
-        using var reader = new StreamReader(content);
-
-        while (reader.ReadLine() is { } line)
-        {
-            if (line.Length == 0)
-            {
-                continue;
-            }
-
-            CliEvent? entry;
-            try
-            {
-                entry = JsonSerializer.Deserialize(line, CliEventJson.Default.CliEvent);
-            }
-            catch (JsonException)
-            {
-                SkippedLines++;
-                continue;
-            }
-
-            if (entry is null)
-            {
-                SkippedLines++;
-                continue;
-            }
-
-            yield return entry;
         }
+
+        if (archive.Entries.Count != 1)
+        {
+            throw new InvalidDataException(
+                $"{Path.GetFileName(path)} holds {archive.Entries.Count} entries; "
+                + "a journal archive holds one.");
+        }
+
+        return archive.Entries[0].Open();
     }
 }

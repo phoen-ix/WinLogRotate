@@ -67,6 +67,30 @@ internal static class JournalCommand
             ctx.Output.Line($"no journal entries in {paths.JournalDirectory}");
         }
 
+        if (reader.Unreadable.Count > 0)
+        {
+            // One diagnostic naming the count and the first file, never one per file. Every
+            // non-json invocation on Windows mirrors Warnings to the Application log, and a
+            // journal directory whose permissions were tightened would otherwise write an event
+            // 138 per archive on every interactive run of a verb that changes nothing - which is
+            // precisely how an administrator decides this source is noise and filters away the
+            // one event that mattered. The full list is in result.unreadableFiles.
+            var first = Path.GetFileName(reader.Unreadable[0]);
+
+            ctx.Output.Diagnostic(new CliDiagnostic
+            {
+                Severity = Severity.Warning,
+                Code = DiagnosticCode.JournalUnavailable,
+                Message = reader.Unreadable.Count == 1
+                    ? $"A journal file could not be read: {first}."
+                    : $"{reader.Unreadable.Count} journal files could not be read, the first being {first}.",
+                Path = paths.JournalDirectory,
+                Job = JournalMaintenance.JobName,
+                Remedy = "Every other day is reported above. Check that file's permissions, or "
+                       + "remove it if it is a truncated archive.",
+            });
+        }
+
         if (reader.SkippedLines > 0)
         {
             // Not an error: a run killed mid-write leaves a torn final line, and reporting the
@@ -79,6 +103,7 @@ internal static class JournalCommand
             Directory = paths.JournalDirectory,
             Count = entries.Count,
             SkippedLines = reader.SkippedLines,
+            UnreadableFiles = [.. reader.Unreadable],
             Entries = entries,
         };
 

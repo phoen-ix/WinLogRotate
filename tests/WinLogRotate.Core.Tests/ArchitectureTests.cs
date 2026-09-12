@@ -1077,7 +1077,7 @@ public partial class ArchitectureTests
         [nameof(DiagnosticCode.NulFillDetected)] = ["LockChoice.cs"],
         [nameof(DiagnosticCode.HookFailed)] = ["HookRunner.cs"],
         [nameof(DiagnosticCode.StateNotSaved)] = ["RotationRunner.cs"],
-        [nameof(DiagnosticCode.JournalUnavailable)] = ["RunCommand.cs"],
+        [nameof(DiagnosticCode.JournalUnavailable)] = ["JournalCommand.cs", "RunCommand.cs"],
         [nameof(DiagnosticCode.StateUnreadable)] = ["RunCommand.cs"],
         [nameof(DiagnosticCode.DuplicateGeneration)] = ["RotateJobPlanner.cs"],
         [nameof(DiagnosticCode.NoRunHost)] = ["DoctorCommand.cs", "HostCommand.cs"],

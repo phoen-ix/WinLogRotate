@@ -26,6 +26,7 @@ result.entries[].src : String
 result.entries[].strategy : String
 result.entries[].ts : String
 result.skippedLines : Number
+result.unreadableFiles[] : String
 schema : Number
 verb : String
 version : String

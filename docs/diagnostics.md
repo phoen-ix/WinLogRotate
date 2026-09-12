@@ -134,7 +134,7 @@ mean the same thing wherever it is read.
 | 135 | Error | A hook ran and failed, timed out, or could not be started | `LR3103` |
 | 136 | Warning | One rotation index is held by two files; both were kept | `LR3104` |
 | 137 | Error | The rotation clocks could not be written; every log is due again | `LR3105` |
-| 138 | Warning | The journal is unavailable; the rotation carried on without it | `LR3106` |
+| 138 | Warning | A journal file could not be written or read; what could be done carried on without it | `LR3106` |
 | 139 | Warning | The rotation clocks could not be read; a fresh baseline was started | `LR3107` |
 | 140 | Warning | No run host is registered | `LR4001` |
 | 141 | Warning | The run host this install was set up with is no longer registered | `LR4002` |
@@ -211,7 +211,7 @@ the journal.
 | What failed | Now | Then |
 |---|---|---|
 | the rotation clocks | `LR3105`, exit 1 | `LR1006`, exit 4 |
-| opening or writing the journal | `LR3106`, the run continues | `LR1006`, exit 4, mid-rotation |
+| opening, writing or reading the journal | `LR3106`, the run continues | `LR1006`, exit 4, mid-rotation |
 | the secret store | `LR9008`, exit 1 | `LR1006`, exit 4 |
 
 `LR3105` is the one to watch. Nothing was lost when it fires, but the clocks were not written, so

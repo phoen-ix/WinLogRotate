@@ -177,4 +177,81 @@ public sealed class JournalReadSideTests : IDisposable
             .Select(e => e.Job)
             .ShouldBe(["yesterday", "today"]);
     }
+
+    /// <summary>
+    /// A journal file that cannot be read costs that day and nothing else.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// The read half of what the write half was given a milestone ago. Opened inside an
+    /// iterator, the exception travelled through <c>JournalCommand</c>'s <c>.ToArray()</c> to
+    /// <c>CommandContext.Guarded</c> and came back as <c>LR1006</c>, exit 4 - <i>"This is a
+    /// defect. Nothing about what was or was not done can be relied on"</i> - about a directory
+    /// in which twenty-nine other days were perfectly readable. <c>docs/diagnostics.md</c> has
+    /// promised <c>LR3106</c> rather than exit 4 for the journal ever since; it meant the writer.
+    /// </para>
+    /// <para>
+    /// Both corruptions are asserted, because they throw in different places and only one of
+    /// them was ever going to be caught by guarding the open. A zip truncated to its signature
+    /// fails in the <c>ZipArchive</c> constructor; a gzip with a valid header and a damaged body
+    /// fails at the first <c>ReadLine</c>, as <c>InvalidDataException</c> - which does not
+    /// derive from <c>IOException</c>, so catching only that would have left the commonest case
+    /// reaching exit 4. A crash between <c>Compressor</c> writing its <c>.tmp</c> and moving it
+    /// leaves exactly these.
+    /// </para>
+    /// <para>
+    /// The surviving days are named, not counted, and the casualty is named too: a guard that
+    /// swallowed the failure silently would pass an assertion about how many days came back.
+    /// </para>
+    /// </remarks>
+    [Theory]
+    [InlineData("journal-2026-09-11.ndjson.zip", "PK\u0003\u0004 and then nothing at all")]
+    [InlineData("journal-2026-09-11.ndjson.gz", "\u001f\u008b\u0008\u0000 and then nothing at all")]
+    public void AJournalFileThatCannotBeReadCostsThatDayAndNothingElse(string name, string rubbish)
+    {
+        Write("journal-2026-09-10.ndjson", Entry("2026-09-10T01:00:00.0000000+00:00", "oldest", "01OLD"));
+        Write("journal-2026-09-12.ndjson", Entry("2026-09-12T01:00:00.0000000+00:00", "today", "01NEW"));
+
+        File.WriteAllBytes(
+            Path.Combine(_dir.FullName, name),
+            System.Text.Encoding.Latin1.GetBytes(rubbish));
+
+        var reader = new JournalReader(_dir.FullName);
+        var jobs = reader.Read().Select(e => e.Job).ToArray();
+
+        jobs.ShouldBe(["oldest", "today"]);
+
+        Path.GetFileName(reader.Unreadable.ShouldHaveSingleItem()).ShouldBe(name);
+        reader.SkippedLines.ShouldBe(0, "a file that never opened has no lines to skip");
+    }
+
+    /// <summary>
+    /// An archive holding anything but one entry is a casualty, not an empty day.
+    /// </summary>
+    /// <remarks>
+    /// <c>Compressor</c> writes exactly one entry, named for the file it compressed. Zero
+    /// entries used to read as <c>Stream.Null</c>: a day that silently contained nothing, with
+    /// no skipped lines and no casualty, so the verb printed the other days and said nothing at
+    /// all about this one. Reading the first of several would be worse - part of a record
+    /// reported as the whole of it.
+    /// </remarks>
+    [Fact]
+    public void AnArchiveThatIsNotOneJournalIsACasualty()
+    {
+        Write("journal-2026-09-12.ndjson", Entry("2026-09-12T01:00:00.0000000+00:00", "today"));
+
+        var path = Path.Combine(_dir.FullName, "journal-2026-09-11.ndjson.zip");
+
+        using (var file = File.Create(path))
+        using (var archive = new ZipArchive(file, ZipArchiveMode.Create))
+        {
+            // Empty on purpose. The two-entry case reaches the same throw by the same test.
+        }
+
+        var reader = new JournalReader(_dir.FullName);
+
+        reader.Read().Select(e => e.Job).ShouldBe(["today"]);
+        Path.GetFileName(reader.Unreadable.ShouldHaveSingleItem())
+            .ShouldBe("journal-2026-09-11.ndjson.zip");
+    }
 }

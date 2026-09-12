@@ -77,6 +77,14 @@ public sealed record JournalResult
     /// was killed. Surfaced rather than swallowed, because it is a clue.</summary>
     public required int SkippedLines { get; init; }
 
+    /// <summary>Journal files that could not be opened, or could not be read to the end.</summary>
+    /// <remarks>
+    /// Distinct from <see cref="SkippedLines"/>. A torn line is a day read and found damaged; an
+    /// unreadable file is a day that was never read at all, and the entries below are the other
+    /// twenty-nine.
+    /// </remarks>
+    public required IReadOnlyList<string> UnreadableFiles { get; init; }
+
     public required IReadOnlyList<CliEvent> Entries { get; init; }
 }
 

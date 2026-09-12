@@ -287,6 +287,11 @@ public sealed class EnvelopeShapeTests
             {
                 Directory = @"C:\ProgramData\WinLogRotate\journal",
                 Count = 1,
+
+                // Populated, not empty. EnvelopeShapeTests records an empty array as "(empty)"
+                // rather than by element type, so an empty fixture would pin a shape that says
+                // nothing about what the field carries.
+                UnreadableFiles = [@"C:\ProgramData\WinLogRotate\journal\journal-2026-09-10.ndjson.zip"],
                 Entries =
                 [
                     new CliEvent

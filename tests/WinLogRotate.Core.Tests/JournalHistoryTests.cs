@@ -67,6 +67,7 @@ public sealed class JournalHistoryTests : IDisposable
                     Directory = @"C:\ProgramData\WinLogRotate\journal",
                     Count = 1,
                     SkippedLines = 0,
+                    UnreadableFiles = [],
                     Entries = [entry],
                 },
                 Diagnostics = [],
