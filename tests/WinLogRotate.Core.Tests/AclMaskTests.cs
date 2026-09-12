@@ -66,6 +66,49 @@ public sealed class AclMaskTests
         AclMask.GrantsWrite(right).ShouldBeFalse();
     }
 
+    /// <summary>
+    /// An ACE carrying only a generic right is a write grant.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// Written as literals, not as <c>AclMask.GenericAll</c>. Every other theory in this file
+    /// feeds the mask its own constants back, so it agrees with the implementation by
+    /// construction and would stay green if the constant's value were wrong. These two numbers
+    /// come from <c>winnt.h</c>, and the point of the test is that they are the numbers.
+    /// </para>
+    /// <para>
+    /// <c>(A;OICI;GA;;;WD)</c> is a legal, ordinary way to spell "Everyone, full control" - it
+    /// is what <c>icacls /grant Everyone:(F)</c> leaves behind on some paths, and it is what an
+    /// attacker would write deliberately once they knew the guard could not see it. Stored
+    /// verbatim, it cleared every specific bit the mask looked at, so the guard read a
+    /// world-writable directory as Hardened and let its hooks run as SYSTEM.
+    /// </para>
+    /// </remarks>
+    [Theory]
+    [InlineData(0x10000000)] // GENERIC_ALL
+    [InlineData(0x40000000)] // GENERIC_WRITE
+    public void AGenericRightsAceCountsAsWrite(int right)
+    {
+        AclMask.GrantsWrite(right).ShouldBeTrue();
+    }
+
+    /// <summary>
+    /// Generic read and generic execute are still not write, for the reason FullControl is not.
+    /// </summary>
+    /// <remarks>
+    /// The failure mode of over-correcting. <c>Sddl.ConfigDirectory</c> grants Users read and
+    /// execute on purpose so the unelevated GUI works; a mask that swept in every generic bit
+    /// would report the correct hardening as a breach and refuse every hook, which is the
+    /// regression this whole file was written for.
+    /// </remarks>
+    [Theory]
+    [InlineData(unchecked((int)0x80000000))] // GENERIC_READ
+    [InlineData(0x20000000)]                 // GENERIC_EXECUTE
+    public void AGenericReadingRightIsStillNotWrite(int right)
+    {
+        AclMask.GrantsWrite(right).ShouldBeFalse();
+    }
+
     [Fact]
     public void NothingCountsAsWriteByDefault()
     {

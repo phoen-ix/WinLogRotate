@@ -32,6 +32,30 @@ internal static class AclMask
     /// </summary>
     public const int UsersReadExecute = 0x1200A9;
 
+    /// <summary>GENERIC_ALL and GENERIC_WRITE, which an ACE can carry verbatim.</summary>
+    /// <remarks>
+    /// <para>
+    /// Windows maps the generic bits onto specific ones at access-check time, not at set time.
+    /// A descriptor applied from an SDDL string containing <c>GA</c> therefore stores 0x10000000
+    /// and nothing else: every specific bit below is clear, <see cref="GrantsWrite"/> answered
+    /// false, and a directory Everyone could write reported as Hardened.
+    /// </para>
+    /// <para>
+    /// The PowerShell half of this same check has looked for <c>GA</c> since it was written -
+    /// <c>.github/scripts/installer-smoke-helpers.ps1</c> - and the C# half never did. Two
+    /// spellings of one rule, which is the thing this file exists to prevent.
+    /// </para>
+    /// <para>
+    /// GENERIC_READ (0x80000000) and GENERIC_EXECUTE (0x20000000) are deliberately absent, for
+    /// the same reason <see cref="FullControl"/> is: Users are granted read on purpose, and a
+    /// mask of write-ish rights that matches a read grant refuses every hook on every install.
+    /// </para>
+    /// </remarks>
+    public const int GenericAll = 0x10000000;
+
+    /// <inheritdoc cref="GenericAll"/>
+    public const int GenericWrite = 0x40000000;
+
     /// <summary>
     /// Rights that amount to being able to change what the run host executes.
     /// </summary>
@@ -56,7 +80,8 @@ internal static class AclMask
     /// </remarks>
     public const int Writeish =
         WriteData | AppendData | WriteExtendedAttributes | DeleteSubdirectoriesAndFiles |
-        WriteAttributes | Delete | ChangePermissions | TakeOwnership;
+        WriteAttributes | Delete | ChangePermissions | TakeOwnership |
+        GenericAll | GenericWrite;
 
     /// <summary>True if <paramref name="rights"/> confers any ability to change our contents.</summary>
     public static bool GrantsWrite(int rights) => (rights & Writeish) != 0;
