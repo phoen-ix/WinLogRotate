@@ -472,6 +472,37 @@ jobs:
           )
           Set-Content -Path "$env:DATA_DIR\conf.d\smoke-rotate.toml" -Value $rotate
 
+          # And a job for the scheduled task to do, staged here so the administrator runs below
+          # teach state about the file while leaving it alone.
+          #
+          # Until this existed the SYSTEM run proved nothing. It fired after `run --catchup` had
+          # already rotated everything and after a second run that correctly declined, so it found
+          # nothing due - and the two assertions that followed it, that state.json and the journal
+          # directory exist, were satisfied by files the installer and the administrator had made
+          # minutes earlier. README.md listed SYSTEM "actually deleting and compressing files"
+          # among the things proven on a real machine.
+          #
+          # size is the criterion because it ignores the calendar entirely: the log sits below the
+          # threshold while the administrator runs, is grown past it afterwards, and the task is
+          # the only thing that runs in between. It is deliberately not new to state by then - a
+          # first sighting without --catchup is baselined rather than rotated, and the task runs a
+          # plain `run`.
+          New-Item -ItemType Directory -Force "C:\smoke\sys" | Out-Null
+          Set-Content -Path 'C:\smoke\sys\svc.log' -Value 'below the threshold' -NoNewline
+
+          $sized = @(
+            'schema = 1',
+            '[job]',
+            'name  = "smoke-system"',
+            'kind  = "rotate"',
+            'paths = ["C:/smoke/sys/svc.log"]',
+            'size     = "64k"',
+            'rotate   = 1',
+            'compress = false',
+            'notifempty = false'
+          )
+          Set-Content -Path "$env:DATA_DIR\conf.d\smoke-system.toml" -Value $sized
+
           & $exe config check --json | Out-Host
           & $exe run --dry-run --verbose | Out-Host
 
@@ -513,8 +544,29 @@ jobs:
             throw 'A run that rotated nothing still ran the hook; a reload must follow a rotation, not a schedule.'
           }
 
+          # Now give the task something no run above could have done. Both administrator runs
+          # have been and gone; this log crosses its size threshold only now.
+          Set-Content -Path 'C:\smoke\sys\svc.log' -Value ('x' * 70000) -NoNewline
+
+          # The floor. Without it everything below could be satisfied by work somebody else did,
+          # which is precisely the state this step used to be in.
+          if (Test-Path 'C:\smoke\sys\svc.log.1') {
+            throw 'Something rotated the size-triggered log before the task ran, so what follows would prove nothing.'
+          }
+
           $result = Wait-TaskResult -TaskPath $env:TASK_PATH -TaskName $env:TASK_NAME
           if ($result -ne 0) { throw "The scheduled task exited 0x$('{0:X}' -f $result)." }
+
+          # SYSTEM, and nothing else, did this.
+          if (-not (Test-Path 'C:\smoke\sys\svc.log.1')) {
+            throw 'The SYSTEM run did not rotate the size-triggered log, so the task ran and did nothing.'
+          }
+          if ((Get-Item 'C:\smoke\sys\svc.log.1').Length -ne 70000) {
+            throw 'The archive SYSTEM produced is not the log that crossed the threshold.'
+          }
+          if ((Get-Item 'C:\smoke\sys\svc.log').Length -ne 0) {
+            throw 'SYSTEM did not recreate the live log, so the writer would append to the archive.'
+          }
 
           if (-not (Test-Path "$env:DATA_DIR\state.json")) {
             throw 'The SYSTEM run wrote no state file, so it did not actually get that far.'
@@ -523,7 +575,12 @@ jobs:
             throw 'The SYSTEM run wrote no journal.'
           }
           "  journal:"; Get-ChildItem "$env:DATA_DIR\journal" | ForEach-Object { "    $($_.Name)" }
-          & $exe journal | Select-Object -First 10 | Out-Host
+          # Captured before it is trimmed. This is the last command in the step, so its exit code
+          # is the step's verdict - and Select-Object -First closes the pipeline early once the
+          # journal holds more entries than it prints, which it now does.
+          $journal = & $exe journal
+          if ($LASTEXITCODE -ne 0) { throw "journal exited $LASTEXITCODE after the SYSTEM run" }
+          $journal | Select-Object -First 12 | Out-Host
 
       # The gate exists so a second rotation is refused rather than running over the first, and it
       # could not do that: the descriptor granted Everyone Synchronize and Modify while
