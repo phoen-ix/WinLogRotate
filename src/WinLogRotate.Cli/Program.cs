@@ -20,7 +20,7 @@ internal static class Program
             // and reports through its own sink, so nothing should reach the library's net - and if
             // something does, it must not be quietly relabelled as a rotation.
             return parse.Errors.Count > 0
-                ? ParseErrorReporter.Report(parse)
+                ? ParseErrorReporter.Report(parse, args)
                 : parse.Invoke(new InvocationConfiguration { EnableDefaultExceptionHandler = false });
         }
         catch (Exception e)

@@ -205,8 +205,9 @@ public sealed class CliIdentityTests : IDisposable
     /// The reason <c>CliIdentity.Arguments</c> exists and the reason the probe must not go
     /// through <c>CliArgs.For</c> - recorded as an outcome rather than as a comment somebody can
     /// delete. The root command declares no <c>--config-dir</c>, so appending one never reaches a
-    /// handler: it short-circuits to <c>ParseErrorReporter</c>, which writes to stderr and
-    /// returns exit 2, and no envelope is produced at all.
+    /// handler: it short-circuits to <c>ParseErrorReporter</c> and returns exit 2. That reporter
+    /// now answers in JSON when the caller asked for it, so an envelope <i>is</i> produced - but
+    /// it is the root command's parse failure, carrying no version, so the probe is no better off.
     /// </para>
     /// <para>
     /// Driven through the real reporter, so the second half is the product's own output: what the
@@ -222,27 +223,35 @@ public sealed class CliIdentityTests : IDisposable
 
         wrong.Errors.ShouldNotBeEmpty("the root verb takes no --config-dir");
 
-        var before = Console.Error;
-        var captured = new StringWriter();
+        var beforeError = Console.Error;
+        var beforeOut = Console.Out;
+        var capturedError = new StringWriter();
+        var capturedOut = new StringWriter();
 
         int exit;
         try
         {
-            Console.SetError(captured);
-            exit = ParseErrorReporter.Report(wrong);
+            Console.SetError(capturedError);
+            Console.SetOut(capturedOut);
+            exit = ParseErrorReporter.Report(wrong, CliArgs.For(_dir.FullName, CliIdentity.Arguments));
         }
         finally
         {
-            Console.SetError(before);
+            Console.SetError(beforeError);
+            Console.SetOut(beforeOut);
         }
 
         exit.ShouldBe(ExitCode.ConfigInvalid);
 
+        // Both streams, as the GUI would receive them. The probe passes --json, so the parse
+        // error now answers as an envelope rather than as bare stderr - and the point of this
+        // test survives that: an envelope from the root command carries no version, so the window
+        // still cannot learn what it is talking to.
         CliIdentity.Inspect(new CliResult
         {
             ExitCode = exit,
-            StdOut = "",
-            StdErr = captured.ToString(),
+            StdOut = capturedOut.ToString(),
+            StdErr = capturedError.ToString(),
         }).Verdict.ShouldBe(CliIdentityVerdict.Unreadable);
 
         // And the arguments the probe actually uses parse cleanly.

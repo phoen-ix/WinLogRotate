@@ -138,11 +138,20 @@ public sealed record CliIdentity
             };
         }
 
+        // A well-formed envelope that reports a failure is not an answer to "what are you".
+        // Every envelope carries product, schema and version - failures included - so without
+        // this, a parse error from the right executable reads as a healthy CLI. That became
+        // reachable the moment ParseErrorReporter learned to answer in JSON; the weakness was
+        // here all along, hidden behind a verb that produced no envelope when it failed.
+        var answered = !root.TryGetProperty("ok", out var ok) || ok.ValueKind != JsonValueKind.False;
+
         return new CliIdentity
         {
-            Verdict = schema == ProductInfo.ContractSchema
-                ? CliIdentityVerdict.Ok
-                : CliIdentityVerdict.SchemaMismatch,
+            // Schema first: a mismatch is the more useful thing to say, and it is true whether or
+            // not this particular invocation succeeded.
+            Verdict = schema != ProductInfo.ContractSchema ? CliIdentityVerdict.SchemaMismatch
+                : answered ? CliIdentityVerdict.Ok
+                : CliIdentityVerdict.Unreadable,
             Product = product,
             Version = version,
             Schema = schema,
