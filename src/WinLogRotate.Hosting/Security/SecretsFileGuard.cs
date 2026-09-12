@@ -32,6 +32,51 @@ public sealed record SecretsAclFinding
 }
 
 /// <summary>
+/// Whether one descriptor keeps <c>secrets.dat</c> to the principals that may read it.
+/// </summary>
+/// <remarks>
+/// <para>
+/// Unannotated, so the whole of the decision runs on both CI legs. <see cref="AclJudgement"/>
+/// gives the argument in full; the short version is that a rule only windows-2025 can execute is
+/// a rule nobody keeps, and this file's owner rule went six milestones without one.
+/// </para>
+/// <para>
+/// The opposite question to <see cref="AclJudgement"/>'s. That one asks who can <i>write</i>,
+/// because writing a job file is SYSTEM code execution. This asks who can read at all: reading a
+/// stored credential is the whole harm, so any grant to anyone outside the trusted set counts,
+/// read-only ones included.
+/// </para>
+/// </remarks>
+internal static class SecretsAclJudgement
+{
+    internal static (SecretsAclVerdict Verdict, IReadOnlyList<string> Offending) Judge(
+        AclJudgement.Subject subject, IReadOnlySet<string> trusted)
+    {
+        // An owner holds implicit WRITE_DAC, so it can grant itself read whenever it likes - and
+        // the DACL check below would go on reporting Hardened right up until it did. This is the
+        // same hole the configuration directory's gate had, in the file that holds credentials.
+        // Sddl.SecretsFile sets O:BA, so Apply has always produced the right owner; nothing ever
+        // checked that the file on disk still had it.
+        if (subject.OwnerSid is { } owner && !trusted.Contains(owner))
+        {
+            return (SecretsAclVerdict.TooOpen, [$"owner: {subject.OwnerDescribe}"]);
+        }
+
+        // Compared against an allowed set rather than against a list of bad principals, which is
+        // the difference between a check and a guess: BUILTIN\Users is the entry this exists to
+        // catch, but it is not the only one that could appear.
+        var unexpected = subject.Allow
+            .Where(ace => !trusted.Contains(ace.Sid))
+            .Select(ace => ace.Sid)
+            .ToList();
+
+        return unexpected.Count > 0
+            ? (SecretsAclVerdict.TooOpen, unexpected)
+            : (SecretsAclVerdict.Hardened, []);
+    }
+}
+
+/// <summary>
 /// Applies and verifies the descriptor on <c>secrets.dat</c>.
 /// </summary>
 /// <remarks>
@@ -85,10 +130,6 @@ public static class SecretsFileGuard
             };
         }
 
-        // Anyone permitted beyond SYSTEM, Administrators and the expected per-user owner is a
-        // finding. Comparing against an allowed set rather than looking for specific bad
-        // principals is the difference between a check and a guess: BUILTIN\Users is the ACE
-        // this exists to catch, but it is not the only one that could appear.
         var allowed = new HashSet<string>(StringComparer.OrdinalIgnoreCase)
         {
             Sddl.WellKnown.LocalSystem,
@@ -100,7 +141,7 @@ public static class SecretsFileGuard
             allowed.Add(ownerSid);
         }
 
-        var unexpected = new List<string>();
+        var entries = new List<AclJudgement.Ace>();
         foreach (FileSystemAccessRule rule in
                  security.GetAccessRules(true, true, typeof(SecurityIdentifier)))
         {
@@ -109,22 +150,32 @@ public static class SecretsFileGuard
                 continue;
             }
 
-            var sid = rule.IdentityReference.Value;
-            if (!allowed.Contains(sid))
-            {
-                unexpected.Add(sid);
-            }
+            var sid = ((SecurityIdentifier)rule.IdentityReference).Value;
+            entries.Add(new AclJudgement.Ace(sid, (int)rule.FileSystemRights, sid));
         }
 
-        if (unexpected.Count > 0)
+        var fileOwner = security.GetOwner(typeof(SecurityIdentifier)) as SecurityIdentifier;
+
+        var (verdict, offending) = SecretsAclJudgement.Judge(
+            new AclJudgement.Subject(
+                path,
+                IsDirectory: false,
+                fileOwner?.Value,
+                fileOwner?.Value ?? "an owner the system would not name",
+                entries,
+                Protected: true),
+            allowed);
+
+        if (verdict != SecretsAclVerdict.Hardened)
         {
             return new SecretsAclFinding
             {
-                Verdict = SecretsAclVerdict.TooOpen,
+                Verdict = verdict,
                 Path = path,
-                Detail = $"The secrets file grants access to {string.Join(", ", unexpected)}.",
+                Detail = $"The secrets file grants access to {string.Join(", ", offending)}.",
                 Remedy = $"icacls \"{path}\" /inheritance:r /grant *{Sddl.WellKnown.LocalSystem}:F "
-                         + $"/grant *{Sddl.WellKnown.Administrators}:F",
+                         + $"/grant *{Sddl.WellKnown.Administrators}:F "
+                         + $"&& icacls \"{path}\" /setowner *{Sddl.WellKnown.Administrators}",
             };
         }
 
