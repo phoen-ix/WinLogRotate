@@ -56,6 +56,19 @@ This is deliberately **not** Windows' own rule. `CreateProcess`, handed the firs
 `C:\Program.exe` before `C:\Program Files\App\reload.exe` — a well-known privilege-escalation class,
 and this code runs as SYSTEM.
 
+**The decision is made from the text alone.** An extension — `.exe`, `.com`, `.bat`, `.cmd` — says
+where the program ends; nothing else does, and the disk is never consulted. So the same hook is
+accepted or refused identically on every machine and in every order, you can tell which by reading
+the file, and `winlogrotate config check` cannot disagree with `run` because something appeared
+between them.
+
+> **Fixed in v0.11.1, and worth knowing if you are upgrading.** Until then the first token was
+> looked up on disk, so a file at `C:\Program` made the refused form above resolve to
+> `C:\Program` — with `Files\App\reload.exe --now` as its arguments — and start it as SYSTEM.
+> That is the first leg of the rule this section says is not used. One consequence for existing
+> configurations: an unquoted program path that contains a space and has **no** extension is now
+> refused rather than looked up. Quote it, as the second example does.
+
 Two further rules, for the same reason:
 
 - **The program must be an absolute path.** `command:net stop x` is refused; resolving a bare name

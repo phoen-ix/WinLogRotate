@@ -192,7 +192,8 @@ strategy is refused for that path from then on. See [hooks](docs/hooks.md) for t
 
 `postrotate` replaces `kill -HUP`, which Windows doesn't have: `service:paramchange:NAME` sends
 `SERVICE_CONTROL_PARAMCHANGE`, `event:Global\Name` signals a named event, and `command:` runs a
-program — no shell, ever, and an ambiguous command line is refused rather than guessed at. Hooks run
+program — no shell, ever, and an ambiguous command line is refused rather than guessed at, from the
+text alone and never from what happens to be on disk. Hooks run
 once per job and only when a live log actually moves; every one has a timeout that kills the whole
 process tree; a failing `prerotate` skips the job untouched while a failing `postrotate` leaves the
 rotation standing. All of it is refused outright if the config directory isn't locked down. See

@@ -217,8 +217,13 @@ public static class ConfigValidator
             return;
         }
 
-        // The same existence probe the runtime uses, so config check cannot pass something run
-        // would refuse - or refuse something it would happily run.
+        // The same decision the runtime makes, so config check cannot pass something run would
+        // refuse - or refuse something it would happily run.
+        //
+        // That was not true while HookPlan probed the disk. Check and run are separate processes
+        // at separate times: a file appearing between 17:00 and 03:00 was enough to make them
+        // disagree, and the file that made them disagree was the one an attacker would plant.
+        // CommandLine.TrySplit takes no probe now, so the agreement is a property of the text.
         foreach (var refusal in HookPlan.For(job.Name, stage, hooks, HookGate.Open).Refusals)
         {
             d.Warn(file, refusal.Code, refusal.Message, remedy: refusal.Remedy);
