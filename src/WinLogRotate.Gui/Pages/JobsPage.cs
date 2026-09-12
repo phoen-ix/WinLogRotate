@@ -111,26 +111,22 @@ public sealed class JobsPage : UserControl
 
     private async Task CheckAsync()
     {
-        var result = await _cli.RunAsync(CliArgs.For(_configDir, "config", "check"))
+        var result = await _cli.RunAsync(CliArgs.For(_configDir, "config", "check", "--json"))
             .ConfigureAwait(true);
 
-        if (result.Ok)
-        {
-            LrDialog.Info(this, "Configuration", "No problems found.", result.StdOut);
-            return;
-        }
+        var view = ConfigCheckProjection.From(result, Core.ExitCode.ConfigInvalid);
 
-        // Exit 2 means nothing was attempted; exit 1 means a job was skipped and the rest
-        // rotated. Milestone 17 introduced the second, and this sentence - written when 2 was
-        // the only failure - then told an operator nothing would run when almost everything
-        // would. The distinction is the whole point of having two codes.
-        var everythingStopped = result.ExitCode == Core.ExitCode.ConfigInvalid;
-
-        LrDialog.Show(this, DialogKind.Warning, "Configuration",
-            everythingStopped
-                ? "The configuration has problems. Nothing will run until they are fixed."
-                : "One or more jobs have problems and will be skipped. The rest will still run.",
-            result.StdOut + result.StdErr);
+        LrDialog.Show(
+            this,
+            view.Tone switch
+            {
+                CheckTone.Clean => DialogKind.Info,
+                CheckTone.Warning => DialogKind.Warning,
+                _ => DialogKind.Error,
+            },
+            "Configuration",
+            view.Message,
+            view.Details);
     }
 
     private async Task OpenFolderAsync()
