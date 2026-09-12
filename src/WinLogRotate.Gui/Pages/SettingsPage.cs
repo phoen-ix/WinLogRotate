@@ -93,15 +93,26 @@ public sealed class SettingsPage : UserControl
     private async Task HardenAsync()
     {
         var result = await _cli.RunElevatedAsync(
-            CliArgs.For(_configDir, "host", "repair", "--acl")).ConfigureAwait(true);
+            CliArgs.For(_configDir, "host", "repair", "--acl", "--json")).ConfigureAwait(true);
 
-        if (result.Ok)
+        if (result.Failure != CliFailure.UacDeclined)
         {
-            LrDialog.Info(this, "Permissions", "The configuration directory has been secured.");
-        }
-        else if (result.Failure != CliFailure.UacDeclined)
-        {
-            LrDialog.Error(this, "Permissions", result.Describe(), result.Details);
+            // Exit 0 is not the same as "it was secured". On a per-user installation the verb
+            // declines, says why in a Warning, and exits 0 - so the one person whose directory
+            // cannot be secured was the one person told it had been.
+            var view = RepairProjection.From(result);
+
+            LrDialog.Show(
+                this,
+                view.Tone switch
+                {
+                    CheckTone.Clean => DialogKind.Info,
+                    CheckTone.Warning => DialogKind.Warning,
+                    _ => DialogKind.Error,
+                },
+                "Permissions",
+                view.Message,
+                view.Details);
         }
 
         await LoadAsync().ConfigureAwait(true);
