@@ -97,9 +97,15 @@ public static class Diagnose
             Path = path,
             Job = job,
             NativeError = code == 0 ? null : code,
+            // Not "try copytruncate" unconditionally: this fires for a failed copytruncate too,
+            // and telling an operator to switch to the strategy that just failed is advice that
+            // cannot work. The probe answers the question either way, so it leads.
             Remedy = code is Win32Error.SharingViolation or Win32Error.LockViolation
-                ? "Set lockstrategy = \"copytruncate\" for this job, or run "
-                  + $"\"winlogrotate probe {path}\" to see which strategies the writer permits."
+                ? $"Run \"winlogrotate probe {path}\" to see which strategies this writer permits"
+                  + (action == PlannedAction.CopyTruncate
+                      ? ". Something else held the file while it was being copied or emptied; a "
+                        + "retry on the next run may be all it needs."
+                      : ", and set lockstrategy accordingly.")
                 : null,
         };
     }

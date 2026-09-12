@@ -19,10 +19,18 @@ public sealed record CompressionResult
 /// Compresses a rotated file, atomically.
 /// </summary>
 /// <remarks>
+/// <para>
 /// The ordering is the whole point: write to a temporary sibling, flush it to disk, move it
 /// over the destination, and only then delete the source. A crash at any point therefore
 /// leaves either the original file or a complete archive - never a truncated <c>.gz</c> that
 /// looks like a backup and contains half a log.
+/// </para>
+/// <para>
+/// That was true of the destination and not of the directory. A failure left the staging file
+/// behind, and nothing in this product would ever have collected it - discovery probes the exact
+/// names a job would have written, so a stray <c>.tmp</c> is invisible to retention for ever, in
+/// the one tool whose job is to stop directories filling up. It is removed on the way out now.
+/// </para>
 /// </remarks>
 public static class Compressor
 {

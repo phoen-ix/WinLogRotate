@@ -71,13 +71,23 @@ public static class FileOps
     /// truncation are returned so the caller can record them and judge that afterwards.
     /// </para>
     /// <para>
-    /// <b>The archive is written to a temporary name and moved into place before anything is
-    /// truncated.</b> This is not tidiness. The whole call is wrapped in
-    /// <see cref="RetryPolicy"/>, and <c>SetLength</c> can throw ERROR_LOCK_VIOLATION - which
-    /// that policy treats as transient - after the truncation has already applied. Writing
-    /// straight to the destination meant the retry reopened a now-empty source and wrote a
-    /// zero-byte archive over the one it had just successfully saved. The retry destroyed the
-    /// data the rotation existed to preserve.
+    /// The archive is written to a temporary name and moved into place, which is what stops a
+    /// crash part-way through the copy leaving a truncated file that looks like a backup.
+    /// </para>
+    /// <para>
+    /// <b>What stops a retry destroying it is the retries being in here, one unit each for
+    /// opening, copying and cutting.</b> This paragraph used to credit the staging file, and that
+    /// was wrong in a way that cost the whole archive. <c>SetLength</c> can throw
+    /// ERROR_LOCK_VIOLATION - which <see cref="RetryPolicy"/> treats as transient - after the
+    /// truncation has already applied, and while the whole call was one retry unit the second
+    /// attempt measured a source the first had emptied, copied nothing, and moved the nothing
+    /// over the archive it had just committed. Staging never touched that: the move happens
+    /// before the truncation, so the archive is already in place by the time anything can fail.
+    /// </para>
+    /// <para>
+    /// Both phases address the file by offset rather than through a shared position, so each is
+    /// the same operation however many times it runs. A phase that resumed where its last attempt
+    /// stopped would not be safe to retry, which is the same mistake one level down.
     /// </para>
     /// </remarks>
     public static TruncationOutcome CopyTruncate(
