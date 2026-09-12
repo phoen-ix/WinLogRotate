@@ -8,6 +8,7 @@ using WinLogRotate.Core.Safety;
 using WinLogRotate.Core.Secrets;
 using WinLogRotate.Core.State;
 using WinLogRotate.Hosting;
+using WinLogRotate.Hosting.Security;
 
 namespace WinLogRotate.Cli.Commands;
 
@@ -59,20 +60,28 @@ internal static class RunCommand
 
         if (!gate.Entered)
         {
-            // Said as a diagnostic and not only as a line, because ok is false whenever the exit
-            // code is not zero and an empty diagnostics array beside it leaves a caller with a
-            // bare 3. Info, not an error: this is the expected outcome of an overlapping manual
-            // run, which is why the registered task passes --lock-held-exit 0.
-            ctx.Output.Diagnostic(new CliDiagnostic
-            {
-                Severity = Severity.Info,
-                Code = DiagnosticCode.AlreadyRunning,
-                Message = "Another rotation is already running; nothing was done.",
-                Remedy = "This is normal when a manual run overlaps the scheduled one.",
-            });
+            // One refusal is normal; a thousand consecutive ones is a machine on which nothing
+            // rotates, and they are the same event until somebody writes down the first. The
+            // record is only trusted where the directory holding it cannot be written by the
+            // account it is evidence about.
+            var now = TimeProvider.System.GetUtcNow();
+            var trusted = StoreIsTrustworthy(paths);
 
-            return ctx.Output.Complete<RunResult>("run", locks.HeldExitCode, null);
+            GateHoldStore.Record(paths.RunDirectory, now, trusted);
+
+            var since = GateHoldStore.Read(paths.RunDirectory, trusted);
+
+            var (diagnostic, exitCode) = GateRefusal.For(
+                GateHoldRule.Judge(since, now), since, locks.HeldExitCode);
+
+            ctx.Output.Diagnostic(diagnostic);
+
+            return ctx.Output.Complete<RunResult>("run", exitCode, null);
         }
+
+        // Taken, so whatever span was accumulating is over - including after breaking a dead
+        // holder's lock, because that run rotates.
+        GateHoldStore.Clear(paths.RunDirectory);
 
         if (gate.Outcome == GateOutcome.AcquiredAfterAbandon)
         {
@@ -325,6 +334,23 @@ internal static class RunCommand
     /// satisfied without an annotation spreading up into every caller of the run verb.
     /// </remarks>
     private readonly record struct GateResult(IDisposable? Handle, bool Entered, GateOutcome Outcome);
+
+    /// <summary>
+    /// Whether the refusal record is evidence, or evidence written by its subject.
+    /// </summary>
+    /// <remarks>
+    /// <c>run\</c> sits under the data root and is hardened by <c>ConfDirGuard.Apply</c> and by
+    /// the installer. If it were not - and until this milestone nothing created it at all, so it
+    /// appeared with whatever ProgramData handed out - the local account this record exists to
+    /// detect would own the file recording it, and could hold the first refusal forward for
+    /// ever. Judged rather than assumed, and the honest answer where it cannot be judged is no.
+    /// </remarks>
+    private static bool StoreIsTrustworthy(InstallPaths paths) =>
+        OperatingSystem.IsWindows() && TrustworthyOnWindows(paths);
+
+    [System.Runtime.Versioning.SupportedOSPlatform("windows")]
+    private static bool TrustworthyOnWindows(InstallPaths paths) =>
+        ConfDirGuard.Verify(paths.RunDirectory).Verdict == AclVerdict.Hardened;
 
     /// <summary>
     /// Takes the machine-wide rotation gate.

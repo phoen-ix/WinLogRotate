@@ -262,4 +262,27 @@ public static class DiagnosticCode
     /// </para>
     /// </remarks>
     public const string SecretStoreUnwritable = "LR9008";
+
+    /// <summary>
+    /// The rotation gate has been held by another process for longer than any rotation lasts, so
+    /// nothing has rotated on this machine since.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// In the 9xxx band - never suppressed, never merely warned about - because it is a
+    /// machine-wide denial of rotation available to any unprivileged local account.
+    /// <c>Global\WinLogRotate.Rotation</c> grants <c>Everyone</c> the right to synchronise on
+    /// it, which is what lets the SYSTEM task and an unelevated GUI share one gate and also what
+    /// lets anybody hold it. That entry cannot be narrowed: <c>SYNCHRONIZE</c> is the right to
+    /// wait, and a satisfied wait is ownership.
+    /// </para>
+    /// <para>
+    /// Distinct from <see cref="AlreadyRunning"/>, which is the same observation made once. An
+    /// overlapping manual run is normal and Info; a gate held past
+    /// <c>GateHoldRule.Implausible</c> is not a rotation, and it stops borrowing the scheduled
+    /// task's <c>--lock-held-exit</c> - the option that exists so an overlap does not paint Last
+    /// Run Result red, and which was quietly covering a machine where nothing ran at all.
+    /// </para>
+    /// </remarks>
+    public const string RotationGateHeld = "LR9009";
 }

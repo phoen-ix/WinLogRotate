@@ -185,7 +185,13 @@ public static class ConfDirGuard
     /// </remarks>
     public static void Apply(InstallPaths paths)
     {
-        foreach (var directory in new[] { paths.Root, paths.ConfigDirectory, paths.JournalDirectory })
+        // run\ is in this list because of what it holds: the record of when the rotation gate
+        // was first found held. Until this milestone nothing created it, so it appeared lazily
+        // under whatever ProgramData handed out - which means the local account that record
+        // exists to detect would own the file recording it, and could hold the first refusal
+        // forward for ever.
+        foreach (var directory in
+                 new[] { paths.Root, paths.ConfigDirectory, paths.JournalDirectory, paths.RunDirectory })
         {
             Directory.CreateDirectory(directory);
 

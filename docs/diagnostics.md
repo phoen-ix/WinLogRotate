@@ -156,6 +156,7 @@ mean the same thing wherever it is read.
 | 195 | Warning | A credential is written in a world-readable configuration file | `LR9006` |
 | 196 | Error | The secret store, or the key protecting it, is unsafe or was repaired | `LR9007` |
 | 197 | Error | The secret store could not be written; nothing was stored | `LR9008` |
+| 198 | Error | The rotation gate has been held longer than any rotation lasts | `LR9009` |
 | 999 | Warning | Unclassified, or the per-invocation event cap was reached | — |
 
 `LR3003`'s severity is contextual, and deliberately so. It is an **Error** when a job asking

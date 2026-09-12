@@ -431,6 +431,11 @@ Section "-Core" SEC_CORE
   CreateDirectory "$DataDir\conf.d"
   CreateDirectory "$DataDir\journal"
 
+  ; run\ holds the record of when the rotation gate was first found held. Created here so it is
+  ; hardened by the pass below rather than appearing later under whatever ProgramData hands out -
+  ; the local account that record exists to detect must not be the account that owns it.
+  CreateDirectory "$DataDir\run"
+
   ; -------------------------------------------------------------------------------------
   ; Harden the configuration directory.
   ;

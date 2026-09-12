@@ -118,6 +118,7 @@ public static class EventIds
         DiagnosticCode.SecretInPlainConfig => 195,
         DiagnosticCode.SecretStoreUnreadable => 196,
         DiagnosticCode.SecretStoreUnwritable => 197,
+        DiagnosticCode.RotationGateHeld => 198,
 
         _ => Unclassified,
     };
