@@ -347,14 +347,6 @@ public static class LogrotateImporter
     }
 
     /// <summary>
-    /// Recognises the handful of shell scripts that have an exact Windows equivalent.
-    /// </summary>
-    /// <remarks>
-    /// Only exact matches are translated. Everything else is preserved as a comment, because a
-    /// hook that runs approximately the right thing as SYSTEM is worse than one that does not
-    /// run at all.
-    /// </remarks>
-    /// <summary>
     /// Whether a logrotate script kind maps onto something this product actually runs.
     /// </summary>
     /// <remarks>
@@ -375,6 +367,14 @@ public static class LogrotateImporter
             : "it ran whether or not anything rotated. postrotate runs only when a log really "
               + "moved, which is usually what was wanted:";
 
+    /// <summary>
+    /// Recognises the handful of shell scripts that have an exact Windows equivalent.
+    /// </summary>
+    /// <remarks>
+    /// Only exact matches are translated. Everything else is preserved as a comment, because a
+    /// hook that runs approximately the right thing as SYSTEM is worse than one that does not
+    /// run at all.
+    /// </remarks>
     private static string? TranslateScript(string script)
     {
         var text = script.Replace('\n', ' ').Replace('\r', ' ');

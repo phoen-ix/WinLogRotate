@@ -132,6 +132,12 @@ public sealed class RotationRunner(
         new(journal, hookHost, hookGate ?? HookGate.Unknown, clock);
 
     /// <summary>
+    /// One enumerator for the run, so a link is resolved and reported once however many patterns
+    /// or jobs meet it.
+    /// </summary>
+    private readonly IFileSource _files = files ?? new FileEnumerator(guard);
+
+    /// <summary>
     /// Where a rotate job looks for the archives it wrote last time.
     /// </summary>
     /// <remarks>
@@ -139,12 +145,6 @@ public sealed class RotationRunner(
     /// code that decides which files the planner may delete - and that decision deserves tests
     /// that do not need a file system.
     /// </remarks>
-    /// <summary>
-    /// One enumerator for the run, so a link is resolved and reported once however many patterns
-    /// or jobs meet it.
-    /// </summary>
-    private readonly IFileSource _files = files ?? new FileEnumerator(guard);
-
     private readonly IArchiveSource _archives = archiveSource ?? new FileArchiveSource(new FileEnumerator(guard));
 
     public RunReport Run(LoadedConfig config, RunOptions options)
@@ -537,7 +537,6 @@ public sealed class RotationRunner(
         }
     }
 
-    /// <summary>Writes a reached verdict, and the numbers that reached it.</summary>
     /// <summary>
     /// Records what the guard decided about a path, where it decided anything.
     /// </summary>
@@ -575,6 +574,7 @@ public sealed class RotationRunner(
         });
     }
 
+    /// <summary>Writes a reached verdict, and the numbers that reached it.</summary>
     /// <param name="job">
     /// For the journal line. A NUL-fill verdict is permanent for the path, so it is one of the
     /// few decisions this product makes that somebody may have to account for months later -

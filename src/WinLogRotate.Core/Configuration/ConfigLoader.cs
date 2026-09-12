@@ -381,7 +381,6 @@ public static class ConfigLoader
         }
     }
 
-    /// <summary>A secret name somebody would plausibly have chosen, for the remedy text.</summary>
     /// <summary>
     /// A secret name somebody would plausibly have chosen, for the remedy text.
     /// </summary>

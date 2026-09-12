@@ -30,7 +30,25 @@
     <EnableWindowsTargeting>true</EnableWindowsTargeting>
 
     <Deterministic>true</Deterministic>
-    <GenerateDocumentationFile>false</GenerateDocumentationFile>
+
+    <!-- On, because the doc comments here ARE the design record and nothing was checking them.
+         This was false, two lines below TreatWarningsAsErrors, so the compiler never once looked
+         at a <param> name - and NulFillDetector documented a parameter called leadingNulBytes
+         that has never existed, while FileOps stacked two <summary> blocks so Create ended up
+         with neither of them.
+
+         CS1573 is suppressed deliberately. It fires when SOME parameters are documented and
+         others are not, and there are 62 <param> tags across this repository, most of them the
+         only one on their member - documenting the parameter that needs explaining and leaving
+         the obvious ones alone is a habit worth keeping, not a defect. What is kept is CS1572,
+         a <param> naming a parameter that does not exist, and CS1571, the same one twice: both
+         are unambiguously wrong rather than a matter of taste.
+
+         Note what this still cannot see: two <summary> blocks on one member produce no warning
+         under any of these. Those are found by reading. -->
+    <GenerateDocumentationFile>true</GenerateDocumentationFile>
+    <NoWarn>$(NoWarn);CS1573;CS1591</NoWarn>
+
     <ManagePackageVersionsCentrally>false</ManagePackageVersionsCentrally>
   </PropertyGroup>
 

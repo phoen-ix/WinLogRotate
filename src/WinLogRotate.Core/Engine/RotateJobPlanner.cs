@@ -378,16 +378,19 @@ public static class RotateJobPlanner
             ? stamp.UtcDateTime.ToString("O", System.Globalization.CultureInfo.InvariantCulture)
             : archive.Path;
 
-    /// <param name="discard">
-    /// Whether the archive this rotation produces is kept. <c>rotate = 0</c> keeps no generations,
-    /// so it is deleted in the same pass and never compressed on the way.
-    /// </param>
     /// <remarks>
+    /// <para>
+    /// Whether the archive this rotation produces is kept is decided here rather than passed in:
+    /// <c>rotate = 0</c> keeps no generations, so it is deleted in the same pass and never
+    /// compressed on the way.
+    /// </para>
+    /// <para>
     /// The log is still rotated rather than simply emptied, and that is not decoration: the
     /// rotation clock advances from <c>ExecutionResult.Rotated</c>, which the executor fills from
     /// renames and copies alone. A plan for <c>rotate = 0</c> that deleted the live log instead of
     /// moving it would never mark the log as rotated, so the job would be due again every time it
     /// was considered, for ever.
+    /// </para>
     /// </remarks>
     private static void AddLiveRotation(
         EffectiveJob job, MatchedFile live, string target, List<PlannedOp> operations,

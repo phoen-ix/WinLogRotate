@@ -54,7 +54,7 @@ public static class PlaintextPadding
     }
 
     /// <summary>
-    /// Unwraps what <see cref="Wrap"/> produced. False for anything else.
+    /// Unwraps what <see cref="Wrap(ReadOnlySpan{char})"/> produced. False for anything else.
     /// </summary>
     /// <remarks>
     /// Returning false rather than throwing, and never echoing what it saw: this runs on bytes

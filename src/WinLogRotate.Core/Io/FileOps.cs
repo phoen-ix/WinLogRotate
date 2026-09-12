@@ -176,7 +176,6 @@ public static class FileOps
         };
     }
 
-    /// <summary>Recreates the log a rename moved away, so the writer finds it again.</summary>
     /// <summary>Makes a directory, and every level above it that is missing.</summary>
     /// <remarks>
     /// Idempotent, so it is safe under <c>RetryPolicy</c>. This exists so that making a job's
@@ -186,6 +185,7 @@ public static class FileOps
     public static void CreateDirectory(string path) =>
         Directory.CreateDirectory(WinPath.ToExtendedLength(WinPath.Normalize(path)));
 
+    /// <summary>Recreates the log a rename moved away, so the writer finds it again.</summary>
     public static void Create(string path)
     {
         // Kept, unlike CopyTruncate's. This path is always the live log's own directory

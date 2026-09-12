@@ -150,7 +150,7 @@ internal sealed class CommandContext(IOutputSink output, ParseResult parse)
     /// Wraps the sink so warnings and errors also reach the Windows Event Log.
     /// </summary>
     /// <remarks>
-    /// The platform check is what CA1416 needs to see; <see cref="EventLogWriter"/> also
+    /// The platform check is what CA1416 needs to see; <see cref="Hosting.Diagnostics.EventLogWriter"/> also
     /// tolerates an unregistered source, which is the normal state after a per-user install.
     /// </remarks>
     private static IOutputSink WithEventLog(IOutputSink inner, ParseResult parse)

@@ -22,10 +22,6 @@ namespace WinLogRotate.Gui.Cli;
 public static class EnvelopeDetails
 {
     /// <summary>
-    /// The warnings and errors from the envelope in this stream, as the CLI would have printed
-    /// them, or empty if there are none.
-    /// </summary>
-    /// <summary>
     /// What to show a person, from whichever channel the child used.
     /// </summary>
     /// <remarks>
@@ -52,6 +48,10 @@ public static class EnvelopeDetails
             : stdErr;
     }
 
+    /// <summary>
+    /// The warnings and errors from the envelope in this stream, as the CLI would have printed
+    /// them, or empty if there are none.
+    /// </summary>
     public static string From(string ndjson)
     {
         var lines = new List<string>();

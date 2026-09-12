@@ -95,7 +95,7 @@ public sealed record HostInstallOptions
     /// </summary>
     /// <remarks>
     /// The one mapping, used by both the registrar and <c>host export-task</c>. They used to build
-    /// a <see cref="TaskXmlBuilder.TaskDefinition"/> each, and the exporter reached
+    /// a <see cref="TaskDefinition"/> each, and the exporter reached
     /// <see cref="Arguments"/> by constructing a throwaway copy of this record with an empty
     /// executable path - so a field added to one and not the other produced an exported task that
     /// differed from the registered one in exactly the way nobody would think to check.

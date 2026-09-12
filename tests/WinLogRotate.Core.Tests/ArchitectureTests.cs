@@ -1662,4 +1662,82 @@ public partial class ArchitectureTests
             .Select(w => w.Where)
             .ShouldBeEmpty("a process this pipeline waits for whose exit code it then discards");
     }
+    /// <summary>
+    /// One doc comment describes one member.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// Turning <c>GenerateDocumentationFile</c> on gave the compiler CS1571 and CS1572 - a
+    /// duplicated <c>&lt;param&gt;</c>, and one naming a parameter that does not exist - and it
+    /// found both. It cannot see this one. Two <c>&lt;summary&gt;</c> blocks on a single member
+    /// produce no warning at all, and the second silently wins, so the first is left describing
+    /// something else while reading as though it describes this.
+    /// </para>
+    /// <para>
+    /// Eight of them had accumulated. Every one was a doc comment that had lost its member to a
+    /// refactor: the summary for <c>FileOps.Create</c> sitting on <c>CreateDirectory</c>,
+    /// <c>GetSize</c>'s on <c>GetDuration</c>, the archive source's on the file enumerator. In a
+    /// codebase whose doc comments are its design record, that is the record describing the wrong
+    /// thing - which is the defect this whole file exists to make expensive.
+    /// </para>
+    /// </remarks>
+    [Fact]
+    public void OneDocCommentDescribesOneMember()
+    {
+        var root = RepoRoot.Find().FullName;
+
+        var files = new[] { "src", "tests" }
+            .Select(d => Path.Combine(root, d))
+            .Where(Directory.Exists)
+            .SelectMany(d => Directory.EnumerateFiles(d, "*.cs", SearchOption.AllDirectories))
+            .Where(f => !f.Contains($"{Path.DirectorySeparatorChar}obj{Path.DirectorySeparatorChar}", StringComparison.Ordinal))
+            .Where(f => !f.Contains($"{Path.DirectorySeparatorChar}bin{Path.DirectorySeparatorChar}", StringComparison.Ordinal))
+            .ToArray();
+
+        files.Length.ShouldBeGreaterThan(50, "found almost no source, so the scan asserted nothing");
+
+        var stacked = new List<string>();
+        var blocks = 0;
+
+        foreach (var file in files)
+        {
+            var lines = File.ReadAllLines(file);
+
+            for (var i = 0; i < lines.Length;)
+            {
+                if (!lines[i].TrimStart().StartsWith("///", StringComparison.Ordinal))
+                {
+                    i++;
+                    continue;
+                }
+
+                // One contiguous doc comment, attributes included - an [Fact] between the comment
+                // and the method does not start a new one.
+                var start = i;
+                var summaries = 0;
+
+                while (i < lines.Length
+                    && (lines[i].TrimStart().StartsWith("///", StringComparison.Ordinal)
+                        || lines[i].TrimStart().StartsWith('[')))
+                {
+                    summaries += lines[i].Split("<summary>").Length - 1;
+                    i++;
+                }
+
+                blocks++;
+
+                if (summaries > 1)
+                {
+                    stacked.Add($"{Path.GetFileName(file)}:{start + 1}");
+                }
+            }
+        }
+
+        // The floor, on the quantity that moves: doc blocks found, not offenders found.
+        blocks.ShouldBeGreaterThan(400, "found almost no doc comments, so the scan has stopped working");
+
+        stacked.ShouldBeEmpty(
+            "doc comment blocks carrying more than one <summary> - the second wins silently and "
+            + "the first is left describing a member it is no longer attached to");
+    }
 }

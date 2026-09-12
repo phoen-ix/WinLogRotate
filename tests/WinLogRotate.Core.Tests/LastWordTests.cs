@@ -109,12 +109,12 @@ public sealed class LastWordTests : IDisposable
     /// Runs a plan into the journal under one run id, and returns nothing - the record is the
     /// point.
     /// </summary>
-    /// <param name="dryRun">
-    /// False writes both halves of every operation, because the guard refuses at apply time.
-    /// True writes the plan halves and stops, which is byte-for-byte what a run killed between
-    /// the halves leaves behind - and the reason this needs no separate "kill the process"
-    /// fixture.
-    /// </param>
+    /// <remarks>
+    /// Each step's <c>DryRun</c> flag decides which halves land. False writes both halves of
+    /// every operation, because the guard refuses at apply time. True writes the plan halves and
+    /// stops, which is byte-for-byte what a run killed between the halves leaves behind - and the
+    /// reason this needs no separate "kill the process" fixture.
+    /// </remarks>
     private void Journal(string runId, params (bool DryRun, JobPlan Plan)[] steps)
     {
         using var journal = JournalWriter.Open(

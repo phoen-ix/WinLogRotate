@@ -816,7 +816,6 @@ public sealed class RotationRunnerTests : IDisposable
 
     // ---- maxfiles is a limit on a pattern -----------------------------------------------------
 
-    /// <summary>Drives the real Run, because the pattern loop and the count check live there.</summary>
     /// <summary>
     /// Drives the real Run, because the pattern loop and the count check live there.
     /// </summary>

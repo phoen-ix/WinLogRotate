@@ -807,13 +807,6 @@ public static class ConfigBinder
     }
 
     /// <summary>
-    /// Reads a size, accepting either a plain byte count or a human suffix.
-    /// <para>
-    /// The suffixes are binary (<c>k</c> = 1024), matching logrotate rather than SI, because
-    /// someone converting a logrotate config expects <c>100M</c> to mean the same thing here.
-    /// </para>
-    /// </summary>
-    /// <summary>
     /// Reads a duration written either as "7d"/"30m"/"45s" or as a TimeSpan like "01:00:00".
     /// </summary>
     /// <remarks>
@@ -882,6 +875,13 @@ public static class ConfigBinder
         }
     }
 
+    /// <summary>
+    /// Reads a size, accepting either a plain byte count or a human suffix.
+    /// <para>
+    /// The suffixes are binary (<c>k</c> = 1024), matching logrotate rather than SI, because
+    /// someone converting a logrotate config expects <c>100M</c> to mean the same thing here.
+    /// </para>
+    /// </summary>
     private static long? GetSize(TableSyntaxBase t, string key, string file, DiagnosticBag d)
     {
         var kv = Find(t, key);

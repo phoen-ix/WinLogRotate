@@ -48,8 +48,6 @@ public static class NulFillDetector
     /// </summary>
     /// <param name="sizeBefore">Size captured immediately before the last truncation.</param>
     /// <param name="sizeNow">Size observed at the start of this run.</param>
-    /// <param name="leadingNulBytes">How many leading bytes were NUL, if the caller sampled
-    /// them. A file whose first bytes are all zero is conclusive rather than merely suspicious.</param>
     /// <param name="nulRun">
     /// Consecutive NUL bytes found at the offset the truncation left the file, or null when the
     /// file could not be read.

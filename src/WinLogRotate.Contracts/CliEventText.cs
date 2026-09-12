@@ -52,7 +52,7 @@ public static class CliEventText
     /// What was done, or would be, or could not be - without saying to what.
     /// </summary>
     /// <remarks>
-    /// Split out of <see cref="Describe"/> because a grid wants fields and a console wants a
+    /// Split out of <see cref="Describe(CliEvent)"/> because a grid wants fields and a console wants a
     /// sentence, and the alternative is a second mapping on the GUI's side that says "delete"
     /// where this one says "did delete". That is the shape of defect the previous milestone spent
     /// itself removing; one rendering with two entry points is not.
@@ -91,7 +91,7 @@ public static class CliEventText
     /// </summary>
     /// <remarks>
     /// Empty for the run and job brackets, which are about no file at all - which is why
-    /// <see cref="Describe"/> trims: "run.start" is a whole sentence.
+    /// <see cref="Describe(CliEvent)"/> trims: "run.start" is a whole sentence.
     /// </remarks>
     public static string Subject(CliEvent e) => e.Operation switch
     {
