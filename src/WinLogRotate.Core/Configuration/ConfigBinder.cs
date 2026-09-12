@@ -31,6 +31,7 @@ public static class ConfigBinder
         }
 
         ReportUnknownDefaultsKeys(table, file.Path, diagnostics);
+        ReportCaseCollisions(table, file.Path, diagnostics);
         return BindSettings(table, file.Path, diagnostics);
     }
 
@@ -365,6 +366,8 @@ public static class ConfigBinder
 
         var settings = BindSettings(table, file.Path, diagnostics);
         ReportUnknownJobKeys(table, file.Path, diagnostics);
+        ReportCaseCollisions(table, file.Path, diagnostics);
+        ReportCaseCollidingTables(file.Document, file.Path, diagnostics);
 
         return new JobConfig
         {
@@ -758,6 +761,64 @@ public static class ConfigBinder
 
     private static string KeyName(KeyValueSyntax kv) =>
         kv.Key?.ToString().Trim() ?? string.Empty;
+
+    /// <summary>
+    /// Reports two keys, or two tables, that differ only in case.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// TOML is case-sensitive and this binder is not, which is a gap rather than a contradiction:
+    /// <c>rotate</c> and <c>Rotate</c> are two keys to the parser, so it raises nothing, and one
+    /// key to <see cref="Find"/>, which returns the first. The second value was bound by nobody
+    /// and reported by nobody - and it escaped <see cref="ReportUnknownJobKeys"/> too, which
+    /// compares case-insensitively against the same list, so it is not an unknown key either.
+    /// </para>
+    /// <para>
+    /// <c>[job]</c> beside <c>[JOB]</c> is the same gap one level up, and worse:
+    /// <see cref="FindTable"/> returns the first, so every key in the second table is invisible.
+    /// </para>
+    /// <para>
+    /// A warning, and the first value keeps winning. The argument is
+    /// <see cref="ReportUnknownJobKeys"/>' own - this runs over every file in conf.d, and an error
+    /// here stops every healthy job on the machine over one file's shadowed key. Which of the two
+    /// ought to win is a question TOML declines to answer, so the answer is not changed silently;
+    /// it is named, and the operator decides.
+    /// </para>
+    /// </remarks>
+    private static void ReportCaseCollisions(TableSyntaxBase table, string file, DiagnosticBag d)
+    {
+        foreach (var collision in table.Items.OfType<KeyValueSyntax>()
+                     .GroupBy(KeyName, StringComparer.OrdinalIgnoreCase)
+                     .Where(g => g.Count() > 1))
+        {
+            var used = KeyName(collision.First());
+            var shadowed = collision.Skip(1).Select(KeyName).Distinct(StringComparer.Ordinal);
+
+            d.Warn(file, DiagnosticCode.ConfigInvalid,
+                $"'{used}' and '{string.Join("', '", shadowed)}' differ only in case, so this file "
+                + $"sets one setting twice. '{used}' is used and the rest are ignored.",
+                LineOf(collision.Skip(1).First()), ColumnOf(collision.Skip(1).First()),
+                "TOML treats them as different keys; this binder does not. Keep one.");
+        }
+    }
+
+    /// <summary>Reports two table headers that differ only in case. See <see cref="ReportCaseCollisions"/>.</summary>
+    private static void ReportCaseCollidingTables(DocumentSyntax doc, string file, DiagnosticBag d)
+    {
+        foreach (var collision in doc.Tables
+                     .Where(t => t.Name is not null)
+                     .GroupBy(t => t.Name!.ToString().Trim(), StringComparer.OrdinalIgnoreCase)
+                     .Where(g => g.Count() > 1))
+        {
+            var second = collision.Skip(1).First();
+
+            d.Warn(file, DiagnosticCode.ConfigInvalid,
+                $"[{collision.Key}] appears more than once, differing only in case. "
+                + "Everything in the later one is ignored.",
+                LineOf(second), ColumnOf(second),
+                "TOML treats them as different tables; this binder does not. Keep one.");
+        }
+    }
 
     private static KeyValueSyntax? Find(TableSyntaxBase table, string key) =>
         table.Items.OfType<KeyValueSyntax>()

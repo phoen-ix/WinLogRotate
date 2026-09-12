@@ -105,6 +105,67 @@ public class ConfigBinderTests
     }
 
     /// <summary>
+    /// Two keys that differ only in case are reported, not silently halved.
+    /// </summary>
+    /// <remarks>
+    /// TOML is case-sensitive and this binder is not. <c>rotate</c> and <c>Rotate</c> are two
+    /// keys to the parser, so it raises nothing, and one key to <c>Find</c>, which returns the
+    /// first - so the second value was bound by nobody and reported by nobody. It escaped the
+    /// unknown-key warning too, which compares against the same list the same way, so it was not
+    /// an unknown key either. Verified against the real parser: Tomlyn reports no error for this
+    /// input at all.
+    /// </remarks>
+    [Fact]
+    public void TwoKeysDifferingOnlyInCaseAreReported()
+    {
+        var (job, d) = Bind("""
+            [job]
+            name = "app"
+            paths = "C:/logs/*.log"
+            rotate = 5
+            Rotate = 9
+            """);
+
+        d.HasErrors.ShouldBeFalse("one file's shadowed key must not stop every job on the machine");
+
+        var warning = d.Items
+            .Where(i => i.Message.Contains("differ only in case", StringComparison.Ordinal))
+            .ShouldHaveSingleItem();
+
+        warning.Severity.ShouldBe(Severity.Warning);
+        warning.Message.ShouldContain("rotate");
+        warning.Message.ShouldContain("Rotate");
+        warning.Line.ShouldBe(5, "the line reported is the shadowed key's, not the table's");
+
+        // The first still wins. Which of the two ought to is a question TOML declines to answer,
+        // so the answer is named rather than changed underneath anybody.
+        job.ShouldNotBeNull().Rotate.ShouldBe(5);
+    }
+
+    /// <summary>A second table differing only in case is reported, and it is worse.</summary>
+    /// <remarks>
+    /// <c>FindTable</c> returns the first, so every key in the later table is invisible - not one
+    /// shadowed setting but all of them.
+    /// </remarks>
+    [Fact]
+    public void ASecondTableDifferingOnlyInCaseIsReported()
+    {
+        var (job, d) = Bind("""
+            [job]
+            name = "app"
+            paths = "C:/logs/*.log"
+            rotate = 5
+
+            [JOB]
+            rotate = 9
+            """);
+
+        d.HasErrors.ShouldBeFalse();
+        d.Items.ShouldContain(i => i.Severity == Severity.Warning && i.Message.Contains("job"));
+        job.ShouldNotBeNull().Rotate.ShouldBe(5);
+    }
+
+    /// <summary>
     /// The last key in the file that decides when a job is due is the one that wins.
     /// </summary>
     /// <remarks>
