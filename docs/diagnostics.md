@@ -47,9 +47,27 @@ Pass `--no-event-log` to suppress it explicitly.
 
 ### Volume
 
-At most **50 events per invocation**, after which a single further event says so and the rest
-are dropped. A job whose directory has become unreachable can otherwise produce a diagnostic per
-file. The full record is always in the journal.
+Two allowances, and they are deliberately not one.
+
+**Mirrored diagnostics: at most 50 per invocation.** After that a single further event (999,
+Warning) says so and the rest are dropped. A job whose directory has become unreachable can
+otherwise produce a diagnostic per file, and a few hundred near-identical entries is how an
+administrator decides this source is noise and filters it away — taking the one event that
+mattered with it. The full record is always in the journal.
+
+The count is of **attempts**, not of events that landed, and the announcement says so. Counting
+successes would leave the allowance unbounded on a log that refuses everything: the cap would
+stop capping at exactly the moment it is needed.
+
+**Notification digests (155): no count ceiling.** The argument above is about volume nobody
+chose — a diagnostic per file. A digest is one per job plus one for the run, so the number is
+bounded by the configuration somebody wrote. Giving digests the diagnostics' fifty would silently
+drop the tail on an install with more jobs than that.
+
+That is not a hypothesis. The two streams shared one allowance until v0.10.5, and a digest that
+arrived over budget was reported to the notification machinery as **delivered**: the job's state
+advanced, the incident was recorded as reported, and nothing was written anywhere. It happened on
+the runs noisy enough to spend fifty diagnostics, which are the runs a digest exists for.
 
 ## Event IDs
 

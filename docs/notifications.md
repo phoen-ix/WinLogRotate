@@ -15,9 +15,21 @@ for why.
 to = ["eventlog:"]
 ```
 
-No credential, no network, nothing to break. Failures land in the Application log under event ID
-**155**, and any monitoring already watching that log picks them up. Every other target is a
-refinement of this one.
+No credential, no network, and nothing between here and the reader that can be down. Failures
+land in the Application log under event ID **155**, and any monitoring already watching that log
+picks them up. Every other target is a refinement of this one.
+
+Two things can still stop it, and both are visible:
+
+- **No registered source.** Creating one needs administrator, so the installer does it and only a
+  per-machine install has one. `winlogrotate doctor` says which state you are in, under
+  **Notifications**; `doctor --json` carries it as `notify.eventLog`.
+- **`--json`.** An invocation that passes `--json` or `--json-stream` writes nothing to the Event
+  Log at all, because the caller is reading the output itself. The scheduled task does not pass
+  it.
+
+Digests have no count ceiling — see [the volume section](diagnostics.md#volume) for why that is a
+separate allowance from the mirrored diagnostics, and what happened when it was not.
 
 ## What decides whether anything is sent
 
