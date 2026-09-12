@@ -46,13 +46,17 @@ internal static class DoctorCommand
 
         if (OperatingSystem.IsWindows())
         {
-            var finding = ConfDirGuard.Verify(paths.ConfigDirectory, scope: paths.Scope);
+            var finding = ConfDirGuard.Verify(paths);
             aclVerdict = finding.Verdict;
             hooksAllowed = finding.HooksAllowed;
             aclFix = finding.FixCommand;
 
             ctx.Output.Line("Security");
-            ctx.Output.Line($"  conf.d ACL    {finding.Verdict}");
+
+            // The path, not the label "conf.d": the gate judges the root, the directory,
+            // config.toml and every job file, and naming the container for a finding about a
+            // file sends the operator to fix the wrong thing.
+            ctx.Output.Line($"  config ACL    {finding.Verdict}  {finding.Path}");
             ctx.Output.Line($"  hooks         {(finding.HooksAllowed ? "permitted" : "REFUSED")}");
 
             // A per-user installation always lands here, and it is not broken. Reporting it as
@@ -66,7 +70,7 @@ internal static class DoctorCommand
                     Severity = Severity.Info,
                     Code = DiagnosticCode.ConfigDirectoryInsecure,
                     Message = finding.Explanation ?? "Hooks are refused for a per-user installation.",
-                    Path = paths.ConfigDirectory,
+                    Path = finding.Path,
                     Remedy = finding.FixCommand,
                 });
             }
@@ -82,7 +86,7 @@ internal static class DoctorCommand
                     Severity = Severity.Critical,
                     Code = DiagnosticCode.ConfigDirectoryInsecure,
                     Message = finding.Explanation ?? "The configuration directory is not secure.",
-                    Path = paths.ConfigDirectory,
+                    Path = finding.Path,
                     Remedy = finding.FixCommand,
                 });
             }

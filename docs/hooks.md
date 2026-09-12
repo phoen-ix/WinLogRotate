@@ -142,9 +142,21 @@ enough time left, the hook is not started, and `LR3103` says so.
 
 **They run commands, and that is only safe from a directory an ordinary account cannot write.**
 
-Before the first hook of a run is dispatched, `conf.d`'s permissions are checked. If anyone who is
-not an administrator can write it — or owns it, which amounts to the same thing — every hook in
-that run is refused with `LR9003`, and the directory itself is reported once as `LR9001`.
+Before the first hook of a run is dispatched, the permissions of every path the run took its
+configuration from are checked: the data root, `conf.d`, `config.toml`, and each job file inside
+`conf.d`. If anyone who is not an administrator can write one of them — or owns it, which amounts
+to the same thing — every hook in that run is refused with `LR9003`, and the offending path is
+reported once as `LR9001`.
+
+Files, and not only the directory holding them, because rewriting a directory's permissions
+recomputes what a child inherits and leaves a child's own entries and its owner alone. An owner can
+rewrite permissions at will, so a job file created while `ProgramData` still granted its author
+full control stays that author's to edit — and a hook in `[defaults]` inside `config.toml` is
+inherited by every job. `winlogrotate host repair --acl` fixes all of them, and every file this
+product writes there is left owned by Administrators as it is written.
+
+The paths are judged outermost first and the first refusal is the one reported: fixing a job file
+inside a directory an ordinary account can write fixes nothing.
 
 The check is taken **once per run, immediately before the first hook**, not when the configuration
 is loaded. A run reads its configuration and then works for an hour, and a directory's permissions

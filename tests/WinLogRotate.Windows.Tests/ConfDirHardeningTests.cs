@@ -324,4 +324,59 @@ public sealed class ConfDirHardeningTests : IDisposable
             .Value.ShouldBe(Sddl.WellKnown.Administrators,
                 "an owner holds implicit WRITE_DAC, so ownership is the half a DACL repair cannot reach");
     }
+
+    /// <summary>
+    /// A job file Everyone can write is found inside a hardened conf.d.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// The windows-only half of the per-file gate: that a real <c>FileSecurity</c> projects into
+    /// a <c>Subject</c> the judgement can read. The Linux leg pins the arithmetic and is blind
+    /// to this - a wrong <c>AccessControlSections</c>, or inherited rules excluded, would leave
+    /// it green while the gate saw nothing.
+    /// </para>
+    /// <para>
+    /// A DACL edit and deliberately not an ownership change: any owner may add an entry to their
+    /// own file, so this needs no privilege and is deterministic on any runner, where
+    /// <c>SetOwner</c> to an arbitrary SID needs SeRestorePrivilege that .NET will not enable.
+    /// </para>
+    /// <para>
+    /// The root is hardened too, and the <c>Path</c> assertion is the reason. The surface is
+    /// judged outermost first, this fixture lives under a temp directory the test account owns,
+    /// and without both of those the whole file loop could be deleted and the assertion that
+    /// hooks are refused would still hold - satisfied by a refusal on the root. That is
+    /// precisely the shape <c>HardeningOnlyTheRootDoesNotSaveTheChild</c> warns about.
+    /// </para>
+    /// </remarks>
+    [Fact]
+    public void AJobFileEveryoneCanWriteIsFoundInAHardenedConfD()
+    {
+        WindowsOnly.Require();
+
+        var paths = new InstallPaths { Scope = InstallScope.Portable, Root = _root.FullName };
+
+        Harden(_root);
+        Directory.CreateDirectory(paths.ConfigDirectory);
+        Harden(new DirectoryInfo(paths.ConfigDirectory));
+
+        var path = Path.Combine(paths.ConfigDirectory, "app.toml");
+        File.WriteAllText(path, "name = \"app\"\n");
+
+        var loosened = new FileInfo(path).GetAccessControl();
+        loosened.AddAccessRule(new FileSystemAccessRule(
+            new SecurityIdentifier(Sddl.WellKnown.Everyone),
+            FileSystemRights.FullControl,
+            AccessControlType.Allow));
+        new FileInfo(path).SetAccessControl(loosened);
+
+        // The premise. Both directories are clean, so nothing before the file can refuse.
+        ConfDirGuard.Verify(_root.FullName).Verdict.ShouldBe(AclVerdict.Hardened);
+        ConfDirGuard.Verify(paths.ConfigDirectory).Verdict.ShouldBe(AclVerdict.Hardened);
+
+        var finding = ConfDirGuard.Verify(paths);
+
+        finding.HooksAllowed.ShouldBeFalse(Explain(finding));
+        finding.Verdict.ShouldBe(AclVerdict.LooseWritable, Explain(finding));
+        finding.Path.ShouldEndWith("app.toml", Case.Sensitive, Explain(finding));
+    }
 }

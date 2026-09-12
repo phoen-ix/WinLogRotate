@@ -1,3 +1,6 @@
+using WinLogRotate.Core;
+using WinLogRotate.Core.Configuration;
+
 namespace WinLogRotate.Hosting.Security;
 
 /// <summary>
@@ -44,6 +47,47 @@ internal static class ConfigSurfaceGuard
         }
 
         return trusted;
+    }
+
+    /// <summary>
+    /// Every path a run takes its configuration from, outermost first.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// Out here rather than inside <c>ConfDirGuard</c> on purpose. Which paths are judged is the
+    /// substance of the gate - the whole defect was that the list held one directory - and a
+    /// list assembled inside a <c>[SupportedOSPlatform("windows")]</c> class is a list only
+    /// windows-2025 can ever check. Deleting the job files from it would then leave every test
+    /// on the Linux leg green, which is exactly how the directory-only gate survived six
+    /// milestones.
+    /// </para>
+    /// <para>
+    /// <c>config.toml</c> is here because <c>[defaults]</c> accepts <c>prerotate</c> and
+    /// <c>postrotate</c>, and a hook written once there is inherited by every job. The root is
+    /// here because it is what <c>config.toml</c> sits in.
+    /// </para>
+    /// </remarks>
+    internal static IReadOnlyList<(string Path, bool IsDirectory)> SurfaceOf(InstallPaths paths)
+    {
+        List<(string Path, bool IsDirectory)> surface =
+        [
+            (paths.Root, true),
+            (paths.ConfigDirectory, true),
+        ];
+
+        if (File.Exists(paths.ConfigFile))
+        {
+            surface.Add((paths.ConfigFile, false));
+        }
+
+        // The children come last, and the first-refusal rule means their descriptors are read
+        // only once the directories are clean: a loose directory refuses hooks whatever its
+        // files say. On the path that does read them it is one descriptor per job file -
+        // strictly fewer syscalls than ConfigLoader spends opening and parsing that same set a
+        // moment later, on every run.
+        surface.AddRange(JobFiles.In(paths.ConfigDirectory).Select(f => (f, false)));
+
+        return surface;
     }
 
     /// <summary>

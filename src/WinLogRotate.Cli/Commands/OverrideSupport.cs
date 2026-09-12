@@ -41,7 +41,7 @@ internal static class OverrideSupport
     [SupportedOSPlatform("windows")]
     private static OverrideGate OnWindows(InstallPaths paths)
     {
-        var finding = ConfDirGuard.Verify(paths.ConfigDirectory, scope: paths.Scope);
+        var finding = ConfDirGuard.Verify(paths);
 
         if (finding.HooksAllowed)
         {

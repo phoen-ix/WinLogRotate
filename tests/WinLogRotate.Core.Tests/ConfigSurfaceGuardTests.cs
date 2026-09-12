@@ -1,4 +1,5 @@
 using Shouldly;
+using WinLogRotate.Core;
 using WinLogRotate.Hosting.Security;
 using Xunit;
 
@@ -164,5 +165,140 @@ public sealed class ConfigSurfaceGuardTests
 
         Verify(Reading((@"C:\pd\conf.d\app.toml", file)), (@"C:\pd\conf.d\app.toml", false))
             .Verdict.ShouldBe(AclVerdict.Hardened);
+    }
+
+    /// <summary>
+    /// A job file owned by a local user refuses the run, even when conf.d is spotless.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// The defect, stated as a rule. The gate inspected one <c>DirectoryInfo</c>; the thing
+    /// executed as SYSTEM is the file. Rewriting a directory's DACL recomputes only what a child
+    /// inherits - it changes neither a child's explicit entries nor a child's owner, and an
+    /// owner holds implicit WRITE_DAC. ProgramData's <c>CREATOR OWNER</c> makes a local user the
+    /// owner of anything they drop into conf.d, so after <c>winlogrotate host repair --acl</c>
+    /// the guard said <c>Hardened</c>, <c>doctor</c> printed that same command as the fix, and
+    /// the attacker went on editing their own file's <c>postrotate</c>.
+    /// </para>
+    /// <para>
+    /// The <c>Path</c> assertion is not decoration: without it this passes as soon as anything
+    /// earlier in the surface refuses, and the file loop could be deleted whole.
+    /// </para>
+    /// </remarks>
+    [Fact]
+    public void AJobFileOwnedByALocalUserRefusesTheRunEvenWhenConfDIsHardened()
+    {
+        var file = Clean(@"C:\pd\conf.d\app.toml", isDirectory: false) with
+        {
+            OwnerSid = LocalUser,
+            OwnerDescribe = "CONTOSO\\dana",
+            Protected = false,
+        };
+
+        var finding = Verify(
+            Reading(
+                (@"C:\pd", Clean(@"C:\pd")),
+                (@"C:\pd\conf.d", Clean(@"C:\pd\conf.d")),
+                (@"C:\pd\conf.d\app.toml", file)),
+            (@"C:\pd", true),
+            (@"C:\pd\conf.d", true),
+            (@"C:\pd\conf.d\app.toml", false));
+
+        finding.HooksAllowed.ShouldBeFalse();
+        finding.Verdict.ShouldBe(AclVerdict.LooseOwner);
+        finding.Path.ShouldEndWith("app.toml");
+    }
+
+    /// <summary>
+    /// config.toml is in the surface, because <c>[defaults]</c> is where a hook is written once
+    /// and inherited by every job.
+    /// </summary>
+    [Fact]
+    public void AConfigTomlAnyoneCanWriteRefusesTheRunEvenWhenConfDIsClean()
+    {
+        var subject = Clean(@"C:\pd\config.toml", isDirectory: false);
+        var loose = subject with
+        {
+            Allow = [.. subject.Allow, new AclJudgement.Ace(Everyone, 0x10000000, "Everyone : GenericAll")],
+        };
+
+        var finding = Verify(
+            Reading(
+                (@"C:\pd", Clean(@"C:\pd")),
+                (@"C:\pd\conf.d", Clean(@"C:\pd\conf.d")),
+                (@"C:\pd\config.toml", loose)),
+            (@"C:\pd", true),
+            (@"C:\pd\conf.d", true),
+            (@"C:\pd\config.toml", false));
+
+        finding.HooksAllowed.ShouldBeFalse();
+        finding.Path.ShouldEndWith("config.toml");
+    }
+
+    /// <summary>
+    /// The surface is the root, conf.d, config.toml, and every job file - in that order.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// The list is the substance of the gate. Its entire content was one directory, which is why
+    /// the file actually executed as SYSTEM was judged by nobody; asserting the judgement while
+    /// leaving the list unpinned would restate the defect in a place a test cannot see.
+    /// </para>
+    /// <para>
+    /// Outermost first, because the first refusal is the one reported and fixing a job file
+    /// inside a directory an ordinary account can write fixes nothing. Named exactly, so that
+    /// dropping the files or dropping <c>config.toml</c> turns this red rather than quietly
+    /// narrowing what the product looks at.
+    /// </para>
+    /// </remarks>
+    [Fact]
+    public void TheSurfaceIsEveryPathARunTakesItsConfigurationFrom()
+    {
+        var root = Directory.CreateTempSubdirectory("winlogrotate-surface-");
+
+        try
+        {
+            var paths = new InstallPaths { Scope = InstallScope.Portable, Root = root.FullName };
+
+            Directory.CreateDirectory(paths.ConfigDirectory);
+            File.WriteAllText(paths.ConfigFile, "schema = 1\n");
+            File.WriteAllText(Path.Combine(paths.ConfigDirectory, "web.toml"), "");
+            File.WriteAllText(Path.Combine(paths.ConfigDirectory, "apache.toml"), "");
+            File.WriteAllText(Path.Combine(paths.ConfigDirectory, "broken.toml.bad"), "");
+
+            ConfigSurfaceGuard.SurfaceOf(paths).ShouldBe([
+                (paths.Root, true),
+                (paths.ConfigDirectory, true),
+                (paths.ConfigFile, false),
+                (Path.Combine(paths.ConfigDirectory, "apache.toml"), false),
+                (Path.Combine(paths.ConfigDirectory, "web.toml"), false),
+            ]);
+        }
+        finally
+        {
+            root.Delete(recursive: true);
+        }
+    }
+
+    /// <summary>
+    /// A portable copy with no config.toml is judged on what is there, not on what is not.
+    /// </summary>
+    [Fact]
+    public void AConfigurationFileThatIsNotThereIsNotJudged()
+    {
+        var root = Directory.CreateTempSubdirectory("winlogrotate-surface-");
+
+        try
+        {
+            var paths = new InstallPaths { Scope = InstallScope.Portable, Root = root.FullName };
+            Directory.CreateDirectory(paths.ConfigDirectory);
+
+            ConfigSurfaceGuard.SurfaceOf(paths)
+                .ShouldBe([(paths.Root, true), (paths.ConfigDirectory, true)]);
+        }
+        finally
+        {
+            root.Delete(recursive: true);
+        }
     }
 }

@@ -244,7 +244,7 @@ internal static class CommandTree
     private static Command BuildDoctor()
     {
         var doctor = new Command("doctor",
-            "Report every path, the conf.d ACL verdict, elevation state, long-path support and which run host is registered.");
+            "Report every path, the configuration ACL verdict, elevation state, long-path support and which run host is registered.");
         GlobalOptions.AddTo(doctor);
         doctor.SetAction(parse => CommandContext.Guarded(parse, ctx => DoctorCommand.Run(ctx, parse.GetValue(GlobalOptions.ConfigDir)?.FullName)));
         return doctor;

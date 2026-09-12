@@ -76,6 +76,53 @@ public sealed record AclFinding
 [SupportedOSPlatform("windows")]
 public static class ConfDirGuard
 {
+    /// <summary>
+    /// Judges every path a run would take its configuration from, outermost first.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// The gate used to inspect one <c>DirectoryInfo</c>. The thing executed as SYSTEM is a
+    /// <i>file</i>, and rewriting a directory's DACL recomputes only what a child inherits - it
+    /// changes neither a child's explicit entries nor a child's owner, and an owner holds
+    /// implicit WRITE_DAC. So a job file dropped into <c>conf.d</c> while ProgramData's
+    /// <c>CREATOR OWNER</c> was granting its author Full Control stayed theirs to rewrite, with
+    /// the directory reported <c>Hardened</c> throughout and <c>doctor</c> printing a repair
+    /// that did not reach it. <c>docs/hooks.md</c> has stated the rule for files all along.
+    /// </para>
+    /// <para>
+    /// <c>config.toml</c> and the root are in the surface for the same reason:
+    /// <c>[defaults]</c> accepts <c>prerotate</c> and <c>postrotate</c>, and a hook written once
+    /// there is inherited by every job - from a file and a directory the gate had never looked
+    /// at.
+    /// </para>
+    /// <para>
+    /// Outermost first, and the first refusal wins. Not a severity ranking: repairing a job file
+    /// inside a directory a local user can write repairs nothing, so the container has to be the
+    /// answer given first or the operator fixes the wrong thing and is told it is still broken.
+    /// </para>
+    /// </remarks>
+    public static AclFinding Verify(InstallPaths paths, string? runAccountSid = null)
+    {
+        if (!Directory.Exists(paths.ConfigDirectory))
+        {
+            return new AclFinding
+            {
+                Verdict = AclVerdict.Unknown,
+                Path = paths.ConfigDirectory,
+                Explanation = "The configuration directory does not exist yet.",
+            };
+        }
+
+        var finding = ConfigSurfaceGuard.Verify(
+            ConfigSurfaceGuard.SurfaceOf(paths),
+            ConfigSurfaceGuard.Trusted(runAccountSid),
+            ReadDescriptor);
+
+        return finding.Verdict is AclVerdict.LooseOwner or AclVerdict.LooseWritable
+            ? Scoped(finding, paths.Scope)
+            : finding;
+    }
+
     /// <param name="scope">
     /// How this copy was installed. Only <see cref="InstallScope.PerUser"/> softens the
     /// wording. <see cref="InstallScope.Portable"/> stays strict on purpose: it is what an

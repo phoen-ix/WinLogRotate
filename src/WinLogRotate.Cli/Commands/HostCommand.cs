@@ -236,7 +236,7 @@ internal static class HostCommand
             return ctx.Output.Complete<HostResult>("host repair", ExitCode.Errors, null);
         }
 
-        var finding = ConfDirGuard.Verify(paths.ConfigDirectory, scope: paths.Scope);
+        var finding = ConfDirGuard.Verify(paths);
         if (finding.Verdict != AclVerdict.Hardened)
         {
             ctx.Output.Diagnostic(new CliDiagnostic

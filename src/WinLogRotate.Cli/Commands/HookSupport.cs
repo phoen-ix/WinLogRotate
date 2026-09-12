@@ -48,7 +48,7 @@ internal sealed record HookSupport
     [SupportedOSPlatform("windows")]
     private static HookSupport OnWindows(InstallPaths paths)
     {
-        var finding = ConfDirGuard.Verify(paths.ConfigDirectory, scope: paths.Scope);
+        var finding = ConfDirGuard.Verify(paths);
 
         if (finding.HooksAllowed)
         {
