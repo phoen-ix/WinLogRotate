@@ -805,6 +805,75 @@ public partial class ArchitectureTests
             .ShouldBeEmpty();
     }
 
+    [GeneratedRegex(@"^\|\s*(\d+)\s*\|[^|]*\|[^|]*\|\s*([^|]*?)\s*\|", RegexOptions.Compiled)]
+    private static partial Regex DocumentedEventIdRow();
+
+    [GeneratedRegex(@"^`LR\d{4}`$", RegexOptions.Compiled)]
+    private static partial Regex DocumentedCodeCell();
+
+    /// <summary>
+    /// The rows of the published table that carry no diagnostic code are exactly the event IDs
+    /// that have a name in code.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// <see cref="EveryDiagnosticsDocRowNamesARealCodeAndItsRealEventId"/> needs a backticked
+    /// <c>LR####</c> in the fourth column, so it reads 33 of the table's 35 numeric rows and is
+    /// blind to the rest by construction. Its floor counts code-bearing rows, so it could not
+    /// notice either. That blind spot is where 100, 101 and 110 lived: documented, contractual,
+    /// emitted by nothing, and unexamined for as long as they existed.
+    /// </para>
+    /// <para>
+    /// So the partition is asserted instead of a subset. Every numeric row is one of two things,
+    /// nothing else is tolerated in the fourth column, and the codeless half must match the event
+    /// IDs that <see cref="EventIds"/> gives a name to. <c>EventIds.For</c> maps codes to integer
+    /// literals; an ID earns a named constant precisely when no <see cref="DiagnosticCode"/>
+    /// produces it and something has to write it by hand. If that ever stops being true this test
+    /// is the right place to fail.
+    /// </para>
+    /// <para>
+    /// The assertion is a set identity rather than a floor, which is what makes it safe against
+    /// the usual failure: a regex that silently stopped matching leaves the codeless half empty,
+    /// and an empty set does not equal two named constants.
+    /// </para>
+    /// </remarks>
+    [Fact]
+    public void EveryCodelessEventIdHasARow()
+    {
+        var doc = Path.Combine(RepoRoot.Find().FullName, "docs", "diagnostics.md");
+
+        var rows = File.ReadAllLines(doc)
+            .Select(line => DocumentedEventIdRow().Match(line))
+            .Where(m => m.Success)
+            .Select(m => (Id: int.Parse(m.Groups[1].Value, CultureInfo.InvariantCulture), Cell: m.Groups[2].Value))
+            .ToArray();
+
+        rows.Length.ShouldBeGreaterThan(30, "the whole numeric table should have been read");
+
+        // U+2014, written as an escape because a table cell is a poor place to notice that an
+        // editor has helpfully replaced one dash with another.
+        const string NoCode = "—";
+
+        rows.Where(r => r.Cell != NoCode && !DocumentedCodeCell().IsMatch(r.Cell))
+            .Select(r => $"{r.Id}: \"{r.Cell}\"")
+            .ShouldBeEmpty("a Code cell is a backticked LR#### or an em dash, and nothing else");
+
+        var named = typeof(EventIds)
+            .GetFields(BindingFlags.Public | BindingFlags.Static)
+            .Where(f => f.IsLiteral && f.FieldType == typeof(int))
+            .Where(f => f.Name is not (nameof(EventIds.MinId) or nameof(EventIds.MaxId)))
+            .Select(f => (int)f.GetRawConstantValue()!)
+            .Order()
+            .ToArray();
+
+        named.Length.ShouldBeGreaterThanOrEqualTo(2, "999 and 155 at the least");
+
+        rows.Where(r => r.Cell == NoCode).Select(r => r.Id).Order().ToArray().ShouldBe(
+            named,
+            "the table's codeless rows and the named event IDs are the same set - "
+            + "document a withdrawal, or withdraw a documented row");
+    }
+
     /// <summary>
     /// Every event ID this product declares is named by code that can emit it.
     /// </summary>
