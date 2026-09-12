@@ -29,6 +29,23 @@ namespace WinLogRotate.Cli.Commands;
 /// </remarks>
 internal static class Refusals
 {
+    /// <summary>The command line named something this verb cannot work with.</summary>
+    /// <param name="what">What the value should have been, as a noun phrase: "a duration".</param>
+    public static int CannotUse<T>(
+        CommandContext ctx, string verb, string value, string what, string remedy)
+        where T : class
+    {
+        ctx.Output.Diagnostic(new CliDiagnostic
+        {
+            Severity = Severity.Error,
+            Code = DiagnosticCode.ArgumentUnusable,
+            Message = $"'{value}' is not {what}.",
+            Remedy = remedy,
+        });
+
+        return ctx.Output.Complete<T>(verb, ExitCode.ConfigInvalid, null);
+    }
+
     /// <summary>This verb needs Windows, and this machine is not.</summary>
     public static int NeedsWindows<T>(CommandContext ctx, string verb, string because)
         where T : class

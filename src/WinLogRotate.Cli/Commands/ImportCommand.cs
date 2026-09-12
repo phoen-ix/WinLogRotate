@@ -11,8 +11,10 @@ internal static class ImportCommand
     {
         if (!File.Exists(source))
         {
-            ctx.Output.Line($"winlogrotate: '{source}' does not exist.");
-            return ctx.Output.Complete<ImportResult>("import", ExitCode.ConfigInvalid, null);
+            return Refusals.CannotUse<ImportResult>(
+                ctx, "import", source, "a file that exists",
+                "Point it at a logrotate configuration, such as /etc/logrotate.conf "
+                + "copied off the machine being migrated.");
         }
 
         var paths = InstallPaths.Resolve(configDir);

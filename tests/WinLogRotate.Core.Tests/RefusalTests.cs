@@ -94,6 +94,53 @@ public sealed partial class RefusalTests
         diagnostic.Remedy.ShouldNotBeNullOrWhiteSpace();
     }
 
+    /// <summary>
+    /// An argument a verb could not use is named, with a remedy, under its own code.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// These four exited 2 with an empty diagnostics array, so the only thing a caller had was
+    /// the exit code - and <c>CliResult.Describe</c> turns 2 into "The configuration has errors,
+    /// so nothing was attempted." The configuration is fine; somebody mistyped a date.
+    /// </para>
+    /// <para>
+    /// <c>LR1007</c> rather than <c>LR1003 ConfigInvalid</c>, which is what the exit code is
+    /// called and would have been the easy reach. The exit code is right - nothing was attempted -
+    /// but the condition is not the machine's configuration, it is the words just typed, and an
+    /// alert rule watching event 113 should not fire because an operator fumbled a prompt.
+    /// </para>
+    /// </remarks>
+    [Theory]
+    [InlineData("journal", "garbage", "a date or time")]
+    [InlineData("host pause", "banana", "a duration")]
+    [InlineData("host use", "badkind", "a run model")]
+    [InlineData("import", "/nonexistent/logrotate.conf", "a file that exists")]
+    public void AnArgumentAVerbCouldNotUseIsNamed(string verb, string value, string what)
+    {
+        var (sink, ctx) = Context(verb.Split(' '));
+
+        var exit = verb switch
+        {
+            "journal" => Cli.Commands.JournalCommand.Run(ctx, value, null, null),
+            "host pause" => Cli.Commands.PauseCommand.Run(ctx, value, null),
+            "host use" => Cli.Commands.HostCommand.Use(ctx, value, null),
+            _ => Cli.Commands.ImportCommand.Run(ctx, value, null, null),
+        };
+
+        exit.ShouldBe(ExitCode.ConfigInvalid, "nothing was attempted, which is what 2 means");
+
+        var diagnostic = sink.Diagnostics.ShouldHaveSingleItem();
+
+        diagnostic.Code.ShouldBe(DiagnosticCode.ArgumentUnusable);
+        diagnostic.Severity.ShouldBe(Severity.Error);
+        diagnostic.Message.ShouldContain(value);
+        diagnostic.Message.ShouldContain(what);
+
+        // The half that makes it worth reading. Naming the value without saying what it should
+        // have been is the same dead end as the exit code alone.
+        diagnostic.Remedy.ShouldNotBeNullOrWhiteSpace();
+    }
+
     [GeneratedRegex(@"Output\s*\.\s*Line\s*\(\s*\$?""[^""]*needs Windows", RegexOptions.Compiled)]
     private static partial Regex RefusalAsProse();
 

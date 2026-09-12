@@ -118,6 +118,7 @@ mean the same thing wherever it is read.
 | 114 | Warning | No jobs are configured | `LR1004` |
 | 115 | Error | The verb needs a platform this is not | `LR1005` |
 | 116 | Error | The invocation ended unexpectedly; what was done is unknown | `LR1006` |
+| 117 | Error | The command line named something the verb could not use | `LR1007` |
 | 120 | Warning | A job was skipped | `LR2001` |
 | 121 | Error | A job matched no files and did not say `missingok` | `LR2002` |
 | 122 | Info | A log was due but held back by `notifempty` | `LR2003` |

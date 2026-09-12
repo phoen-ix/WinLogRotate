@@ -38,8 +38,9 @@ internal static class JournalCommand
             if (!DateTimeOffset.TryParse(since, CultureInfo.InvariantCulture,
                     DateTimeStyles.AssumeUniversal, out var parsed))
             {
-                ctx.Output.Line($"winlogrotate: could not read '{since}' as a date or time.");
-                return ctx.Output.Complete<JournalResult>("journal", ExitCode.ConfigInvalid, null);
+                return Refusals.CannotUse<JournalResult>(
+                    ctx, "journal", since, "a date or time",
+                    "Use an ISO timestamp such as 2026-09-01, or 2026-09-01T18:00:00Z.");
             }
 
             sinceTime = parsed;

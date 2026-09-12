@@ -42,9 +42,8 @@ internal static class HostCommand
     {
         if (!Enum.TryParse<RunHostKind>(kind, ignoreCase: true, out var wanted))
         {
-            ctx.Output.Line($"winlogrotate: '{kind}' is not a run model.");
-            ctx.Output.Line("Use task, service, or none.");
-            return ctx.Output.Complete<HostResult>("host use", ExitCode.ConfigInvalid, null);
+            return Refusals.CannotUse<HostResult>(
+                ctx, "host use", kind, "a run model", "Use task, service, or none.");
         }
 
         // Before the platform guard, before the elevation check, and - the part that matters -

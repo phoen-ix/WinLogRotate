@@ -20,6 +20,23 @@ public static class DiagnosticCode
     /// with the machine or the configuration, and it is the only code that says so.</summary>
     public const string InternalError = "LR1006";
 
+    /// <summary>
+    /// The command line named something this verb could not use: a date it cannot read, a
+    /// duration, a run model that is not one, a file that is not there.
+    /// </summary>
+    /// <remarks>
+    /// Deliberately not <see cref="ConfigInvalid"/>, which means the machine's configuration is
+    /// wrong and is documented as "nothing was attempted" about a night's rotation. These are
+    /// about the words somebody just typed, they go to that person rather than to whoever
+    /// maintains the configuration, and an alert rule watching event 113 should not fire because
+    /// an operator mistyped a date at a prompt.
+    /// <para>
+    /// One code for the argument and the file it names, because they are one condition: the verb
+    /// was given something it cannot work with, and nothing was attempted.
+    /// </para>
+    /// </remarks>
+    public const string ArgumentUnusable = "LR1007";
+
     // 2xxx - a job or file was skipped
     public const string JobSkipped = "LR2001";
     public const string FileMissing = "LR2002";

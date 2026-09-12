@@ -39,9 +39,9 @@ internal static class PauseCommand
 
         if (!TimeSpan.TryParse(duration, CultureInfo.InvariantCulture, out var span) || span <= TimeSpan.Zero)
         {
-            ctx.Output.Line($"winlogrotate: could not read '{duration}' as a duration.");
-            ctx.Output.Line("Use hh:mm:ss, for example 01:00:00 for one hour.");
-            return ctx.Output.Complete<PauseResult>("host pause", ExitCode.ConfigInvalid, null);
+            return Refusals.CannotUse<PauseResult>(
+                ctx, "host pause", duration, "a duration",
+                "Use hh:mm:ss, for example 01:00:00 for one hour.");
         }
 
         var until = DateTimeOffset.UtcNow.Add(span);

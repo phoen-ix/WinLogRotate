@@ -711,8 +711,9 @@ internal static class SecretCommand
             ctx.Output.Diagnostic(new CliDiagnostic
             {
                 Severity = Severity.Error,
-                Code = DiagnosticCode.ConfigUnreadable,
-                Message = $"{file.FullName} could not be read: {e.Message}",
+                Code = DiagnosticCode.ArgumentUnusable,
+                Message = $"'{file.FullName}' is not a file that could be read: {e.Message}.",
+                Remedy = "Check the path and that this account may read it.",
             });
             return false;
         }
