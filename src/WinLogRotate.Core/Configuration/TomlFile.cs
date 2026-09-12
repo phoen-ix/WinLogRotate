@@ -76,6 +76,12 @@ public sealed class TomlFile
     /// experimental job should not stop forty healthy ones from rotating, which on a busy
     /// server means a full disk. The bad file is preserved rather than deleted, because the
     /// operator will want to see what they typed.
+    /// <para>
+    /// Moving it aside is not what delivers that, and for a long time nothing did: the run had
+    /// already returned <c>ExitCode.ConfigInvalid</c> before this was reached.
+    /// <see cref="ConfigDiagnostic.FileScoped"/> is the part that keeps the promise, and this is
+    /// the tidying that follows it.
+    /// </para>
     /// </remarks>
     public static string Quarantine(string path)
     {

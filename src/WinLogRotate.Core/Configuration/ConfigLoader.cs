@@ -16,6 +16,18 @@ public sealed record LoadedConfig
     public required IReadOnlyList<string> Quarantined { get; init; }
 
     /// <summary>
+    /// Files that would not parse, whether or not they were then moved aside.
+    /// </summary>
+    /// <remarks>
+    /// Quarantine is optional - <c>config check</c> passes <c>quarantine: false</c> so that
+    /// asking a question does not rearrange the answer - so <see cref="Quarantined"/> cannot be
+    /// what a caller counts. This can: it is what makes <c>run</c> exit non-zero after carrying on
+    /// past a broken file, which is the difference between "skipped it and said so" and "reported
+    /// success".
+    /// </remarks>
+    public IReadOnlyList<string> Unloadable { get; init; } = [];
+
+    /// <summary>
     /// The <c>[notify]</c> table, bound and validated alongside everything else.
     /// </summary>
     /// <remarks>
@@ -63,21 +75,38 @@ public sealed record LoadedConfig
     /// rotating. A refused path in one file used to set this and return <c>ExitCode.ConfigInvalid</c>
     /// with nothing attempted anywhere, which turned one operator's typo into a disk-space
     /// incident; <c>ConfigValidator.CheckHooks</c> had already written that argument out in full
-    /// for hooks, and it applies here word for word. What still stops everything is a fault with
-    /// no single job to blame: an unparseable config.toml, a broken [notify] table, a duplicate
-    /// job name.
+    /// for hooks, and it applies here word for word. The same goes for a job file that will not
+    /// parse: there is no job to name, so <see cref="ConfigDiagnostic.FileScoped"/> names the file
+    /// instead, and <see cref="Unloadable"/> is what makes the run still exit non-zero.
+    /// <para>
+    /// What still stops everything is a fault with nothing smaller to blame: an unparseable
+    /// config.toml, a broken [notify] table, a duplicate job name, a job with no paths.
+    /// </para>
     /// </remarks>
-    public bool HasErrors => Diagnostics.Any(d => d.Severity >= Severity.Error && d.Job is null);
+    public bool HasErrors =>
+        Diagnostics.Any(d => d.Severity >= Severity.Error && d.Job is null && !d.FileScoped);
 }
 
 /// <summary>
 /// Reads <c>config.toml</c> and every job in <c>conf.d</c>.
 /// </summary>
 /// <remarks>
+/// <para>
 /// One unparseable job file must never take the whole configuration down. A typo in an
 /// experimental job should not stop forty healthy ones from rotating - on a busy server that
 /// turns a typo into a full disk. So a broken file is quarantined to <c>.bad</c>, reported,
 /// and skipped, and the rest of the run proceeds.
+/// </para>
+/// <para>
+/// That was written before it was true. The diagnostic carried no
+/// <see cref="ConfigDiagnostic.Job"/>, because a file that will not parse has no job to name, so
+/// <see cref="LoadedConfig.HasErrors"/> counted it as a fault with the configuration as a whole
+/// and <c>run</c> returned <c>ExitCode.ConfigInvalid</c> having attempted nothing. The file was
+/// then renamed on the way out, so the next run looked healthy and the outage did not repeat.
+/// <see cref="ConfigDiagnostic.FileScoped"/> is what makes the sentence above true; it applies to
+/// a file that will not <i>parse</i>, and deliberately not to a binder error, which still has
+/// nothing smaller than the machine to blame.
+/// </para>
 /// </remarks>
 public static class ConfigLoader
 {
@@ -94,6 +123,7 @@ public static class ConfigLoader
     {
         var diagnostics = new DiagnosticBag();
         var quarantined = new List<string>();
+        var unloadable = new List<string>();
 
         JobSettings? defaults = null;
         var notify = NotifySettings.Default;
@@ -138,6 +168,7 @@ public static class ConfigLoader
                 Diagnostics = diagnostics.Items,
                 Paths = paths,
                 Quarantined = quarantined,
+                Unloadable = unloadable,
                 Notify = notify,
                 NotifyProviders = providers,
                 Journal = journal,
@@ -166,7 +197,8 @@ public static class ConfigLoader
 
             if (file.HasErrors)
             {
-                HandleUnparseable(file, path, diagnostics, quarantined, quarantineBadFiles, null);
+                HandleUnparseable(
+                    file, path, diagnostics, quarantined, quarantineBadFiles, null, unloadable);
                 continue;
             }
 
@@ -226,21 +258,38 @@ public static class ConfigLoader
             Diagnostics = diagnostics.Items,
             Paths = paths,
             Quarantined = quarantined,
+            Unloadable = unloadable,
             Notify = notify,
             NotifyProviders = providers,
             Journal = journal,
         };
     }
 
+    /// <param name="unloadable">
+    /// The list one job file's failure is recorded in, or null when the file is <c>config.toml</c>
+    /// itself. That is the whole difference between "this file is out" and "nothing can run": a
+    /// job file has something smaller than the machine to blame, and the root file does not.
+    /// </param>
     private static JobSettings? HandleUnparseable(
         TomlFile file, string path, DiagnosticBag diagnostics,
-        List<string> quarantined, bool quarantine, JobSettings? fallback)
+        List<string> quarantined, bool quarantine, JobSettings? fallback,
+        List<string>? unloadable = null)
     {
         foreach (var error in file.Errors)
         {
-            diagnostics.Error(path, DiagnosticCode.ConfigInvalid, error.Message,
-                error.Span.Start.Line + 1, error.Span.Start.Column + 1);
+            diagnostics.Add(new ConfigDiagnostic
+            {
+                Severity = Severity.Error,
+                Code = DiagnosticCode.ConfigInvalid,
+                Message = error.Message,
+                File = path,
+                Line = error.Span.Start.Line + 1,
+                Column = error.Span.Start.Column + 1,
+                FileScoped = unloadable is not null,
+            });
         }
+
+        unloadable?.Add(path);
 
         if (!quarantine)
         {

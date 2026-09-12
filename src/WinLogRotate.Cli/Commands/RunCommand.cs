@@ -246,7 +246,14 @@ internal static class RunCommand
         // happened and reports a clean run. Exit 1, not 2: work was attempted and most of it
         // succeeded, which is exactly the distinction ExitCode.ConfigInvalid's own doc comment
         // draws when it says nothing on disk was touched.
-        var exit = report.ExitCode == ExitCode.Ok && config.SkippedJobs.Count > 0
+        //
+        // A file that would not parse counts the same way, and it is the half that used to be
+        // missing: before it was scoped to its own file it made HasErrors true and this method
+        // returned above, having attempted nothing on the machine. Carrying on without counting it
+        // would be the opposite mistake - forty jobs rotated, one file silently out of the
+        // configuration, and exit 0.
+        var exit = report.ExitCode == ExitCode.Ok
+            && (config.SkippedJobs.Count > 0 || config.Unloadable.Count > 0)
             ? ExitCode.Errors
             : report.ExitCode;
 

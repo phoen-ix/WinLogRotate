@@ -19,11 +19,34 @@ public sealed record ConfigDiagnostic
     /// <remarks>
     /// What lets a validation failure cost one job instead of every rotation on the machine.
     /// <c>LoadedConfig.HasErrors</c> - which is what makes <c>run</c> attempt nothing at all -
-    /// counts only errors with no job to blame, so an unparseable [notify] table still stops
-    /// everything while one job's refused path stops that job. The doctrine is <c>ConfigLoader</c>'s
-    /// own, already applied to a file that will not parse: report it, skip it, carry on.
+    /// counts only errors with nothing smaller to blame, so an unparseable [notify] table still
+    /// stops everything while one job's refused path stops that job.
     /// </remarks>
     public string? Job { get; init; }
+
+    /// <summary>
+    /// About one file rather than about the configuration as a whole.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// The same argument as <see cref="Job"/>, for the case where there is no job to name because
+    /// the file did not parse far enough to have one. <c>ConfigLoader</c>'s own remarks promised
+    /// this - "a broken file is quarantined to .bad, reported, and skipped, and the rest of the
+    /// run proceeds" - and <c>TomlFile</c>'s promised it twice over: "a typo in an experimental
+    /// job should not stop forty healthy ones from rotating". Neither was true.
+    /// <c>DiagnosticBag.Error</c> sets no <see cref="Job"/>, so a syntax error in one conf.d file
+    /// made <c>LoadedConfig.HasErrors</c> true and <c>run</c> exit 2 having attempted nothing on
+    /// the machine.
+    /// </para>
+    /// <para>
+    /// <b>Set only where the file could not be parsed at all.</b> A binder error - a job with no
+    /// paths, a duplicate job name - still has nothing smaller than the configuration to blame
+    /// and still stops everything, which is correct and is a separate question. Stamping this
+    /// onto every diagnostic that happens to come from a file would silently demote real errors
+    /// to a run that reports success.
+    /// </para>
+    /// </remarks>
+    public bool FileScoped { get; init; }
 
     public override string ToString() =>
         Line > 0
