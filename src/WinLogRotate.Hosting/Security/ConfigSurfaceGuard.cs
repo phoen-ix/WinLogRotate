@@ -1,0 +1,136 @@
+namespace WinLogRotate.Hosting.Security;
+
+/// <summary>
+/// Every path a run takes its configuration from, judged in the order it would have to be fixed.
+/// </summary>
+/// <remarks>
+/// <para>
+/// Descriptors arrive through a delegate rather than being read here, so the whole of the
+/// decision runs on both CI legs. <see cref="AclJudgement"/> gives the argument in full.
+/// </para>
+/// <para>
+/// First refusal in surface order wins, and the order is outermost first. That is not a severity
+/// ranking: repairing a job file inside a directory a local user can write repairs nothing, so
+/// the container is always the answer to give first.
+/// </para>
+/// </remarks>
+internal static class ConfigSurfaceGuard
+{
+    /// <summary>
+    /// Reads one path's descriptor, or returns null if it cannot be read at all.
+    /// </summary>
+    /// <remarks>
+    /// Null rather than an exception, and it is the fail-closed answer: it becomes
+    /// <see cref="AclVerdict.Unknown"/>, which does not allow hooks. Unguarded, a descriptor
+    /// that could not be read - an ordinary thing on a live <c>conf.d</c>, where an editor
+    /// replaces a file between the enumeration and the read - escaped as <c>LR1006</c> exit 4,
+    /// "This is a defect", about a machine that was merely busy.
+    /// </remarks>
+    internal delegate AclJudgement.Subject? Descriptor(string path, bool isDirectory);
+
+    /// <summary>The principals whose write access is not a finding.</summary>
+    internal static HashSet<string> Trusted(string? runAccountSid)
+    {
+        var trusted = new HashSet<string>(StringComparer.OrdinalIgnoreCase)
+        {
+            Sddl.WellKnown.LocalSystem,
+            Sddl.WellKnown.Administrators,
+            Sddl.WellKnown.TrustedInstaller,
+        };
+
+        if (runAccountSid is not null)
+        {
+            trusted.Add(runAccountSid);
+        }
+
+        return trusted;
+    }
+
+    /// <summary>
+    /// The first path in <paramref name="surface"/> that is not safe, or Hardened if none is.
+    /// </summary>
+    internal static AclFinding Verify(
+        IReadOnlyList<(string Path, bool IsDirectory)> surface,
+        IReadOnlySet<string> trusted,
+        Descriptor read)
+    {
+        foreach (var (path, isDirectory) in surface)
+        {
+            if (read(path, isDirectory) is not { } subject)
+            {
+                return new AclFinding
+                {
+                    Verdict = AclVerdict.Unknown,
+                    Path = path,
+                    Explanation =
+                        $"The permissions on '{path}' could not be read, so whether a " +
+                        "non-administrator can change it is not established. Hooks are refused " +
+                        "for the whole run.",
+                    FixCommand = FixCommand(path),
+                };
+            }
+
+            var (verdict, offending) = AclJudgement.Judge(subject, trusted);
+
+            if (verdict != AclVerdict.Hardened)
+            {
+                return Describe(verdict, subject, offending);
+            }
+        }
+
+        return new AclFinding { Verdict = AclVerdict.Hardened, Path = surface[0].Path };
+    }
+
+    private static AclFinding Describe(
+        AclVerdict verdict, AclJudgement.Subject subject, IReadOnlyList<string> offending)
+    {
+        var path = subject.Path;
+
+        return verdict switch
+        {
+            AclVerdict.LooseOwner => new AclFinding
+            {
+                Verdict = verdict,
+                Path = path,
+                OffendingAces = offending,
+                Explanation =
+                    $"'{path}' is owned by {subject.OwnerDescribe}, who can therefore " +
+                    "rewrite its permissions at will.",
+                FixCommand = FixCommand(path),
+            },
+
+            AclVerdict.LooseWritable => new AclFinding
+            {
+                Verdict = verdict,
+                Path = path,
+                OffendingAces = offending,
+                Explanation = subject.IsDirectory
+                    ? $"'{path}' can be written by an account that is not an administrator, so a " +
+                      "job file placed there would be executed by the run host. Hooks are refused " +
+                      "for the whole run."
+                    : $"'{path}' can be written by an account that is not an administrator, so the " +
+                      "commands it defines would be executed by the run host as written by them. " +
+                      "Hooks are refused for the whole run.",
+                FixCommand = FixCommand(path),
+            },
+
+            AclVerdict.Inherited => new AclFinding
+            {
+                Verdict = verdict,
+                Path = path,
+                Explanation =
+                    $"'{path}' inherits permissions from its parent. It is tight today, but it will " +
+                    "re-inherit ProgramData's permissive entries as soon as anyone changes them.",
+                FixCommand = FixCommand(path),
+            },
+
+            _ => new AclFinding { Verdict = verdict, Path = path, OffendingAces = offending },
+        };
+    }
+
+    private static string FixCommand(string path) =>
+        $"winlogrotate host repair --acl   (or: icacls \"{path}\" /inheritance:r " +
+        $"/grant:r *{Sddl.WellKnown.LocalSystem}:(OI)(CI)F " +
+        $"*{Sddl.WellKnown.Administrators}:(OI)(CI)F " +
+        $"*{Sddl.WellKnown.Users}:(OI)(CI)RX)";
+}

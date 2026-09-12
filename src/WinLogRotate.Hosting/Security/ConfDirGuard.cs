@@ -94,38 +94,57 @@ public static class ConfDirGuard
             };
         }
 
-        var info = new DirectoryInfo(directory);
-        var security = info.GetAccessControl(AccessControlSections.Access | AccessControlSections.Owner);
+        var finding = ConfigSurfaceGuard.Verify(
+            [(directory, true)], ConfigSurfaceGuard.Trusted(runAccountSid), ReadDescriptor);
 
-        var trusted = new HashSet<string>(StringComparer.OrdinalIgnoreCase)
-        {
-            Sddl.WellKnown.LocalSystem,
-            Sddl.WellKnown.Administrators,
-            Sddl.WellKnown.TrustedInstaller,
-        };
+        // Scoped only where it used to be. A per-user directory that merely inherits is not
+        // re-worded, because the sentence Scoped substitutes is about being writable by its
+        // owner, and that is not what Inherited says.
+        return finding.Verdict is AclVerdict.LooseOwner or AclVerdict.LooseWritable
+            ? Scoped(finding, scope)
+            : finding;
+    }
 
-        if (runAccountSid is not null)
+    /// <summary>
+    /// One path's descriptor, reduced to what a verdict is a function of - or null if it could
+    /// not be read.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// Null, never an exception. <c>GetAccessControl</c> throws for four ordinary reasons on a
+    /// live installation: the file was replaced between being enumerated and being read, which
+    /// is what a text editor's save looks like; the path became unreachable; the descriptor is
+    /// readable only with a privilege this process does not hold; or the account is not allowed
+    /// to read it at all - which, as <see cref="SecretsFileGuard"/> puts it, is what a correctly
+    /// protected path looks like from an unelevated account.
+    /// </para>
+    /// <para>
+    /// Every one of those used to escape to <c>CommandContext.Guarded</c> and come back as
+    /// <c>LR1006</c>, exit 4, "This is a defect. Nothing about what was or was not done can be
+    /// relied on" - about a machine that was merely busy. It is now
+    /// <see cref="AclVerdict.Unknown"/>, which refuses hooks: the answer could not be
+    /// established, and the guard is biased toward refusing.
+    /// </para>
+    /// </remarks>
+    private static AclJudgement.Subject? ReadDescriptor(string path, bool isDirectory)
+    {
+        FileSystemSecurity security;
+
+        try
         {
-            trusted.Add(runAccountSid);
+            security = isDirectory
+                ? new DirectoryInfo(path).GetAccessControl(
+                    AccessControlSections.Access | AccessControlSections.Owner)
+                : new FileInfo(path).GetAccessControl(
+                    AccessControlSections.Access | AccessControlSections.Owner);
+        }
+        catch (Exception e)
+            when (e is IOException or UnauthorizedAccessException or PrivilegeNotHeldException)
+        {
+            return null;
         }
 
-        // An owner can rewrite the DACL whenever it likes, so a non-admin owner is a write
-        // grant wearing a disguise.
-        if (security.GetOwner(typeof(SecurityIdentifier)) is SecurityIdentifier owner
-            && !trusted.Contains(owner.Value))
-        {
-            return Scoped(new AclFinding
-            {
-                Verdict = AclVerdict.LooseOwner,
-                Path = directory,
-                OffendingAces = [$"owner: {Describe(owner)}"],
-                Explanation =
-                    $"'{directory}' is owned by {Describe(owner)}, who can therefore rewrite its permissions at will.",
-                FixCommand = FixCommand(directory),
-            }, scope);
-        }
-
-        var offending = new List<string>();
+        var allow = new List<AclJudgement.Ace>();
 
         foreach (FileSystemAccessRule rule in
                  security.GetAccessRules(true, true, typeof(SecurityIdentifier)))
@@ -135,51 +154,21 @@ public static class ConfDirGuard
                 continue;
             }
 
-            if (!AclMask.GrantsWrite((int)rule.FileSystemRights))
-            {
-                continue;
-            }
-
-            var sid = ((SecurityIdentifier)rule.IdentityReference).Value;
-
-            // CREATOR OWNER is the specific ProgramData hole: it silently grants full control
-            // over whatever a user creates, so a dropped job file is theirs to keep editing.
-            if (trusted.Contains(sid))
-            {
-                continue;
-            }
-
-            offending.Add($"{Describe(rule.IdentityReference)} : {rule.FileSystemRights}");
+            allow.Add(new AclJudgement.Ace(
+                ((SecurityIdentifier)rule.IdentityReference).Value,
+                (int)rule.FileSystemRights,
+                $"{Describe(rule.IdentityReference)} : {rule.FileSystemRights}"));
         }
 
-        if (offending.Count > 0)
-        {
-            return Scoped(new AclFinding
-            {
-                Verdict = AclVerdict.LooseWritable,
-                Path = directory,
-                OffendingAces = offending,
-                Explanation =
-                    $"'{directory}' can be written by an account that is not an administrator, so a job file " +
-                    "placed there would be executed by the run host. Hooks are refused for the whole run.",
-                FixCommand = FixCommand(directory),
-            }, scope);
-        }
+        var owner = security.GetOwner(typeof(SecurityIdentifier)) as SecurityIdentifier;
 
-        if (!security.AreAccessRulesProtected)
-        {
-            return new AclFinding
-            {
-                Verdict = AclVerdict.Inherited,
-                Path = directory,
-                Explanation =
-                    $"'{directory}' inherits permissions from its parent. It is tight today, but it will " +
-                    "re-inherit ProgramData's permissive entries as soon as anyone changes them.",
-                FixCommand = FixCommand(directory),
-            };
-        }
-
-        return new AclFinding { Verdict = AclVerdict.Hardened, Path = directory };
+        return new AclJudgement.Subject(
+            path,
+            isDirectory,
+            owner?.Value,
+            owner is null ? "an owner the system would not name" : Describe(owner),
+            allow,
+            security.AreAccessRulesProtected);
     }
 
     /// <summary>
@@ -204,12 +193,6 @@ public static class ConfDirGuard
                 FixCommand = "Install for all users if you need hooks: their whole point is running commands, "
                            + "and that is only safe from a directory an ordinary account cannot write.",
             };
-
-    private static string FixCommand(string directory) =>
-        $"winlogrotate host repair --acl   (or: icacls \"{directory}\" /inheritance:r " +
-        $"/grant:r *{Sddl.WellKnown.LocalSystem}:(OI)(CI)F " +
-        $"*{Sddl.WellKnown.Administrators}:(OI)(CI)F " +
-        $"*{Sddl.WellKnown.Users}:(OI)(CI)RX)";
 
     private static string Describe(IdentityReference identity)
     {
