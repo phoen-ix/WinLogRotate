@@ -543,6 +543,39 @@ jobs:
             throw 'The recreated log is not empty, so the rename did not do what it claimed.'
           }
 
+          # And the manage job beside it, which until now was configured, staged, executed and
+          # never looked at: every assertion in this step was about C:\smoke\rot. It is the only
+          # compress = true rotation anywhere in CI, so nothing on any runner had ever checked that
+          # this product's archives are archives.
+          #
+          # Six files were staged: five dated 2026-08-0N at 20,000 bytes and one current. livefiles
+          # defaults to 1, so the newest is the live log and is left alone; rotate = 2 keeps the
+          # two newest archives and deletes the other three. The whole directory is asserted rather
+          # than the presence of one file, because "what else is left" is the half a per-file check
+          # cannot see.
+          $left = (Get-ChildItem 'C:\smoke\logs' | Select-Object -ExpandProperty Name | Sort-Object) -join ', '
+          $want = 'app-2026-08-04.log.zip, app-2026-08-05.log.zip, app-2026-09-07.log'
+          if ($left -ne $want) { throw "the manage job left [$left]; expected [$want]" }
+
+          if ((Get-Content 'C:\smoke\logs\app-2026-09-07.log' -Raw).Trim() -ne 'current') {
+            throw 'the manage job touched the live log, which is the one thing manage mode promises not to do'
+          }
+
+          # A real archive, holding the log it was named for. A zip that cannot be opened, or one
+          # whose entry is empty, would satisfy every name-only assertion above.
+          Add-Type -AssemblyName System.IO.Compression.FileSystem
+          $zip = [System.IO.Compression.ZipFile]::OpenRead('C:\smoke\logs\app-2026-08-05.log.zip')
+          try {
+            $entry = $zip.Entries | Where-Object { $_.Name -eq 'app-2026-08-05.log' }
+            if (-not $entry) {
+              throw "the archive does not contain app-2026-08-05.log; it has [$(($zip.Entries | ForEach-Object Name) -join ', ')]"
+            }
+            if ($entry.Length -ne 20002) {
+              throw "the archived log is $($entry.Length) bytes uncompressed, expected the 20,002 that were staged"
+            }
+          }
+          finally { $zip.Dispose() }
+
           # The first hook this product has ever run. It proves four things at once that no unit
           # test can: the ACL gate opened on a real installer-made directory, the process was
           # spawned by SYSTEM, its pipes were drained, and it was waited for rather than abandoned.
