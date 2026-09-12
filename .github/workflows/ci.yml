@@ -369,29 +369,52 @@ jobs:
       # DetailPrint, which is invisible under /S - so a silent install can report success with
       # nothing scheduled to run. Re-running the registration here surfaces whatever schtasks
       # actually said, rather than leaving us to guess from the absence of a task.
+      # This step used to repair the failure it exists to detect. If Get-ScheduledTask found
+      # nothing it announced a warning annotation, re-ran `host use task`, created the task itself
+      # with schtasks, and only then asserted hardening - so the v0.0.1 regression named above
+      # recurring today was a green check, and every assertion after it, here and after the
+      # upgrade, measured a task the workflow had made rather than one the installer had.
+      #
+      # The diagnostics were worth keeping and are kept, in the step below, where they run only
+      # when this one has already failed. What is asserted and what is explained are now two
+      # different things.
       - name: 'Leg A: the scheduled task is registered and hardened'
+        id: task-registered
         shell: pwsh
         run: |
           . .github/scripts/installer-smoke-helpers.ps1
-          $entry = Get-UninstallEntry -Scope machine
-          $exe = Join-Path $entry.InstallLocation 'winlogrotate.exe'
 
           if (-not (Get-ScheduledTask -TaskPath $env:TASK_PATH -TaskName $env:TASK_NAME -ErrorAction SilentlyContinue)) {
-            Write-Host '::warning::The installer did not register the task. Re-running it to capture the error.'
-            & $exe host use task --verbose 2>&1 | ForEach-Object { Write-Host "    $_" }
-            Write-Host "    host use task exited $LASTEXITCODE"
-
-            Write-Host '  --- the XML we hand to schtasks ---'
-            & $exe host export-task | ForEach-Object { Write-Host "    $_" }
-
-            Write-Host '  --- schtasks, directly, with its own diagnostics ---'
-            & $exe host export-task | Out-File -Encoding unicode task.xml
-            & schtasks.exe /create /tn '\WinLogRotate\Rotate' /xml task.xml /f 2>&1 |
-              ForEach-Object { Write-Host "    $_" }
-            Write-Host "    schtasks exited $LASTEXITCODE"
+            throw ('The installer reported success and registered no scheduled task, so nothing ' +
+                   'would ever run a rotation. This is what shipped in v0.0.1. The next step ' +
+                   'captures why.')
           }
 
           Assert-TaskHardening -TaskPath $env:TASK_PATH -TaskName $env:TASK_NAME -ExpectSystem
+
+      # Only on the failure above, and it changes no verdict: it exists so the log says why.
+      - name: 'Leg A: why the task is missing'
+        if: failure() && steps.task-registered.outcome == 'failure'
+        shell: pwsh
+        run: |
+          $entry = Get-UninstallEntry -Scope machine
+          $exe = Join-Path $entry.InstallLocation 'winlogrotate.exe'
+
+          & $exe host use task --verbose 2>&1 | ForEach-Object { Write-Host "    $_" }
+          Write-Host "    host use task exited $LASTEXITCODE"
+
+          Write-Host '  --- the XML we hand to schtasks ---'
+          & $exe host export-task | ForEach-Object { Write-Host "    $_" }
+
+          Write-Host '  --- schtasks, directly, with its own diagnostics ---'
+          & $exe host export-task | Out-File -Encoding unicode task.xml
+          & schtasks.exe /create /tn '\WinLogRotate\Rotate' /xml task.xml /f 2>&1 |
+            ForEach-Object { Write-Host "    $_" }
+          Write-Host "    schtasks exited $LASTEXITCODE"
+
+          # This step is diagnostic. Its own verdict must not become the job's, and schtasks has
+          # just left a non-zero code behind either way.
+          $global:LASTEXITCODE = 0
 
       # The whole chain, end to end: task principal, ACL, event source and the binary itself,
       # proven by SYSTEM actually running it and leaving state behind.
