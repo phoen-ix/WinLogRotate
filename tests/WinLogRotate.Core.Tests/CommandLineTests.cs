@@ -14,17 +14,11 @@ namespace WinLogRotate.Core.Tests;
 /// </remarks>
 public sealed class CommandLineTests
 {
-    /// <summary>Nothing exists, so any split that depends on probing has to refuse.</summary>
-    private static bool Nothing(string _) => false;
-
-    private static Func<string, bool> Only(params string[] paths) =>
-        p => paths.Contains(p, StringComparer.OrdinalIgnoreCase);
-
     [Fact]
     public void AQuotedProgramWithSpacesSplitsCleanly()
     {
         CommandLine.TrySplit(
-            @"""C:\Program Files\App\reload.exe"" --now --quiet", Nothing,
+            @"""C:\Program Files\App\reload.exe"" --now --quiet",
             out var program, out var arguments, out _, out _).ShouldBeTrue();
 
         program.ShouldBe(@"C:\Program Files\App\reload.exe");
@@ -44,7 +38,7 @@ public sealed class CommandLineTests
     public void AnAmbiguousCommandLineIsRefusedNotGuessed()
     {
         CommandLine.TrySplit(
-            @"C:\Program Files\App\reload.exe --now", Nothing,
+            @"C:\Program Files\App\reload.exe --now",
             out _, out _, out var error, out var detail).ShouldBeFalse();
 
         error.ShouldBe(CommandLineError.Ambiguous);
@@ -53,31 +47,28 @@ public sealed class CommandLineTests
     }
 
     /// <summary>
-    /// Nothing on disk can decide where the program ends.
+    /// An unquoted path with spaces and arguments is refused, whatever is on disk.
     /// </summary>
     /// <remarks>
     /// <para>
-    /// <c>C:\Program</c> is the string the implementation actually looks up, and it is the one the
-    /// test this replaces did not plant. That test planted <c>C:\Program.exe</c> - which the code
-    /// never constructs, because it appends nothing - and <c>C:\Program Files\App\reload.exe</c>
-    /// without the trailing <c> --now</c> the second probe carries with it. Neither string was ever queried, so it
-    /// passed without the probe returning true once, while the probe it was named after was live
-    /// underneath it.
+    /// The lexical half. <see cref="CommandLineWitnessTests"/> carries the behavioural half,
+    /// because once the probe parameter is gone this test cannot plant anything and a refusal is
+    /// all any implementation would give.
     /// </para>
     /// <para>
-    /// What the probe did, when asked the question this test asks: accepted
-    /// <c>program = C:\Program</c> with the rest as arguments, and started it as SYSTEM. That is
-    /// CreateProcess' first leg, which is the behaviour <c>CommandLine</c>'s own remarks and
-    /// <c>docs/hooks.md</c> both say it exists to reject.
+    /// The test this replaces could plant, and planted the wrong strings: <c>C:\Program.exe</c>,
+    /// which the code never constructs because it appends nothing, and
+    /// <c>C:\Program Files\App\reload.exe</c> without the trailing <c> --now</c> the second probe
+    /// carried with it. Neither was ever queried, so it passed without the probe returning true
+    /// once, while the probe it was named after was live underneath it - accepting
+    /// <c>program = C:\Program</c> with the rest as arguments, started as SYSTEM.
     /// </para>
     /// </remarks>
     [Fact]
-    public void NoFileOnDiskCanDecideWhereTheProgramEnds()
+    public void AnAmbiguousCommandLineIsRefusedWhateverIsOnDisk()
     {
-        var planted = Only(@"C:\Program");
-
         CommandLine.TrySplit(
-            @"C:\Program Files\App\reload.exe --now", planted,
+            @"C:\Program Files\App\reload.exe --now",
             out var program, out var arguments, out var error, out _).ShouldBeFalse();
 
         program.ShouldBeEmpty();
@@ -94,7 +85,7 @@ public sealed class CommandLineTests
     public void AnUnquotedPathWithSpacesAndNoArgumentsIsAccepted()
     {
         CommandLine.TrySplit(
-            @"C:\Program Files\App\reload.exe", Only(@"C:\Program Files\App\reload.exe"),
+            @"C:\Program Files\App\reload.exe",
             out var program, out var arguments, out _, out _).ShouldBeTrue();
 
         program.ShouldBe(@"C:\Program Files\App\reload.exe");
@@ -114,7 +105,7 @@ public sealed class CommandLineTests
         // Nothing, not Only("net"). The planted file used to be what carried this to the
         // NotAbsolute arm at all: without it the bare name fell through to Ambiguous, whose
         // remedy - quote the program - produces `"net" stop MyService` and the same refusal.
-        CommandLine.TrySplit("net stop MyService", Nothing,
+        CommandLine.TrySplit("net stop MyService",
             out _, out _, out var error, out _).ShouldBeFalse();
 
         error.ShouldBe(CommandLineError.NotAbsolute);
@@ -124,7 +115,7 @@ public sealed class CommandLineTests
     [Fact]
     public void AnAbsoluteProgramWithArgumentsNeedsNoProbe()
     {
-        CommandLine.TrySplit(@"C:\Windows\System32\net.exe stop MyService", Nothing,
+        CommandLine.TrySplit(@"C:\Windows\System32\net.exe stop MyService",
             out var program, out var arguments, out _, out _).ShouldBeTrue();
 
         program.ShouldBe(@"C:\Windows\System32\net.exe");
@@ -136,7 +127,7 @@ public sealed class CommandLineTests
     public void AQuotedArgumentStaysOneArgument()
     {
         CommandLine.TrySplit(
-            @"C:\tools\copy.exe ""C:\Program Files\a b.txt"" D:\dest", Nothing,
+            @"C:\tools\copy.exe ""C:\Program Files\a b.txt"" D:\dest",
             out _, out var arguments, out _, out _).ShouldBeTrue();
 
         arguments.ShouldBe([@"C:\Program Files\a b.txt", @"D:\dest"]);
@@ -146,7 +137,7 @@ public sealed class CommandLineTests
     [Fact]
     public void AnEmptyQuotedArgumentIsKept()
     {
-        CommandLine.TrySplit(@"C:\tools\x.exe """" --flag", Nothing,
+        CommandLine.TrySplit(@"C:\tools\x.exe """" --flag",
             out _, out var arguments, out _, out _).ShouldBeTrue();
 
         arguments.ShouldBe(["", "--flag"]);
@@ -163,7 +154,7 @@ public sealed class CommandLineTests
     [Fact]
     public void ABatchFileIsRefusedWithTheInterpreterNamed()
     {
-        CommandLine.TrySplit(@"C:\tools\reload.bat --now", Nothing,
+        CommandLine.TrySplit(@"C:\tools\reload.bat --now",
             out _, out _, out var error, out var detail).ShouldBeFalse();
 
         error.ShouldBe(CommandLineError.NotExecutable);
@@ -183,10 +174,10 @@ public sealed class CommandLineTests
     [Fact]
     public void TheSplitDoesNotDependOnWhatIsOnDisk()
     {
-        CommandLine.TrySplit(@"C:\tools\reload.exe --now", Nothing,
+        CommandLine.TrySplit(@"C:\tools\reload.exe --now",
             out var absent, out _, out _, out _).ShouldBeTrue();
 
-        CommandLine.TrySplit(@"C:\tools\reload.exe --now", Only(@"C:\tools\reload.exe"),
+        CommandLine.TrySplit(@"C:\tools\reload.exe --now",
             out var present, out _, out _, out _).ShouldBeTrue();
 
         absent.ShouldBe(present);
@@ -195,7 +186,7 @@ public sealed class CommandLineTests
     [Fact]
     public void AnUnterminatedQuoteIsRefused()
     {
-        CommandLine.TrySplit(@"""C:\tools\x.exe --now", Nothing,
+        CommandLine.TrySplit(@"""C:\tools\x.exe --now",
             out _, out _, out var error, out _).ShouldBeFalse();
 
         error.ShouldBe(CommandLineError.Unterminated);
@@ -204,7 +195,7 @@ public sealed class CommandLineTests
     [Fact]
     public void BlankIsRefused()
     {
-        CommandLine.TrySplit("   ", Nothing, out _, out _, out var error, out _).ShouldBeFalse();
+        CommandLine.TrySplit("   ", out _, out _, out var error, out _).ShouldBeFalse();
         error.ShouldBe(CommandLineError.Empty);
     }
 
@@ -212,7 +203,7 @@ public sealed class CommandLineTests
     [Fact]
     public void AUncProgramIsAbsolute()
     {
-        CommandLine.TrySplit(@"\\server\share\reload.exe -q", Nothing,
+        CommandLine.TrySplit(@"\\server\share\reload.exe -q",
             out var program, out var arguments, out _, out _).ShouldBeTrue();
 
         program.ShouldBe(@"\\server\share\reload.exe");

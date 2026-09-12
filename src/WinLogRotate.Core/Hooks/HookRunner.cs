@@ -63,7 +63,7 @@ public sealed class HookRunner(IJournal journal, IHookHost? host, HookGate gate,
             return HookStageResult.Nothing;
         }
 
-        var planned = HookPlan.For(jobName, stage, raw, gate, exists: null, sourceFile);
+        var planned = HookPlan.For(jobName, stage, raw, gate, sourceFile);
         var diagnostics = new List<CliDiagnostic>(planned.Refusals);
         var failed = planned.Refusals.Count;
 

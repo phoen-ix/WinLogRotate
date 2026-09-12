@@ -45,16 +45,12 @@ public static class HookPlan
     /// </remarks>
     private static readonly string[] Verbs = ["stop", "start", "restart", "pause", "continue"];
 
-    /// <param name="exists">
-    /// Whether a path names a file, for splitting a command line. Injected so this runs anywhere.
-    /// </param>
     public static PlannedHooks For(
         string jobName, HookStage stage, IReadOnlyList<string> raw, HookGate gate,
-        Func<string, bool>? exists = null, string? sourceFile = null)
+        string? sourceFile = null)
     {
         var hooks = new List<PlannedHook>();
         var refusals = new List<CliDiagnostic>();
-        var probe = exists ?? File.Exists;
         var stageName = stage == HookStage.PreRotate ? "prerotate" : "postrotate";
 
         foreach (var entry in raw)
@@ -94,7 +90,7 @@ public static class HookPlan
                 continue;
             }
 
-            var planned = Check(jobName, stage, stageName, action, probe, refusals);
+            var planned = Check(jobName, stage, stageName, action, refusals);
             if (planned is not null)
             {
                 hooks.Add(planned);
@@ -107,7 +103,7 @@ public static class HookPlan
     /// <summary>Applies the per-scheme rules, or records why the hook will not run.</summary>
     private static PlannedHook? Check(
         string jobName, HookStage stage, string stageName, HookAction action,
-        Func<string, bool> exists, List<CliDiagnostic> refusals)
+        List<CliDiagnostic> refusals)
     {
         switch (action.Scheme)
         {
@@ -150,7 +146,7 @@ public static class HookPlan
 
             case HookScheme.Command:
                 if (!CommandLine.TrySplit(
-                        action.Target, exists, out var program, out var arguments,
+                        action.Target, out var program, out var arguments,
                         out var error, out var detail))
                 {
                     refusals.Add(Refuse(jobName, stageName, detail!,

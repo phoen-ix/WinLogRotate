@@ -1115,6 +1115,60 @@ public partial class ArchitectureTests
             "an event ID nothing emits is a lie in docs/diagnostics.md - emit it or withdraw it");
     }
 
+    [GeneratedRegex(@"\b(?:File|Directory|Path|FileInfo|DirectoryInfo|FileSystemInfo)\s*\.\s*\w|new\s+(?:File|Directory)Info\b|\bFunc\s*<\s*string\s*,\s*bool\s*>", RegexOptions.Compiled)]
+    private static partial Regex AsksTheDisk();
+
+    /// <summary>
+    /// The rule that decides what a hook starts as SYSTEM does no I/O, and cannot be handed any.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// <c>CommandLine.TrySplit</c> took a <c>Func&lt;string, bool&gt;</c> so the rule could be
+    /// tested without Windows. One of its two uses asked whether the <i>truncated</i> head named a
+    /// file - <c>C:\Program</c> for <c>C:\Program Files\App\reload.exe --now</c> - which is
+    /// CreateProcess' own first leg, and the escalation the type's remarks and
+    /// <c>docs/hooks.md</c> both say it exists to reject. A file at the truncation point turned a
+    /// documented refusal into a program started as SYSTEM.
+    /// </para>
+    /// <para>
+    /// So the split is lexical, and this is what keeps it that way. It covers more than the
+    /// parameter: <c>File.Exists</c>, <c>Path.Exists</c>, <c>new FileInfo(head).Exists</c> and a
+    /// re-introduced delegate are all the same defect wearing different spellings, and a rule that
+    /// named only the first would be satisfied by the second.
+    /// </para>
+    /// <para>
+    /// Comment lines do not count, because this file's remarks discuss <c>File.Exists</c> at
+    /// length in order to explain why it is not here - and a rule a comment can satisfy is the
+    /// failure this suite keeps rediscovering.
+    /// <c>CommandLineWitnessTests.APlantedFileDoesNotChangeTheSplit</c> is the behavioural half,
+    /// on the ubuntu leg only.
+    /// </para>
+    /// </remarks>
+    [Fact]
+    public void TheHookSplitDoesNoIo()
+    {
+        var file = Path.Combine(
+            RepoRoot.Find().FullName, "src", "WinLogRotate.Core", "Hooks", "CommandLine.cs");
+
+        var lines = File.ReadAllLines(file);
+
+        // Tracks a quantity that moves. A path that stopped resolving would read nothing and
+        // report no offenders, which is the shape this rule exists to refuse.
+        lines.Length.ShouldBeGreaterThan(150, "CommandLine.cs should have been read");
+
+        var offenders = lines
+            .Select((text, index) => (Line: index + 1, Text: text.Trim()))
+            .Where(l => !l.Text.StartsWith("//", StringComparison.Ordinal))
+            .Where(l => !l.Text.StartsWith('*'))
+            .Where(l => !l.Text.StartsWith("/*", StringComparison.Ordinal))
+            .Where(l => AsksTheDisk().IsMatch(l.Text))
+            .Select(l => $"{l.Line}: {l.Text}")
+            .ToArray();
+
+        offenders.ShouldBeEmpty(
+            "where a hook's program ends is decided by the string alone - see the remarks on TrySplit");
+    }
+
     [GeneratedRegex(@"\bOption<[^>\n]+>\s+(\w+)\s*=", RegexOptions.Compiled)]
     private static partial Regex OptionDeclaration();
 

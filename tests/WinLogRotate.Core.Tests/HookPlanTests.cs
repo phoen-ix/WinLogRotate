@@ -19,7 +19,7 @@ public sealed class HookPlanTests
 {
     private static PlannedHooks Plan(
         string entry, HookGate? gate = null, HookStage stage = HookStage.PostRotate) =>
-        HookPlan.For("app", stage, [entry], gate ?? HookGate.Open, _ => false);
+        HookPlan.For("app", stage, [entry], gate ?? HookGate.Open);
 
     private static CliDiagnostic Only(PlannedHooks planned)
     {

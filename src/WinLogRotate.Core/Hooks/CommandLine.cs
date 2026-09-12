@@ -52,12 +52,24 @@ public static class CommandLine
     /// <summary>
     /// Splits <paramref name="commandLine"/>, or explains why it will not.
     /// </summary>
-    /// <param name="exists">
-    /// Whether a path names a file. Injected so the whole of this runs on the Linux leg - it is
-    /// the rule that decides what executes as SYSTEM, so it deserves tests that need no Windows.
-    /// </param>
+    /// <remarks>
+    /// <para>
+    /// <b>No I/O, and no way to hand it any.</b> There used to be a <c>Func&lt;string, bool&gt;</c>
+    /// here, injected so the rule that decides what executes as SYSTEM could be tested without
+    /// Windows - a good reason for a seam that turned out to be the defect. One of its two
+    /// callers asked whether the <i>truncated</i> head was a file, which is CreateProcess' own
+    /// first leg and the thing this type exists to reject.
+    /// </para>
+    /// <para>
+    /// Removing the parameter is what makes that unrepeatable, and it costs nothing this type
+    /// wanted: the split is now a function of the string alone, so it answers the same on every
+    /// machine, in every order, and <c>config check</c> cannot disagree with <c>run</c> because a
+    /// file appeared between them. An extensionless program path containing a space is refused
+    /// rather than looked up; <c>docs/hooks.md</c> already says to quote it.
+    /// </para>
+    /// </remarks>
     public static bool TrySplit(
-        string commandLine, Func<string, bool> exists,
+        string commandLine,
         out string program, out string[] arguments, out CommandLineError error, out string? detail)
     {
         program = string.Empty;
@@ -135,8 +147,10 @@ public static class CommandLine
             return Absolute(ref program, ref error, ref detail);
         }
 
-        // The whole string might be one path containing spaces and no arguments at all.
-        if (LooksExecutable(text) || exists(text))
+        // The whole string might be one path containing spaces and no arguments at all. Settled
+        // by the extension here too: asking the disk would make the same command line accepted on
+        // one machine and refused on the next, which is the property this type is built on.
+        if (LooksExecutable(text))
         {
             program = text;
             return Absolute(ref program, ref error, ref detail);
