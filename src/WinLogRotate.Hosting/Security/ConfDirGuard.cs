@@ -2,6 +2,7 @@ using System.Runtime.Versioning;
 using System.Security.AccessControl;
 using System.Security.Principal;
 using WinLogRotate.Core;
+using WinLogRotate.Core.Configuration;
 
 namespace WinLogRotate.Hosting.Security;
 
@@ -103,6 +104,87 @@ public static class ConfDirGuard
         return finding.Verdict is AclVerdict.LooseOwner or AclVerdict.LooseWritable
             ? Scoped(finding, scope)
             : finding;
+    }
+
+    /// <summary>
+    /// Applies the hardened descriptor to the directories this product owns, and to every file
+    /// inside them that a run would take its configuration from.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// Each directory is set explicitly rather than relying on the root's inheritable entries
+    /// propagating downward. Propagation is not enough here, and the reason is ProgramData's
+    /// <c>CREATOR OWNER:(OI)(CI)(IO)(F)</c>: when a subdirectory is created beneath it, that
+    /// entry materialises as a Full Control ACE for whoever created it - the elevated account
+    /// running the installer, whose own SID is not <c>BUILTIN\Administrators</c>. It cost a
+    /// shipped release to learn that. The installer hardened the root, the smoke test asserted
+    /// the root, and conf.d - the only directory whose permissions decide anything, because it
+    /// holds the files the run host executes - was checked by neither.
+    /// </para>
+    /// <para>
+    /// The files are the half that was missing, and they are the half that matters. Rewriting a
+    /// parent's DACL recomputes what a child inherits; it changes neither a child's own explicit
+    /// entries nor a child's owner, and an owner holds implicit WRITE_DAC. So a job file dropped
+    /// into conf.d while ProgramData's CREATOR OWNER was still granting Full Control stayed its
+    /// author's to rewrite across the exact command <c>doctor</c> prints as the fix - the guard
+    /// reported <c>Hardened</c>, and the attacker went on editing their own file's
+    /// <c>postrotate</c>.
+    /// </para>
+    /// <para>
+    /// This lives here rather than in the CLI because its sibling does:
+    /// <see cref="SecretsFileGuard"/> has both halves, and a guard whose repair is somewhere
+    /// else is a guard whose repair can drift from it - which is what happened.
+    /// </para>
+    /// </remarks>
+    public static void Apply(InstallPaths paths)
+    {
+        foreach (var directory in new[] { paths.Root, paths.ConfigDirectory, paths.JournalDirectory })
+        {
+            Directory.CreateDirectory(directory);
+
+            var security = new DirectorySecurity();
+            security.SetSecurityDescriptorSddlForm(Sddl.ConfigDirectory);
+
+            // Severing inheritance is stated twice on purpose. The D:P in the SDDL says it, but
+            // whether that survives the managed persist path is not something to take on trust:
+            // if it does not, the directory silently keeps its parent's entries - which for
+            // ProgramData means CREATOR OWNER, materialised as Full Control for whoever ran the
+            // installer. Saying it through the API as well costs one line and cannot be lost.
+            security.SetAccessRuleProtection(isProtected: true, preserveInheritance: false);
+
+            new DirectoryInfo(directory).SetAccessControl(security);
+        }
+
+        foreach (var file in JobFiles.In(paths.ConfigDirectory))
+        {
+            Reset(file);
+        }
+    }
+
+    /// <summary>Gives one file back to Administrators and back to its parent's rule.</summary>
+    private static void Reset(string path)
+    {
+        var info = new FileInfo(path);
+        var security = info.GetAccessControl(
+            AccessControlSections.Access | AccessControlSections.Owner);
+
+        // Ownership first. Without it the two steps below are undone by whoever still owns the
+        // file, at a moment of their choosing.
+        security.SetOwner(new SecurityIdentifier(Sddl.WellKnown.Administrators));
+
+        // Inheritance re-enabled and every explicit entry discarded, rather than a descriptor of
+        // the file's own. The parent is protected and carries OICI SYSTEM and Administrators full
+        // control with Users read, so what a child inherits is exactly the rule - and stays
+        // exactly the rule when the rule changes.
+        security.SetAccessRuleProtection(isProtected: false, preserveInheritance: false);
+
+        foreach (FileSystemAccessRule rule in security.GetAccessRules(
+                     includeExplicit: true, includeInherited: false, typeof(SecurityIdentifier)))
+        {
+            security.RemoveAccessRuleSpecific(rule);
+        }
+
+        info.SetAccessControl(security);
     }
 
     /// <summary>

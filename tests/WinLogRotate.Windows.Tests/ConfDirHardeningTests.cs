@@ -268,4 +268,60 @@ public sealed class ConfDirHardeningTests : IDisposable
         after.ShouldNotBeNull().Value.ShouldBe(Sddl.WellKnown.Administrators,
             $"the file was owned by {before} when it was created");
     }
+
+    /// <summary>
+    /// Repairing the permissions repairs the job files, not only the directory holding them.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// The command <c>doctor</c> prints as the fix used to harden three directories and stop.
+    /// Rewriting a parent's DACL recomputes what a child inherits; it changes neither a child's
+    /// own explicit entries nor a child's owner, and an owner holds implicit WRITE_DAC. So after
+    /// the documented repair, the guard said <c>Hardened</c> and the author of a job file
+    /// dropped into conf.d went on editing their own file's <c>postrotate</c>.
+    /// </para>
+    /// <para>
+    /// A DACL edit rather than an ownership change, deliberately: any owner may add an entry to
+    /// their own file, so this needs no privilege and is deterministic on any runner, where
+    /// <c>SetOwner</c> to an arbitrary SID needs SeRestorePrivilege that .NET will not enable.
+    /// </para>
+    /// </remarks>
+    [Fact]
+    public void RepairResetsAJobFileToInheritAndToAdministratorOwnership()
+    {
+        WindowsOnly.Require();
+
+        var paths = new InstallPaths { Scope = InstallScope.Portable, Root = _root.FullName };
+        Directory.CreateDirectory(paths.ConfigDirectory);
+
+        var path = Path.Combine(paths.ConfigDirectory, "app.toml");
+        File.WriteAllText(path, "name = \"app\"\n");
+
+        var loosened = new FileInfo(path).GetAccessControl();
+        loosened.SetAccessRuleProtection(isProtected: true, preserveInheritance: true);
+        loosened.AddAccessRule(new FileSystemAccessRule(
+            new SecurityIdentifier(Sddl.WellKnown.Everyone),
+            FileSystemRights.FullControl,
+            AccessControlType.Allow));
+        new FileInfo(path).SetAccessControl(loosened);
+
+        // The premise: this is what the gate must refuse, and what the old repair left standing.
+        ConfDirGuard.Verify(paths.ConfigDirectory).Verdict.ShouldBe(AclVerdict.Hardened,
+            "the directory itself is not the problem here - the file inside it is");
+
+        ConfDirGuard.Apply(paths);
+
+        var after = new FileInfo(path).GetAccessControl(
+            AccessControlSections.Access | AccessControlSections.Owner);
+
+        after.GetAccessRules(includeExplicit: true, includeInherited: false, typeof(SecurityIdentifier))
+            .Count.ShouldBe(0, "every explicit entry is discarded, Everyone's included");
+
+        after.AreAccessRulesProtected.ShouldBeFalse(
+            "the file inherits from a protected parent, so the rule stays the rule when it changes");
+
+        after.GetOwner(typeof(SecurityIdentifier)).ShouldNotBeNull()
+            .Value.ShouldBe(Sddl.WellKnown.Administrators,
+                "an owner holds implicit WRITE_DAC, so ownership is the half a DACL repair cannot reach");
+    }
 }

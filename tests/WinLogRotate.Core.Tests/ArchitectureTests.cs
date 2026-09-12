@@ -47,6 +47,42 @@ public partial class ArchitectureTests
     }
 
     /// <summary>
+    /// Only <c>JobFiles</c> decides which files in conf.d are job files.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// Three things have to agree on that set: the loader, which opens them; the guard, which
+    /// decides whether what they contain may execute anything as SYSTEM; and the repair, which
+    /// fixes their permissions. Two spellings of the question is the exact shape of the defect
+    /// this closes - the guard inspected one <c>DirectoryInfo</c>, the loader opened the files
+    /// inside it, and the file that is actually executed was judged by nobody.
+    /// </para>
+    /// <para>
+    /// A repair that fixed a different set from the one the guard judges would be that same
+    /// defect wearing a fix, and it would look correct in every test written against either
+    /// half. Stated negatively so that a comment about the pattern cannot satisfy it.
+    /// </para>
+    /// </remarks>
+    [Fact]
+    public void OnlyJobFilesDecidesWhichFilesAreJobFiles()
+    {
+        var src = Path.Combine(RepoRoot.Find().FullName, "src");
+
+        var offenders = Directory
+            .EnumerateFiles(src, "*.cs", SearchOption.AllDirectories)
+            .Where(f => !f.Contains(Path.Combine("obj", ""), StringComparison.Ordinal))
+            .Where(f => !f.Contains(Path.Combine("bin", ""), StringComparison.Ordinal))
+            .Where(f => Path.GetFileName(f) != "JobFiles.cs")
+            .Where(f => File.ReadAllText(f).Contains("\"*.toml\"", StringComparison.Ordinal))
+            .Select(Path.GetFileName)
+            .ToArray();
+
+        offenders.ShouldBeEmpty(
+            "enumerate job files with JobFiles.In, so the loader, the guard and the repair "
+            + "cannot come to disagree about which files those are");
+    }
+
+    /// <summary>
     /// The GUI must never call <c>MessageBox</c>.
     /// <para>
     /// It renders light regardless of Application.SetColorMode, so a single call ruins a

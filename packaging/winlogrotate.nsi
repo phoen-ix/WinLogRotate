@@ -452,6 +452,19 @@ Section "-Core" SEC_CORE
       nsExec::ExecToLog '"$SYSDIR\icacls.exe" "$DataDir" /inheritance:r \
 /grant:r *S-1-5-18:(OI)(CI)F *S-1-5-32-544:(OI)(CI)F *S-1-5-32-545:(OI)(CI)RX'
       Pop $0
+
+      ; The children, which the line above does not reach. Rewriting a parent's DACL recomputes
+      ; what a child inherits; it changes neither a child's own explicit entries nor a child's
+      ; owner, and an owner holds implicit WRITE_DAC. On an upgrade, conf.d already holds job
+      ; files somebody created while CREATOR OWNER was still granting them Full Control, and
+      ; those stay theirs to rewrite until these two lines run. /reset on conf.d and not on
+      ; $DataDir: applied to the root it would discard the protection the line above just
+      ; established, which is the same self-undoing repair this pass exists to fix.
+      nsExec::ExecToLog '"$SYSDIR\icacls.exe" "$DataDir\conf.d" /reset /T /C /Q'
+      Pop $1
+      nsExec::ExecToLog '"$SYSDIR\icacls.exe" "$DataDir" /setowner "*S-1-5-32-544" /T /C /Q'
+      Pop $1
+
       ${If} $0 != 0
         ; Refusing to continue is correct: an install that silently leaves a
         ; SYSTEM-executing tool reading a world-writable directory is worse than no install.
@@ -497,6 +510,24 @@ Section "-Core" SEC_CORE
     FileWrite $0 "# [notify]$\r$\n"
     FileWrite $0 '# to = ["eventlog:"]$\r$\n'
     FileClose $0
+
+    ; Again, now that config.toml exists. The hardening above has to run before the seeding -
+    ; an install that cannot secure the directory must abort before writing anything into it -
+    ; so its per-file pass sees no config.toml at all. NSIS then creates that file itself, which
+    ; leaves it owned by the installing administrator's own account rather than by
+    ; BUILTIN\Administrators; the gate refuses hooks for a file whose owner it does not trust,
+    ; and [defaults] is exactly where a prerotate written once is inherited by every job.
+    ;
+    ; Not fatal if it fails. The directory is already secured and aborting here would discard a
+    ; complete install over a file permission; doctor reports it and names the repair.
+    ${If} $MultiUser.InstallMode == "AllUsers"
+      nsExec::ExecToLog '"$INSTDIR\${CLI}" host repair --acl --config-dir "$DataDir"'
+      Pop $0
+      ${If} $0 != 0
+        DetailPrint "The seeded config.toml could not be secured; hooks will be refused until \
+'winlogrotate host repair --acl' succeeds."
+      ${EndIf}
+    ${EndIf}
   ${EndIf}
 
   ; Carry a configuration forward from a previous location, without ever overwriting one that

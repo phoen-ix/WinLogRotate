@@ -175,10 +175,9 @@ public static class ConfigLoader
             };
         }
 
-        // Ordinal order so two machines given the same files load them the same way.
-        var files = Directory
-            .EnumerateFiles(paths.ConfigDirectory, "*.toml")
-            .OrderBy(f => f, StringComparer.Ordinal);
+        // The same enumeration the guard judges and the repair fixes - see JobFiles for why
+        // that has to be one function and not three agreeing spellings.
+        var files = JobFiles.In(paths.ConfigDirectory);
 
         var seenNames = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
 

@@ -216,10 +216,14 @@ internal static class HostCommand
 
         try
         {
-            ApplyAcl(paths);
+            ConfDirGuard.Apply(paths);
             ctx.Output.Line($"Secured {paths.Root}: SYSTEM and Administrators only, inheritance severed.");
         }
-        catch (Exception e) when (e is UnauthorizedAccessException or IOException)
+        // InvalidOperationException joins the two that were here: giving a file away is a new
+        // way for this to fail, and it is the one an attacker holding a file open produces.
+        catch (Exception e) when (e is UnauthorizedAccessException
+                                      or IOException
+                                      or InvalidOperationException)
         {
             ctx.Output.Diagnostic(new CliDiagnostic
             {
@@ -318,47 +322,6 @@ internal static class HostCommand
             ? $"Added {directory} to the {target} PATH."
             : $"Removed {directory} from the {target} PATH.");
         return ctx.Output.Complete<HostResult>("host path", ExitCode.Ok, null);
-    }
-
-    /// <summary>
-    /// Applies the hardened descriptor to the data root and to every directory under it that
-    /// we create.
-    /// </summary>
-    /// <remarks>
-    /// <para>
-    /// Each directory is set explicitly rather than relying on the root's inheritable ACEs
-    /// propagating downward. Propagation is not enough here, and the reason is ProgramData's
-    /// <c>CREATOR OWNER:(OI)(CI)(IO)(F)</c> entry: when a subdirectory is created beneath it,
-    /// that entry materialises as a Full Control ACE for whoever created it - the elevated
-    /// account running the installer. That account's own SID is not
-    /// <c>BUILTIN\Administrators</c>, so <see cref="ConfDirGuard"/> correctly reads it as a
-    /// non-administrator write grant and refuses every hook.
-    /// </para>
-    /// <para>
-    /// It cost a shipped release to learn this. The installer hardened the root, the smoke test
-    /// asserted the root, and conf.d - the only directory whose permissions actually matter,
-    /// because it is the one holding files the run host executes - was never checked by either.
-    /// </para>
-    /// </remarks>
-    [SupportedOSPlatform("windows")]
-    private static void ApplyAcl(InstallPaths paths)
-    {
-        foreach (var directory in new[] { paths.Root, paths.ConfigDirectory, paths.JournalDirectory })
-        {
-            Directory.CreateDirectory(directory);
-
-            var security = new System.Security.AccessControl.DirectorySecurity();
-            security.SetSecurityDescriptorSddlForm(Sddl.ConfigDirectory);
-
-            // Severing inheritance is stated twice on purpose. The D:P in the SDDL says it, but
-            // whether that survives the managed persist path is not something to take on trust:
-            // if it does not, the directory silently keeps its parent's entries - which for
-            // ProgramData means CREATOR OWNER, materialised as Full Control for whoever ran the
-            // installer. Saying it through the API as well costs one line and cannot be lost.
-            security.SetAccessRuleProtection(isProtected: true, preserveInheritance: false);
-
-            new DirectoryInfo(directory).SetAccessControl(security);
-        }
     }
 
     private static HostResult Describe(RunHostKind kind, InstallPaths paths) => new()

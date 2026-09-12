@@ -361,6 +361,14 @@ jobs:
           Assert-Sddl -Path "$env:DATA_DIR\conf.d"
           Assert-Sddl -Path "$env:DATA_DIR\journal"
 
+          # The files, which the three lines above do not reach. Rewriting a directory's DACL
+          # recomputes what a child inherits and leaves a child's own entries and its owner
+          # alone - and the thing executed as SYSTEM is the file. This is also the only judge of
+          # the installer's ordering: the hardening pass has to run before config.toml is
+          # seeded, so that file is created afterwards by NSIS and is owned by the installing
+          # administrator until the second repair call fixes it.
+          Assert-JobFileAcl -DataDir $env:DATA_DIR
+
           # The end the ACL exists for, asserted directly rather than inferred from an SDDL
           # comparison on whichever directory somebody happened to think of.
           $entry = Get-UninstallEntry -Scope machine
@@ -487,6 +495,15 @@ jobs:
             'postrotate = ["command:C:\\Windows\\System32\\cmd.exe /c echo ran> C:\\smoke\\rot\\hook-ran.txt"]'
           )
           Set-Content -Path "$env:DATA_DIR\conf.d\smoke-rotate.toml" -Value $rotate
+
+          # Both job files were planted by the runner, so both are owned by the runner account
+          # rather than by BUILTIN\Administrators - and the gate refuses hooks for a file whose
+          # owner it does not trust, because an owner holds implicit WRITE_DAC over a file the
+          # run host executes as SYSTEM. An operator who adds a job file by hand is in exactly
+          # this position, and this is exactly the command they are told to run. Doing it here
+          # keeps that path honest rather than exempting CI from the rule it is testing - and
+          # the postrotate hook below is what proves the repair worked.
+          & $exe host repair --acl | Out-Host
 
           & $exe config check --json | Out-Host
           & $exe run --dry-run --verbose | Out-Host
@@ -680,6 +697,10 @@ jobs:
             'kind  = "rotate"',
             'paths = ["C:/smoke/absent/*.log"]'
           )
+
+          # As above: a file planted by hand is owned by whoever planted it, and the repair is
+          # what gives it back to Administrators.
+          & $exe host repair --acl | Out-Host
 
           $digests = {
             @(Get-WinEvent -ErrorAction SilentlyContinue -FilterHashtable @{
@@ -1220,6 +1241,11 @@ jobs:
           if (Get-UninstallEntry -Scope user) { throw 'Upgrading a per-machine install registered a per-user entry too.' }
           if (-not (Test-Path "$env:DATA_DIR\conf.d\smoke.toml")) { throw 'The upgrade destroyed the configuration.' }
           Assert-Sddl -Path $env:DATA_DIR
+
+          # The upgrade case is the one the per-file repair exists for: conf.d already holds job
+          # files created while ProgramData's CREATOR OWNER was granting their author Full
+          # Control, and those stay theirs to rewrite until the repair reaches them.
+          Assert-JobFileAcl -DataDir $env:DATA_DIR
           Assert-TaskHardening -TaskPath $env:TASK_PATH -TaskName $env:TASK_NAME -ExpectSystem
           Assert-PathEntry -Scope Machine -Contains $entry.InstallLocation
 

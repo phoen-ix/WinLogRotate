@@ -145,6 +145,60 @@ function Assert-Sddl {
     Write-Host "  ACL ok: $actual"
 }
 
+function Assert-JobFileAcl {
+    <#
+        .SYNOPSIS
+        Asserts every file a run takes its configuration from is safe to execute a hook from.
+
+        .DESCRIPTION
+        Assert-Sddl judges the directory. The thing actually executed as SYSTEM is the file, and
+        rewriting a directory's DACL recomputes only what a child inherits - it changes neither a
+        child's explicit entries nor a child's owner, and an owner holds implicit WRITE_DAC. So a
+        job file dropped into conf.d while ProgramData's CREATOR OWNER was still granting Full
+        Control stayed its author's to rewrite across the repair, with the directory reported
+        Hardened throughout.
+
+        This is also the only judge of the installer's ordering. The hardening pass has to run
+        before the configuration is seeded, so config.toml is created afterwards by NSIS itself
+        and is owned by the installing administrator's own account until the second repair call
+        fixes it. If that call is ever removed, this fails on a fresh install.
+    #>
+    param([Parameter(Mandatory)][string] $DataDir)
+
+    $allowed = @('S-1-5-18', 'S-1-5-32-544', 'S-1-5-32-545')
+
+    $files = @(Join-Path $DataDir 'config.toml') +
+             @(Get-ChildItem -Path (Join-Path $DataDir 'conf.d') -Filter *.toml -File -ErrorAction SilentlyContinue |
+               ForEach-Object { $_.FullName })
+
+    foreach ($file in $files) {
+        if (-not (Test-Path $file)) { continue }
+
+        $acl = Get-Acl $file
+
+        if ($acl.Owner) {
+            $ownerSid = (New-Object System.Security.Principal.NTAccount($acl.Owner)).Translate(
+                [System.Security.Principal.SecurityIdentifier]).Value
+            if ($ownerSid -ne 'S-1-5-32-544') {
+                throw "$file is owned by $($acl.Owner) ($ownerSid), who therefore holds implicit " +
+                      "WRITE_DAC over a file the run host executes hooks from."
+            }
+        }
+
+        foreach ($rule in $acl.GetAccessRules($true, $true, [System.Security.Principal.SecurityIdentifier])) {
+            if ($rule.AccessControlType -ne 'Allow') { continue }
+            $sid = $rule.IdentityReference.Value
+            if ($allowed -notcontains $sid) {
+                $who = try { $rule.IdentityReference.Translate([System.Security.Principal.NTAccount]).Value } catch { $sid }
+                throw "$file grants $($rule.FileSystemRights) to $who ($sid), which is not one of " +
+                      "SYSTEM, Administrators or Users."
+            }
+        }
+
+        Write-Host "  job file ACL ok: $file"
+    }
+}
+
 function Assert-PathEntry {
     <#
         .SYNOPSIS
