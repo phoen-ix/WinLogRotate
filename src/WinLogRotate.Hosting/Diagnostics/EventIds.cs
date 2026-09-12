@@ -88,11 +88,18 @@ public static class EventIds
         DiagnosticCode.DuplicateGeneration => 136,
         DiagnosticCode.StateNotSaved => 137,
         DiagnosticCode.JournalUnavailable => 138,
+        DiagnosticCode.StateUnreadable => 139,
 
         // 4xxx - host and scheduling.
         DiagnosticCode.NoRunHost => 140,
         DiagnosticCode.HostDrift => 141,
         DiagnosticCode.HostRegistrationFailed => 142,
+        DiagnosticCode.UpdateCheckFailed => 143,
+
+        // The 1xxx band's own block, 111-119, is full. 160 continues it rather than borrowing a
+        // number from a neighbour: the bands group the table for a reader, and an ID that has
+        // never been emitted may be withdrawn but one that has been is spent for ever.
+        DiagnosticCode.ConfigUnwritable => 160,
 
         // 5xxx - notification delivery.
         DiagnosticCode.NotifyMisconfigured => 150,

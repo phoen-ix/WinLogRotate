@@ -65,6 +65,17 @@ public static class DiagnosticCode
     /// </remarks>
     public const string FailedWithoutReason = "LR1009";
 
+    /// <summary>
+    /// A configuration file could not be written, so it was left as it was.
+    /// </summary>
+    /// <remarks>
+    /// The write half of <see cref="ConfigUnreadable"/>, which used to cover both - so "could not
+    /// quarantine the unparseable file" and "config.toml could not be written" both raised the
+    /// code documented as "the configuration could not be read", on the event an alert rule
+    /// watches for exactly that.
+    /// </remarks>
+    public const string ConfigUnwritable = "LR1010";
+
     // 2xxx - a job or file was skipped
     public const string JobSkipped = "LR2001";
     public const string FileMissing = "LR2002";
@@ -127,6 +138,17 @@ public static class DiagnosticCode
     public const string JournalUnavailable = "LR3106";
 
     /// <summary>
+    /// The rotation clocks could not be read, so the run starts from a fresh baseline.
+    /// </summary>
+    /// <remarks>
+    /// Reported as <see cref="ConfigUnreadable"/> until now, which put "your state file is
+    /// corrupt" and "your configuration is broken" on one event ID. They are different problems
+    /// with different costs: this one delays every log by an interval and fixes itself, and the
+    /// other stops the machine.
+    /// </remarks>
+    public const string StateUnreadable = "LR3107";
+
+    /// <summary>
     /// One rotation index is held by two files - <c>app.log.1</c> beside <c>app.log.1.gz</c>.
     /// </summary>
     /// <remarks>
@@ -150,6 +172,18 @@ public static class DiagnosticCode
     public const string NoRunHost = "LR4001";
     public const string HostDrift = "LR4002";
     public const string HostRegistrationFailed = "LR4003";
+
+    /// <summary>
+    /// The release feed could not be reached, so whether an update exists is unknown.
+    /// </summary>
+    /// <remarks>
+    /// <c>UpdateCommand</c>'s own comment says a failed check "must read as 'could not check',
+    /// never as ... an error that a monitoring system would page someone about" - and then raised
+    /// <see cref="ConfigUnreadable"/>, which maps to event 112 and tells the operator their
+    /// configuration is broken. A network reached over the internet is the one thing here that is
+    /// expected to be unavailable sometimes.
+    /// </remarks>
+    public const string UpdateCheckFailed = "LR4004";
 
     // 5xxx - notification delivery.
     //

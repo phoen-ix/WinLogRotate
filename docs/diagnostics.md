@@ -135,15 +135,18 @@ mean the same thing wherever it is read.
 | 136 | Warning | One rotation index is held by two files; both were kept | `LR3104` |
 | 137 | Error | The rotation clocks could not be written; every log is due again | `LR3105` |
 | 138 | Warning | The journal is unavailable; the rotation carried on without it | `LR3106` |
+| 139 | Warning | The rotation clocks could not be read; a fresh baseline was started | `LR3107` |
 | 140 | Warning | No run host is registered | `LR4001` |
 | 141 | Warning | The run host this install was set up with is no longer registered | `LR4002` |
 | 142 | Error | Registering the run host failed | `LR4003` |
+| 143 | Warning | The release feed could not be reached; no update check was made | `LR4004` |
 | 150 | Warning | A notification target is unparseable or missing its credential | `LR5001` |
 | 151 | Warning | A notification channel could not be reached | `LR5002` |
 | 152 | Warning | A notification channel is suppressed after repeated failures | `LR5003` |
 | 153 | Warning | The notification state could not be read; change detection starts over | `LR5004` |
 | 154 | Warning | The notification phase was cut short to protect the run's deadline | `LR5005` |
 | 155 | Warning | A notification digest delivered to an `eventlog:` target | — |
+| 160 | Error | A configuration file could not be written; it was left as it was | `LR1010` |
 | 190 | Error | The configuration directory is writable by a non-administrator | `LR9001` |
 | 191 | Error | A dangerous path was refused | `LR9002` |
 | 192 | Error | A hook was refused | `LR9003` |

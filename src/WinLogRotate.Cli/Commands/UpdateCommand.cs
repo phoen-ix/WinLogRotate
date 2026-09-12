@@ -49,7 +49,7 @@ internal static class UpdateCommand
             ctx.Output.Diagnostic(new CliDiagnostic
             {
                 Severity = Severity.Warning,
-                Code = DiagnosticCode.ConfigUnreadable,
+                Code = DiagnosticCode.UpdateCheckFailed,
                 Message = "Could not reach the release feed.",
                 Remedy = "This is not a failure of the rotation itself; nothing was changed.",
             });

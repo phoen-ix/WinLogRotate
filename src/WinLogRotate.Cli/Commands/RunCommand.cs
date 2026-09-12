@@ -133,7 +133,7 @@ internal static class RunCommand
             ctx.Output.Diagnostic(new CliDiagnostic
             {
                 Severity = Severity.Warning,
-                Code = DiagnosticCode.ConfigUnreadable,
+                Code = DiagnosticCode.StateUnreadable,
                 Message = $"The state file could not be read ({corrupt}); starting from a fresh baseline.",
                 Path = paths.StateFile,
                 Remedy = "Every log will wait one full interval before its next rotation.",
@@ -156,7 +156,7 @@ internal static class RunCommand
                 ctx.Output.Diagnostic(new CliDiagnostic
                 {
                     Severity = Severity.Warning,
-                    Code = DiagnosticCode.RotationFailed,
+                    Code = DiagnosticCode.JournalUnavailable,
                     Message = $"Journal maintenance: {error}",
 
                     // Attributed, so it can be muted like any other job and so it stops merging

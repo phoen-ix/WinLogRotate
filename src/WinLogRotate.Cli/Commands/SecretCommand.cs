@@ -261,7 +261,7 @@ internal static class SecretCommand
         }
         catch (Exception e) when (e is IOException or UnauthorizedAccessException)
         {
-            return Stored(ctx, Verb, paths, name, DiagnosticCode.ConfigUnreadable,
+            return Stored(ctx, Verb, paths, name, DiagnosticCode.ConfigUnwritable,
                 $"{paths.ConfigFile} could not be written: {e.Message}", key);
         }
 

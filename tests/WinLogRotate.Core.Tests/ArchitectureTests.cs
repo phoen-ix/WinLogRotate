@@ -1005,6 +1005,142 @@ public partial class ArchitectureTests
         wrong.ShouldBeEmpty("docs/diagnostics.md names a Type the code does not raise");
     }
 
+    /// <summary>
+    /// Every file allowed to raise each diagnostic code.
+    /// </summary>
+    /// <remarks>
+    /// A list, and deliberately. "This code means what its documentation says" is not a property a
+    /// scan can decide, and the versions that try - counting emitters, matching prose - are the
+    /// kind of rule this suite keeps having to delete. What a list does is make the moment of
+    /// drift visible: the defect it exists to stop was <c>UpdateCommand.cs</c> being added to
+    /// <c>ConfigUnreadable</c>'s emitters, so a release feed nobody could reach reported "the
+    /// configuration could not be read" on event 112. Adding a file here is that moment.
+    /// </remarks>
+    private static readonly Dictionary<string, string[]> Raisers = new(StringComparer.Ordinal)
+    {
+        [nameof(DiagnosticCode.NeedsAdministrator)] = ["HostCommand.cs", "SecretCommand.cs"],
+        [nameof(DiagnosticCode.ConfigUnreadable)] = ["ConfigLoader.cs", "SecretCommand.cs"],
+        [nameof(DiagnosticCode.ConfigInvalid)] = ["ConfigBinder.cs", "ConfigLoader.cs", "ConfigValidator.cs", "Diagnose.cs", "ImportCommand.cs", "LogrotateImporter.cs", "SecretCommand.cs"],
+        [nameof(DiagnosticCode.NoJobsConfigured)] = ["ConfigLoader.cs"],
+        [nameof(DiagnosticCode.NotSupportedHere)] = ["Refusals.cs", "SecretCommand.cs"],
+        [nameof(DiagnosticCode.InternalError)] = ["CommandContext.cs", "HostCommand.cs"],
+        [nameof(DiagnosticCode.ArgumentUnusable)] = ["Refusals.cs", "SecretCommand.cs"],
+        [nameof(DiagnosticCode.AlreadyRunning)] = ["RunCommand.cs"],
+        [nameof(DiagnosticCode.FailedWithoutReason)] = ["DiagnosticCollector.cs"],
+        [nameof(DiagnosticCode.ConfigUnwritable)] = ["ConfigLoader.cs", "SecretCommand.cs"],
+        [nameof(DiagnosticCode.JobSkipped)] = ["Diagnose.cs", "RunCommand.cs"],
+        [nameof(DiagnosticCode.FileMissing)] = ["ProbeCommand.cs", "RotationRunner.cs"],
+        [nameof(DiagnosticCode.FileEmpty)] = ["RotationRunner.cs"],
+        [nameof(DiagnosticCode.NotDueYet)] = ["RotationRunner.cs"],
+        [nameof(DiagnosticCode.FirstRunBaseline)] = ["RotationRunner.cs"],
+        [nameof(DiagnosticCode.RotationFailed)] = ["Diagnose.cs", "OldDirGate.cs"],
+        [nameof(DiagnosticCode.FileLocked)] = ["Diagnose.cs", "LockChoice.cs", "NotifyTestCommand.cs", "ProbeCommand.cs"],
+        [nameof(DiagnosticCode.StrategyUnavailable)] = ["LockChoice.cs", "ProbeCommand.cs"],
+        [nameof(DiagnosticCode.PreviousRunAbandoned)] = ["RunCommand.cs"],
+        [nameof(DiagnosticCode.NulFillDetected)] = ["LockChoice.cs"],
+        [nameof(DiagnosticCode.HookFailed)] = ["HookRunner.cs"],
+        [nameof(DiagnosticCode.StateNotSaved)] = ["RotationRunner.cs"],
+        [nameof(DiagnosticCode.JournalUnavailable)] = ["RunCommand.cs"],
+        [nameof(DiagnosticCode.StateUnreadable)] = ["RunCommand.cs"],
+        [nameof(DiagnosticCode.DuplicateGeneration)] = ["RotateJobPlanner.cs"],
+        [nameof(DiagnosticCode.NoRunHost)] = ["DoctorCommand.cs", "HostCommand.cs"],
+        [nameof(DiagnosticCode.HostDrift)] = ["HostCommand.cs"],
+        [nameof(DiagnosticCode.HostRegistrationFailed)] = ["HostCommand.cs"],
+        [nameof(DiagnosticCode.UpdateCheckFailed)] = ["UpdateCommand.cs"],
+        [nameof(DiagnosticCode.NotifyMisconfigured)] = ["ChannelResolver.cs", "ConfigBinder.cs", "ConfigLoader.cs", "NotifyCommand.cs", "NotifyTestCommand.cs", "SecretCommand.cs"],
+        [nameof(DiagnosticCode.NotifyFailed)] = ["HookDispatcher.cs"],
+        [nameof(DiagnosticCode.NotifyCircuitOpen)] = ["DoctorCommand.cs", "HookDispatcher.cs"],
+        [nameof(DiagnosticCode.NotifyStateUnreadable)] = ["NotifyCommand.cs", "NotifyPhase.cs"],
+        [nameof(DiagnosticCode.NotifyBudgetClamped)] = ["HookDispatcher.cs", "NotifyPhase.cs"],
+        [nameof(DiagnosticCode.ConfigDirectoryInsecure)] = ["DoctorCommand.cs", "HookSupport.cs", "HostCommand.cs"],
+        [nameof(DiagnosticCode.DangerousPathRefused)] = ["ConfigValidator.cs", "Diagnose.cs", "GlobCommand.cs"],
+        [nameof(DiagnosticCode.HookRefused)] = ["ConfigValidator.cs", "HookPlan.cs"],
+        [nameof(DiagnosticCode.ReparsePointRefused)] = ["Diagnose.cs"],
+        [nameof(DiagnosticCode.SecretMissing)] = ["ConfigLoader.cs", "SecretCommand.cs"],
+        [nameof(DiagnosticCode.SecretInPlainConfig)] = ["ConfigLoader.cs", "SecretCommand.cs"],
+        [nameof(DiagnosticCode.SecretStoreUnreadable)] = ["SecretCommand.cs"],
+        [nameof(DiagnosticCode.SecretStoreUnwritable)] = ["SecretCommand.cs"],
+    };
+
+    /// <summary>
+    /// A diagnostic code is raised only where it means what it says.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// <c>DiagnosticCode</c>'s own doctrine: "An alert rule has to be able to tell 'somebody's
+    /// configuration directory is writable' from 'the reload script returned 1': the first is a
+    /// security finding about the machine, the second is a broken script, and they go to
+    /// different people." <c>Diagnose</c> records the same defect being fixed once already, in
+    /// the engine. The CLI was never swept, and <c>ConfigUnreadable</c> - LR1002, event 112, "the
+    /// configuration could not be read" - had grown to cover a release feed, a state file, a
+    /// secret value file and two write failures.
+    /// </para>
+    /// <para>
+    /// Both directions, which is what stops the list rotting: a code raised from a file not
+    /// listed fails, and a file listed that no longer raises it fails too. Milestone 26's rules
+    /// bind a code to its ID and to its severity; this is the one that binds it to its meaning,
+    /// as closely as a test can.
+    /// </para>
+    /// </remarks>
+    [Fact]
+    public void ADiagnosticCodeIsRaisedOnlyWhereItMeansWhatItSays()
+    {
+        var src = Path.Combine(RepoRoot.Find().FullName, "src");
+
+        var raised = new Dictionary<string, SortedSet<string>>(StringComparer.Ordinal);
+
+        foreach (var file in Directory
+                     .EnumerateFiles(src, "*.cs", SearchOption.AllDirectories)
+                     .Where(f => !f.Contains(Path.Combine("obj", ""), StringComparison.Ordinal))
+                     .Where(f => Path.GetFileName(f) is not ("DiagnosticCode.cs" or "EventIds.cs")))
+        {
+            foreach (var line in File.ReadAllLines(file))
+            {
+                var text = line.Trim();
+
+                // Prose does not raise anything, and this file's own remarks name several codes.
+                if (text.StartsWith("//", StringComparison.Ordinal) || text.StartsWith('*'))
+                {
+                    continue;
+                }
+
+                var match = CodeMention().Match(text);
+
+                if (match.Success)
+                {
+                    (raised.TryGetValue(match.Groups[1].Value, out var files)
+                        ? files
+                        : raised[match.Groups[1].Value] = new SortedSet<string>(StringComparer.Ordinal))
+                        .Add(Path.GetFileName(file));
+                }
+            }
+        }
+
+        // Tracks a quantity that moves. A scan that stopped reading the tree would find nothing
+        // raised and agree with an empty expectation.
+        raised.Count.ShouldBeGreaterThan(30, "most codes should have been found being raised");
+
+        raised.Keys.Where(code => !Raisers.ContainsKey(code))
+            .ShouldBeEmpty("a code raised by nothing listed - decide where it belongs");
+
+        Raisers.Keys.Where(code => !raised.ContainsKey(code))
+            .ShouldBeEmpty("a code listed here that nothing raises any more - remove it");
+
+        var wrong = raised
+            .SelectMany(kv => kv.Value
+                .Where(file => !Raisers[kv.Key].Contains(file, StringComparer.Ordinal))
+                .Select(file => $"{kv.Key} is raised from {file}"))
+            .Concat(Raisers
+                .Where(kv => raised.ContainsKey(kv.Key))
+                .SelectMany(kv => kv.Value
+                    .Where(file => !raised[kv.Key].Contains(file))
+                    .Select(file => $"{kv.Key} is listed for {file}, which no longer raises it")))
+            .ToArray();
+
+        wrong.ShouldBeEmpty(
+            "is it really the same condition? if so add the file; if not, it wants its own code");
+    }
+
     /// <summary>Critical is written as an Error event: TypesSupported is 7 and there is no fourth.</summary>
     private static string EventType(Severity severity) => severity switch
     {

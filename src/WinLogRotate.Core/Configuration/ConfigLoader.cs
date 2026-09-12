@@ -306,8 +306,10 @@ public static class ConfigLoader
         }
         catch (IOException e)
         {
-            diagnostics.Error(path, DiagnosticCode.ConfigUnreadable,
-                $"Could not quarantine the unparseable file: {e.Message}");
+            diagnostics.Error(path, DiagnosticCode.ConfigUnwritable,
+                $"Could not quarantine the unparseable file: {e.Message}",
+                remedy: "The file was left where it is, so this will be reported again next run. "
+                      + "Check free space and the permissions on the conf.d directory.");
         }
 
         return fallback;
