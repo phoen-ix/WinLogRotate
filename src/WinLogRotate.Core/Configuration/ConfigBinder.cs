@@ -407,41 +407,67 @@ public static class ConfigBinder
 
     private static JobSettings BindSettings(TableSyntaxBase table, string file, DiagnosticBag d)
     {
-        // The frequency keywords are mutually exclusive and last-one-wins, exactly as in
-        // logrotate, so they all write the same field rather than coexisting.
+        // Every key that decides when a job is due writes the same field, and the last one
+        // written IN THE FILE wins - so this walks the document in its own order.
+        //
+        // It used to probe a fixed list, which made that list's order the precedence whatever the
+        // file said: yearly beat monthly beat weekly beat daily beat hourly, and `size`, read
+        // after the loop, beat all five. The comment that stood here, the Schedule enum's own
+        // summary, docs/configuration.md and the "behaviour we reproduce exactly" table all said
+        // last-one-wins while `weekly = true` above `daily = true` bound Weekly.
+        //
+        // logrotate 3.21.0 was run against seven orderings to settle it, and it is explicit:
+        // it prints "note: 'daily' overrides previously specified 'weekly'" as it reads, and the
+        // reverse for the reverse. `size` is included - it is one more assignment to the same
+        // field, and a later `daily` beats it.
         Schedule? schedule = null;
-        foreach (var (key, value) in new[]
-                 {
-                     ("hourly", Schedule.Hourly), ("daily", Schedule.Daily),
-                     ("weekly", Schedule.Weekly), ("monthly", Schedule.Monthly),
-                     ("yearly", Schedule.Yearly),
-                 })
-        {
-            if (GetBool(table, key, file, d) == true)
-            {
-                schedule = value;
-            }
-        }
+        long? size = null;
+        var read = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
 
-        if (GetString(table, "schedule", file, d) is { } scheduleText)
+        foreach (var kv in table.Items.OfType<KeyValueSyntax>())
         {
-            if (Enum.TryParse<Schedule>(scheduleText, ignoreCase: true, out var parsed))
-            {
-                schedule = parsed;
-            }
-            else
-            {
-                d.Error(file, DiagnosticCode.ConfigInvalid,
-                    $"'{scheduleText}' is not a schedule.",
-                    LineOf(table), ColumnOf(table),
-                    "Use hourly, daily, weekly, monthly, yearly or size.");
-            }
-        }
+            var key = KeyName(kv);
 
-        var size = GetSize(table, "size", file, d);
-        if (size is not null)
-        {
-            schedule = Schedule.Size;
+            // One reading per key. Two spellings differing only in case are one key to this
+            // binder and two to the parser; reading the value again here would only double
+            // whatever diagnostic it produces.
+            if (!read.Add(key))
+            {
+                continue;
+            }
+
+            if (Frequency(key) is { } frequency)
+            {
+                if (GetBool(table, key, file, d) == true)
+                {
+                    schedule = frequency;
+                }
+            }
+            else if (string.Equals(key, "size", StringComparison.OrdinalIgnoreCase))
+            {
+                size = GetSize(table, key, file, d);
+                if (size is not null)
+                {
+                    schedule = Schedule.Size;
+                }
+            }
+            else if (string.Equals(key, "schedule", StringComparison.OrdinalIgnoreCase)
+                     && GetString(table, key, file, d) is { } scheduleText)
+            {
+                if (Enum.TryParse<Schedule>(scheduleText, ignoreCase: true, out var parsed))
+                {
+                    schedule = parsed;
+                }
+                else
+                {
+                    // The offending key rather than the [job] header, which is where this
+                    // pointed while the value was read outside any walk of the document.
+                    d.Error(file, DiagnosticCode.ConfigInvalid,
+                        $"'{scheduleText}' is not a schedule.",
+                        LineOf(kv), ColumnOf(kv),
+                        "Use hourly, daily, weekly, monthly, yearly or size.");
+                }
+            }
         }
 
         return new JobSettings
@@ -718,6 +744,17 @@ public static class ConfigBinder
             }
         }
     }
+
+    /// <summary>The schedule a frequency keyword selects, or null when the key is not one.</summary>
+    private static Schedule? Frequency(string key) => key.ToLowerInvariant() switch
+    {
+        "hourly" => Schedule.Hourly,
+        "daily" => Schedule.Daily,
+        "weekly" => Schedule.Weekly,
+        "monthly" => Schedule.Monthly,
+        "yearly" => Schedule.Yearly,
+        _ => null,
+    };
 
     private static string KeyName(KeyValueSyntax kv) =>
         kv.Key?.ToString().Trim() ?? string.Empty;

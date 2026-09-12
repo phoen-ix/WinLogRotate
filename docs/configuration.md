@@ -42,7 +42,23 @@ everywhere and are usually easier to read in TOML than escaped backslashes.
 
 ### Schedule
 
-Frequency keywords are mutually exclusive and last-one-wins, exactly as in logrotate.
+Frequency keywords are mutually exclusive and last-one-wins, exactly as in logrotate — and
+**last** means last in the file. `schedule` and `size` are in that same contest: every key in the
+table below writes one field, and whichever is written last is the one that decides. So
+
+```toml
+size = "1M"
+daily = true     # daily: it is written after size
+```
+
+rotates daily, and swapping the two lines rotates on size. That is what logrotate does, and it
+says so as it reads: `note: 'daily' overrides previously specified 'size'`.
+
+> **Corrected in v0.12.0.** Until then this sentence described a fixed precedence rather than the
+> file's order: `yearly` beat `monthly` beat `weekly` beat `daily` beat `hourly`, and `size` beat
+> all five wherever it appeared. Four of seven orderings bound a schedule logrotate would not have
+> chosen. A job that sets two of these keys may rotate on a different schedule after upgrading —
+> the one the file was always asking for.
 
 | Key | Type | Default | What it does |
 |---|---|---|---|
@@ -52,7 +68,7 @@ Frequency keywords are mutually exclusive and last-one-wins, exactly as in logro
 | `monthly` | bool | — | Rotate every month; see `monthday`. |
 | `yearly` | bool | — | Rotate every year. |
 | `schedule` | string | `"daily"` | The same choice written as a value: `hourly`, `daily`, `weekly`, `monthly`, `yearly`. |
-| `size` | size | `1 MiB` | Rotate on size alone, ignoring the calendar. Accepts `100k`, `10M`, `1G`. |
+| `size` | size | `1 MiB` | Rotate on size alone, ignoring the calendar, unless a frequency key is written after it. Accepts `100k`, `10M`, `1G`. |
 | `weekday` | 0–7 | `0` | 0 is Sunday through 6 Saturday. 7 means every seven days regardless of weekday. |
 | `monthday` | 0–31 | `0` | Day of the month for `monthly`. |
 

@@ -104,18 +104,47 @@ public class ConfigBinderTests
         job.ShouldNotBeNull().Paths.ShouldBe(["C:/logs/app.log"]);
     }
 
-    [Fact]
-    public void FrequencyKeywordsAreMutuallyExclusiveAndLastOneWins()
+    /// <summary>
+    /// The last key in the file that decides when a job is due is the one that wins.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// Both directions of every pair, deliberately. The test this replaces wrote <c>daily</c> then
+    /// <c>weekly</c> and expected Weekly - which is also the answer a fixed precedence table
+    /// gives, because <c>weekly</c> sat after <c>daily</c> in the array the binder probed.
+    /// Document order and implementation order agreed, so the assertion held under either
+    /// semantics and the defect it was named after was live underneath it. Reverse any row here
+    /// and its partner fails.
+    /// </para>
+    /// <para>
+    /// The expectations are logrotate 3.21.0's own, executed against a config file holding all
+    /// seven blocks. It says so out loud as it reads: "note: 'daily' overrides previously
+    /// specified 'weekly'", and the reverse for the reverse. <c>size</c> is included because
+    /// upstream treats it as one more assignment to the same field - <c>size 1M</c> then
+    /// <c>daily</c> is "after 1 days", and <c>daily</c> then <c>size 1M</c> is "1048576 bytes".
+    /// </para>
+    /// </remarks>
+    [Theory]
+    [InlineData("weekly = true\ndaily = true", Schedule.Daily)]
+    [InlineData("daily = true\nweekly = true", Schedule.Weekly)]
+    [InlineData("size = \"1M\"\ndaily = true", Schedule.Daily)]
+    [InlineData("daily = true\nsize = \"1M\"", Schedule.Size)]
+    [InlineData("monthly = true\nhourly = true", Schedule.Hourly)]
+    [InlineData("yearly = true\ndaily = true", Schedule.Daily)]
+    [InlineData("daily = true\nmonthly = true", Schedule.Monthly)]
+    [InlineData("schedule = \"weekly\"\nhourly = true", Schedule.Hourly)]
+    [InlineData("hourly = true\nschedule = \"weekly\"", Schedule.Weekly)]
+    public void TheLastScheduleKeyInTheFileWins(string keys, Schedule expected)
     {
-        var (job, _) = Bind("""
+        var (job, d) = Bind($"""
             [job]
             name = "app"
             paths = "C:/logs/*.log"
-            daily = true
-            weekly = true
+            {keys}
             """);
 
-        job.ShouldNotBeNull().Schedule.ShouldBe(Schedule.Weekly);
+        d.HasErrors.ShouldBeFalse();
+        job.ShouldNotBeNull().Schedule.ShouldBe(expected);
     }
 
     [Theory]
