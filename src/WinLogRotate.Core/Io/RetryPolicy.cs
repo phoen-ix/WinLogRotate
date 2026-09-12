@@ -57,8 +57,7 @@ public static class RetryPolicy
         Func<T> action,
         int attempts,
         int intervalMs,
-        Action<int, Exception>? onRetry = null,
-        TimeProvider? clock = null)
+        Action<int, Exception>? onRetry = null)
     {
         ArgumentOutOfRangeException.ThrowIfLessThan(attempts, 1);
 

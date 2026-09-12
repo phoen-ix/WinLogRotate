@@ -75,6 +75,16 @@ public sealed record RunReport
     public required IReadOnlyList<string> Errors { get; init; }
 
     /// <summary>
+    /// How many attempts were made beyond the first, across every operation in the run.
+    /// </summary>
+    /// <remarks>
+    /// Zero on a quiet night. Anything else means a file was held by something else and this run
+    /// waited for it - the retries sleep, doubling up to five seconds a time, so this is the
+    /// number that answers "why did last night take so long".
+    /// </remarks>
+    public int Retries { get; init; }
+
+    /// <summary>
     /// The same failures as <see cref="Errors"/>, carrying the severity, the stable code, the
     /// Win32 error and the job that produced them.
     /// </summary>
@@ -154,6 +164,7 @@ public sealed class RotationRunner(
         var errors = new List<string>();
         var diagnostics = new List<CliDiagnostic>();
         var completed = 0;
+        var retried = 0;
         var failed = 0;
         long freed = 0;
         var jobsRun = 0;
@@ -365,6 +376,7 @@ public sealed class RotationRunner(
 
                 var result = executor.Execute(plan, job, options.DryRun);
                 completed += result.Completed;
+                retried += result.Retries;
                 failed += result.Failed;
                 freed += result.BytesFreed;
                 errors.AddRange(result.Errors);
@@ -457,6 +469,7 @@ public sealed class RotationRunner(
             Failed = failed,
             BytesFreed = freed,
             Errors = errors,
+            Retries = retried,
             Diagnostics = diagnostics,
             Plans = plans,
         };

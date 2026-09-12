@@ -41,6 +41,28 @@ public sealed record ExecutionResult
         new Dictionary<PlannedAction, int>();
 
     /// <summary>
+    /// How many attempts were made beyond the first, across every operation.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// <see cref="RetryPolicy"/>'s <c>onRetry</c> is documented as existing so that a contended
+    /// file leaves evidence - "useful evidence when someone asks why a rotation was slow" - and no
+    /// call site had ever passed one, so the evidence did not exist. A retry sleeps, doubling up
+    /// to five seconds a time, and <see cref="PlannedOp"/>'s elapsed milliseconds cannot tell one
+    /// slow attempt from five.
+    /// </para>
+    /// <para>
+    /// A count rather than a diagnostic, deliberately. A new diagnostic code would need a row in
+    /// docs/diagnostics.md carrying an Event Log id, and at Info that id can never be written -
+    /// the sink mirrors Warning and above - so it would publish a fourth unreachable id. At
+    /// Warning it would put progress reporting into a system log, which is what that filter exists
+    /// to keep out. The number belongs in the run's own summary, which is where somebody asking
+    /// why last night was slow is already looking.
+    /// </para>
+    /// </remarks>
+    public int Retries { get; init; }
+
+    /// <summary>
     /// Live logs that were actually moved out of the way.
     /// </summary>
     /// <remarks>
@@ -69,6 +91,7 @@ public sealed class PlanExecutor(
     {
         var completed = 0;
         var completedBy = new Dictionary<PlannedAction, int>();
+        var retries = 0;
         var failed = 0;
         var skipped = 0;
         long freed = 0;
@@ -129,7 +152,7 @@ public sealed class PlanExecutor(
             var started = clock.GetTimestamp();
             try
             {
-                var bytes = Apply(op, job);
+                var bytes = Apply(op, job, (_, _) => retries++);
                 completed++;
                 completedBy[op.Action] = completedBy.GetValueOrDefault(op.Action) + 1;
                 if (op.Action == PlannedAction.Delete)
@@ -174,6 +197,7 @@ public sealed class PlanExecutor(
             Errors = errors,
             Diagnostics = diagnostics,
             CompletedBy = completedBy,
+            Retries = retries,
             Rotated = rotated,
         };
     }
@@ -211,7 +235,7 @@ public sealed class PlanExecutor(
             : WinPath.Combine(real, WinPath.FileName(path));
     }
 
-    private long? Apply(PlannedOp op, EffectiveJob job)
+    private long? Apply(PlannedOp op, EffectiveJob job, Action<int, Exception> onRetry)
     {
         // Applying a plan is where the Win32 surface begins. Guarding here rather than marking
         // the whole executor Windows-only keeps Execute platform-neutral, which is what lets
@@ -223,7 +247,7 @@ public sealed class PlanExecutor(
                 "Applying a rotation plan requires Windows. Use --dry-run to plan anywhere.");
         }
 
-        return ApplyOnWindows(op, job);
+        return ApplyOnWindows(op, job, onRetry);
     }
 
     /// <summary>
@@ -236,29 +260,31 @@ public sealed class PlanExecutor(
     /// </para>
     /// </summary>
     [System.Runtime.Versioning.SupportedOSPlatform("windows")]
-    private long? ApplyOnWindows(PlannedOp op, EffectiveJob job)
+    private long? ApplyOnWindows(PlannedOp op, EffectiveJob job, Action<int, Exception> onRetry)
     {
         switch (op.Action)
         {
             case PlannedAction.Compress:
                 var result = Compressor.Compress(
                     op.Source, job.CompressType,
-                    retryCount: job.RetryCount, retryIntervalMs: job.RetryIntervalMs);
+                    retryCount: job.RetryCount, retryIntervalMs: job.RetryIntervalMs,
+                    onRetry: onRetry);
                 return result.BytesAfter;
 
             case PlannedAction.Delete:
-                RetryPolicy.Execute(() => FileOps.Delete(op.Source), job.RetryCount, job.RetryIntervalMs);
+                RetryPolicy.Execute(
+                    () => FileOps.Delete(op.Source), job.RetryCount, job.RetryIntervalMs, onRetry);
                 return 0;
 
             case PlannedAction.CreateDirectory:
                 RetryPolicy.Execute(
-                    () => FileOps.CreateDirectory(op.Source), job.RetryCount, job.RetryIntervalMs);
+                    () => FileOps.CreateDirectory(op.Source), job.RetryCount, job.RetryIntervalMs, onRetry);
                 return 0;
 
             case PlannedAction.Rename:
                 RetryPolicy.Execute(
                     () => FileOps.Rename(op.Source, op.Destination!),
-                    job.RetryCount, job.RetryIntervalMs);
+                    job.RetryCount, job.RetryIntervalMs, onRetry);
                 return null;
 
             case PlannedAction.CopyTruncate:
@@ -276,7 +302,7 @@ public sealed class PlanExecutor(
                 // Restoring a wrapper here restores the defect in full.
                 var outcome = FileOps.CopyTruncate(
                     op.Source, op.Destination!, truncate,
-                    attempts: job.RetryCount, intervalMs: job.RetryIntervalMs);
+                    attempts: job.RetryCount, intervalMs: job.RetryIntervalMs, onRetry: onRetry);
 
                 // Recorded so the run can judge whether the writer honoured the truncation or
                 // resumed at a cached offset and left NTFS to zero-fill the gap. Both numbers,
@@ -291,7 +317,7 @@ public sealed class PlanExecutor(
 
             case PlannedAction.Create:
                 RetryPolicy.Execute(() => FileOps.Create(op.Destination ?? op.Source),
-                    job.RetryCount, job.RetryIntervalMs);
+                    job.RetryCount, job.RetryIntervalMs, onRetry);
                 return 0;
 
             default:

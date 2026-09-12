@@ -1785,4 +1785,85 @@ public partial class ArchitectureTests
                 "a copytruncate wrapped in a retry re-copies a source its own previous attempt "
                 + "truncated, and overwrites the archive it had already committed");
     }
+    /// <summary>
+    /// Every retry says that it happened.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// <c>RetryPolicy.Execute</c> has taken an <c>onRetry</c> callback since it was written,
+    /// documented as existing so a contended file leaves evidence - "useful evidence when someone
+    /// asks why a rotation was slow". Every call site passed three arguments, so the evidence
+    /// never existed and the parameter was a promise nothing kept.
+    /// </para>
+    /// <para>
+    /// A source rule rather than a behavioural one, and the reason is worth stating: a retry only
+    /// fires for a Win32 sharing or lock violation, and no Linux file API produces one - so the
+    /// retry path cannot be provoked on the leg this runs on, and a test that drove
+    /// <c>RetryPolicy</c> with a callback of its own would prove that <c>RetryPolicy</c> works,
+    /// which was never in question, rather than that production asks it to.
+    /// </para>
+    /// <para>
+    /// The argument list is found by balancing brackets rather than by reading to the next
+    /// semicolon. Two of these calls take a block-bodied lambda, so the statement's own
+    /// semicolons arrive long before its arguments do - a first version of this rule stopped at
+    /// one and reported the compliant calls as offenders.
+    /// </para>
+    /// </remarks>
+    [Fact]
+    public void EveryRetryReportsThatItHappened()
+    {
+        var root = Path.Combine(RepoRoot.Find().FullName, "src");
+        const string Needle = "RetryPolicy.Execute";
+
+        var offenders = new List<string>();
+        var calls = 0;
+
+        foreach (var file in Directory
+            .EnumerateFiles(root, "*.cs", SearchOption.AllDirectories)
+            .Where(f => !f.Contains($"{Path.DirectorySeparatorChar}obj{Path.DirectorySeparatorChar}", StringComparison.Ordinal)))
+        {
+            var text = string.Join(
+                '\n',
+                File.ReadAllLines(file).Where(l => !l.TrimStart().StartsWith("//", StringComparison.Ordinal)));
+
+            // RetryPolicy's own file is where the overload forwards to the generic one; it is the
+            // declaration, not a caller.
+            if (Path.GetFileName(file) == "RetryPolicy.cs")
+            {
+                continue;
+            }
+
+            for (var at = text.IndexOf(Needle, StringComparison.Ordinal); at >= 0;
+                 at = text.IndexOf(Needle, at + 1, StringComparison.Ordinal))
+            {
+                var open = text.IndexOf('(', at);
+                if (open < 0)
+                {
+                    continue;
+                }
+
+                var depth = 0;
+                var close = open;
+
+                for (; close < text.Length; close++)
+                {
+                    if (text[close] == '(') { depth++; }
+                    else if (text[close] == ')' && --depth == 0) { break; }
+                }
+
+                calls++;
+
+                if (!text[open..Math.Min(close + 1, text.Length)].Contains("onRetry", StringComparison.Ordinal))
+                {
+                    offenders.Add($"{Path.GetFileName(file)} @ {at}");
+                }
+            }
+        }
+
+        calls.ShouldBeGreaterThan(8, "found almost no RetryPolicy.Execute, so this rule checks nothing");
+
+        offenders.ShouldBeEmpty(
+            "a retry that reports nothing: the file was contended, the run slept for it, and the "
+            + "record says only that the operation took a while");
+    }
 }

@@ -55,7 +55,7 @@ public static class Compressor
 
     public static CompressionResult Compress(
         string source, CompressType type, CompressionLevel level = CompressionLevel.Optimal,
-        int retryCount = 5, int retryIntervalMs = 100)
+        int retryCount = 5, int retryIntervalMs = 100, Action<int, Exception>? onRetry = null)
     {
         if (type == CompressType.None)
         {
@@ -104,7 +104,7 @@ public static class Compressor
 
                 output.Flush();
                 output.Flush(flushToDisk: true);
-            }, retryCount, retryIntervalMs);
+            }, retryCount, retryIntervalMs, onRetry);
 
             // The archive carries the log's own timestamp, not the moment we compressed it.
             // Age-based retention reads mtime, so stamping "now" here would make every archive
@@ -112,10 +112,10 @@ public static class Compressor
             // file we have just written is the same transient as any other, and this used to sit
             // outside every retry in the method.
             RetryPolicy.Execute(
-                () => File.SetLastWriteTimeUtc(temp, modified.UtcDateTime), retryCount, retryIntervalMs);
+                () => File.SetLastWriteTimeUtc(temp, modified.UtcDateTime), retryCount, retryIntervalMs, onRetry);
 
             RetryPolicy.Execute(
-                () => File.Move(temp, destination, overwrite: true), retryCount, retryIntervalMs);
+                () => File.Move(temp, destination, overwrite: true), retryCount, retryIntervalMs, onRetry);
         }
         catch
         {
@@ -126,7 +126,7 @@ public static class Compressor
         var after = new FileInfo(destination).Length;
 
         // Only now is it safe to lose the original.
-        RetryPolicy.Execute(() => File.Delete(source), retryCount, retryIntervalMs);
+        RetryPolicy.Execute(() => File.Delete(source), retryCount, retryIntervalMs, onRetry);
 
         return new CompressionResult
         {

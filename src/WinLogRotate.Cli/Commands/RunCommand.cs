@@ -221,7 +221,8 @@ internal static class RunCommand
 
         ctx.Output.Line((options.DryRun
             ? $"dry run: {report.JobsRun} job(s), {report.Plans.Sum(p => p.Destructive.Count())} operation(s) planned. Nothing was changed."
-            : $"{report.JobsRun} job(s), {report.Completed} operation(s), {GlobCommand.Humanize(report.BytesFreed)} freed, {report.Failed} failure(s).")
+            : $"{report.JobsRun} job(s), {report.Completed} operation(s), {GlobCommand.Humanize(report.BytesFreed)} freed, {report.Failed} failure(s)."
+              + (report.Retries > 0 ? $" {report.Retries} retry(s) - something else was holding a file." : string.Empty))
             + refused);
 
         // After the journal is closed and after state.Save, so a notification can never delay or
