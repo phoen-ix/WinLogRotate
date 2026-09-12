@@ -170,4 +170,40 @@ public sealed class GateHoldTests
             dir.Delete(recursive: true);
         }
     }
+
+    /// <summary>
+    /// Doctor answers "why is nothing rotating" when the answer is the gate.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// The question has two answers and doctor only ever gave one - that nothing is registered
+    /// to run rotations. The other is that something is registered, runs every night, and is
+    /// turned away at the gate; until now only <c>run</c> observed that, and <c>run</c> is the
+    /// verb whose output an operator does not read.
+    /// </para>
+    /// <para>
+    /// Both the free row and the overlapping row are asserted beside the held one. A verdict
+    /// that reported every state as a fault would be no more use than one that reported none,
+    /// and an overlapping run is the ordinary case on a machine somebody is working on.
+    /// </para>
+    /// </remarks>
+    [Fact]
+    public void AGateHeldTooLongIsReportedAsAFaultAndAnOverlapIsNot()
+    {
+        var (held, heldExpected) = DoctorCommand.GateVerdict(GateHold.Implausible, Night);
+
+        heldExpected.ShouldBeFalse();
+        held.ShouldContain("nothing has rotated");
+        held.ShouldContain("2026-09-12 03:00:00Z");
+
+        var (overlap, overlapExpected) = DoctorCommand.GateVerdict(GateHold.Overlapping, Night);
+
+        overlapExpected.ShouldBeTrue("a rotation running is what the gate is for");
+        overlap.ShouldContain("a rotation is running");
+
+        var (free, freeExpected) = DoctorCommand.GateVerdict(GateHold.Unknown, null);
+
+        freeExpected.ShouldBeTrue();
+        free.ShouldBe("free");
+    }
 }

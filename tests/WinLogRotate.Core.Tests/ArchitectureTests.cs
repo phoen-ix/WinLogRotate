@@ -1062,7 +1062,7 @@ public partial class ArchitectureTests
         [nameof(DiagnosticCode.InternalError)] = ["CommandContext.cs", "HostCommand.cs"],
         [nameof(DiagnosticCode.ArgumentUnusable)] = ["Refusals.cs", "SecretCommand.cs"],
         [nameof(DiagnosticCode.AlreadyRunning)] = ["GateRefusal.cs"],
-        [nameof(DiagnosticCode.RotationGateHeld)] = ["GateRefusal.cs"],
+        [nameof(DiagnosticCode.RotationGateHeld)] = ["DoctorCommand.cs", "GateRefusal.cs"],
         [nameof(DiagnosticCode.FailedWithoutReason)] = ["DiagnosticCollector.cs"],
         [nameof(DiagnosticCode.ConfigUnwritable)] = ["ConfigLoader.cs", "SecretCommand.cs"],
         [nameof(DiagnosticCode.JobSkipped)] = ["Diagnose.cs", "RunCommand.cs"],

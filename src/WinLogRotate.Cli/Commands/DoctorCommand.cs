@@ -3,6 +3,7 @@ using WinLogRotate.Cli.Output;
 using WinLogRotate.Contracts;
 using WinLogRotate.Core;
 using WinLogRotate.Core.Configuration;
+using WinLogRotate.Core.Engine;
 using WinLogRotate.Core.Notify;
 using WinLogRotate.Core.Safety;
 using WinLogRotate.Core.Secrets;
@@ -121,6 +122,33 @@ internal static class DoctorCommand
                     Code = DiagnosticCode.NoRunHost,
                     Message = "Nothing is registered to run rotations, so the configuration will never be applied.",
                     Remedy = "Run 'winlogrotate host use task' (needs administrator).",
+                });
+            }
+
+            // "Nothing is rotating" has two answers and doctor only ever gave one. The other is
+            // that a rotation is registered, runs every night, and is turned away at the gate -
+            // which until now nothing but `run` ever observed, and `run` is the verb whose
+            // output an operator does not read.
+            var since = GateHoldStore.Read(
+                paths.RunDirectory,
+                ConfDirGuard.Verify(paths.RunDirectory).Verdict == AclVerdict.Hardened);
+
+            var (gate, gateExpected) = GateVerdict(
+                GateHoldRule.Judge(since, TimeProvider.System.GetUtcNow()), since);
+
+            ctx.Output.Line($"  rotation gate   {gate}");
+
+            if (!gateExpected)
+            {
+                ctx.Output.Diagnostic(new CliDiagnostic
+                {
+                    Severity = Severity.Error,
+                    Code = DiagnosticCode.RotationGateHeld,
+                    Message = $"The rotation gate has been held by another process since {since:u}; "
+                            + "no rotation has run on this machine since then.",
+                    Path = paths.RunDirectory,
+                    Remedy = "Find the holder of Global\\WinLogRotate.Rotation with Process "
+                           + "Explorer or handle.exe and end it.",
                 });
             }
 
@@ -267,6 +295,40 @@ internal static class DoctorCommand
             (true, false, InstallScope.Portable or InstallScope.PerUser) => ("unregistered", false),
 
             _ => throw new ArgumentOutOfRangeException(nameof(scope), scope, "unknown install scope"),
+        };
+
+    /// <summary>
+    /// What to print for the rotation gate, and whether it is a fault.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// The <see cref="EventLogVerdict"/> shape, for the same reason: a pure decision runs on
+    /// both legs, and a decision welded to a syscall runs on one.
+    /// </para>
+    /// <para>
+    /// It reads the record and never probes the mutex. A zero-wait acquire-and-release would be
+    /// a more direct answer, and it is refused: <c>docs/diagnostics.md</c> records that the GUI
+    /// polls <c>doctor --json</c> from several pages on every refresh, so a diagnostic verb that
+    /// takes the machine-wide rotation lock is a diagnostic verb that can cause the fault it
+    /// reports.
+    /// </para>
+    /// <para>
+    /// No field on <c>DoctorResult</c> for this yet, deliberately. The Scheduling page is being
+    /// rebuilt around <c>Gui.Model</c> in this same milestone, and
+    /// <c>EveryResultThatNamesTheGuiIsReadByTheGui</c> asks whether the GUI reads
+    /// <i>any</i> of a result's fields, not all of them - so adding one now would ship a field
+    /// nothing reads, under a rule that would stay green either way.
+    /// </para>
+    /// </remarks>
+    internal static (string State, bool Expected) GateVerdict(
+        GateHold hold, DateTimeOffset? since) => hold switch
+        {
+            GateHold.Implausible =>
+                ($"HELD since {since:u} - nothing has rotated on this machine since then", false),
+
+            GateHold.Overlapping => ($"held since {since:u} - a rotation is running", true),
+
+            _ => ("free", true),
         };
 
     private static string EventLogLine(string state, bool expected, InstallScope scope) => state switch
