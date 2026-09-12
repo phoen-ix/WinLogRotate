@@ -1,5 +1,6 @@
 using System.Runtime.InteropServices;
 using System.Runtime.Versioning;
+using Microsoft.Win32.SafeHandles;
 using WinLogRotate.Core.Safety;
 
 namespace WinLogRotate.Core.Io;
@@ -79,11 +80,39 @@ public static class FileOps
     /// data the rotation existed to preserve.
     /// </para>
     /// </remarks>
-    public static TruncationOutcome CopyTruncate(string source, string destination, bool truncate)
+    public static TruncationOutcome CopyTruncate(
+        string source, string destination, bool truncate,
+        int attempts = 1, int intervalMs = 0, Action<int, Exception>? onRetry = null)
     {
         var native = WinPath.ToExtendedLength(WinPath.Normalize(source));
 
-        using var handle = NativeMethods.CreateFile(
+        // Three units, one handle. Opening is worth its own because antivirus and the Search
+        // Indexer produce sharing violations there; the copy and the cut are separate because
+        // that is the whole point of this change.
+        using var handle = RetryPolicy.Execute(
+            () => Open(native, source, truncate), attempts, intervalMs, onRetry);
+
+        var copied = RetryPolicy.Execute(
+            () => CopyAside(handle, destination), attempts, intervalMs, onRetry);
+
+        var resumeOffset = 0L;
+
+        if (truncate)
+        {
+            resumeOffset = RetryPolicy.Execute(
+                () => Cut(handle, copied), attempts, intervalMs, onRetry);
+        }
+
+        return new TruncationOutcome
+        {
+            SizeBefore = copied,
+            SizeAfter = resumeOffset,
+        };
+    }
+
+    private static SafeFileHandle Open(string native, string source, bool truncate)
+    {
+        var handle = NativeMethods.CreateFile(
             native,
             NativeMethods.GenericRead | (truncate ? NativeMethods.GenericWrite : 0),
             NativeMethods.ShareRead | NativeMethods.ShareWrite | NativeMethods.ShareDelete,
@@ -92,88 +121,91 @@ public static class FileOps
         if (handle.IsInvalid)
         {
             var error = Marshal.GetLastWin32Error();
+            handle.Dispose();
             throw new IOException(
                 $"Could not open '{source}': {Win32Error.Describe(error)}.",
                 unchecked((int)(0x80070000 | (uint)error)));
         }
 
-        using var stream = new FileStream(handle, truncate ? FileAccess.ReadWrite : FileAccess.Read);
+        return handle;
+    }
 
-        // Snapshot the length first and copy exactly that much. Anything the writer appends
-        // during the copy is then still present after the truncation below, because we cut at
-        // the offset we read to rather than at zero.
-        var length = stream.Length;
-
-        // No Directory.CreateDirectory here, deliberately. It used to make a missing olddir -
-        // recursively, and regardless of createolddir - which meant the same configuration failed
-        // for ever under rename and silently succeeded under copytruncate, and that createolddir
-        // governed neither. Whether the directory exists is the planner's question now; see
-        // OldDirGate. FileOps.Create keeps its own call because its destination is always the live
-        // log's own directory, which is a different situation with a different answer.
-
-        // Written aside, then moved. See the remarks: a retry that re-ran this after a partial
-        // success used to overwrite a good archive with an empty one.
+    /// <summary>
+    /// Copies the live log aside and moves it into place, and reports how many bytes that was.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// Every read names its own offset rather than relying on a position the previous attempt
+    /// left behind, so re-running this is re-running it rather than resuming it. That is what
+    /// makes it safe as a retry unit, and it is the property the cut below needs too.
+    /// </para>
+    /// <para>
+    /// No Directory.CreateDirectory here, deliberately. It used to make a missing olddir -
+    /// recursively, and regardless of createolddir - which meant the same configuration failed
+    /// for ever under rename and silently succeeded under copytruncate, and that createolddir
+    /// governed neither. Whether the directory exists is the planner's question now; see
+    /// OldDirGate.
+    /// </para>
+    /// </remarks>
+    private static long CopyAside(SafeFileHandle handle, string destination)
+    {
+        var length = RandomAccess.GetLength(handle);
         var staging = destination + ".part";
 
         using (var output = new FileStream(staging, FileMode.Create, FileAccess.Write, FileShare.None))
         {
             var buffer = new byte[81920];
-            var remaining = length;
-            while (remaining > 0)
+            var offset = 0L;
+
+            while (offset < length)
             {
-                var wanted = (int)Math.Min(buffer.Length, remaining);
-                var read = stream.Read(buffer, 0, wanted);
+                var wanted = (int)Math.Min(buffer.Length, length - offset);
+                var read = RandomAccess.Read(handle, buffer.AsSpan(0, wanted), offset);
                 if (read == 0)
                 {
                     break;
                 }
 
                 output.Write(buffer, 0, read);
-                remaining -= read;
+                offset += read;
             }
 
             output.Flush(flushToDisk: true);
         }
 
         File.Move(staging, destination, overwrite: true);
+        return length;
+    }
 
-        var resumeOffset = 0L;
+    /// <summary>
+    /// Empties the live log down to the offset already archived, and reports where it now ends.
+    /// </summary>
+    /// <remarks>
+    /// Cut at the offset that was copied, not at zero: bytes the writer appended while the copy
+    /// was running are preserved rather than silently dropped.
+    /// </remarks>
+    private static long Cut(SafeFileHandle handle, long copied)
+    {
+        var written = RandomAccess.GetLength(handle);
 
-        if (truncate)
+        if (written > copied)
         {
-            // Cut at the offset we copied to, not at zero: bytes the writer appended while the
-            // copy was running are preserved rather than silently dropped.
-            var written = stream.Length;
-            if (written > length)
-            {
-                var tail = new byte[written - length];
-                stream.Position = length;
-
-                // ReadExactly, not Read. A single Read may return short, and what it would drop
-                // is precisely the tail this branch exists to save.
-                stream.ReadExactly(tail);
-                stream.SetLength(0);
-                stream.Position = 0;
-                stream.Write(tail);
-            }
-            else
-            {
-                stream.SetLength(0);
-            }
-
-            stream.Flush();
-
-            // Read back rather than computed. This is where a writer holding a cached offset
-            // will leave a NUL gap beginning, and the detector samples at exactly this offset -
-            // so it has to be what the file really is, not what the arithmetic above expected.
-            resumeOffset = stream.Length;
+            var tail = new byte[written - copied];
+            RandomAccess.Read(handle, tail, copied);
+            RandomAccess.SetLength(handle, 0);
+            RandomAccess.Write(handle, tail, 0);
+        }
+        else
+        {
+            RandomAccess.SetLength(handle, 0);
         }
 
-        return new TruncationOutcome
-        {
-            SizeBefore = length,
-            SizeAfter = resumeOffset,
-        };
+        RandomAccess.FlushToDisk(handle);
+
+        // Read back rather than computed. This is where a writer holding a cached offset will
+        // leave a NUL gap beginning, and the detector samples at exactly this offset - so it has
+        // to be what the file really is, not what the arithmetic above expected.
+        return RandomAccess.GetLength(handle);
     }
 
     /// <summary>Makes a directory, and every level above it that is missing.</summary>

@@ -264,9 +264,19 @@ public sealed class PlanExecutor(
             case PlannedAction.CopyTruncate:
             case PlannedAction.Copy:
                 var truncate = op.Action == PlannedAction.CopyTruncate;
-                var outcome = RetryPolicy.Execute(
-                    () => FileOps.CopyTruncate(op.Source, op.Destination!, truncate),
-                    job.RetryCount, job.RetryIntervalMs);
+
+                // The retries live inside, and that is the whole of the fix. Wrapped from out
+                // here, an attempt that archived the log and then failed to empty it was retried
+                // from the top: the second attempt measured a source the first had already
+                // truncated, copied nothing, and moved the nothing over the archive it had just
+                // saved. The call returned normally and the run reported a success.
+                //
+                // FileOps.CopyTruncate now retries opening, copying and cutting separately, so a
+                // cut that fails is retried alone against a handle whose archive is committed.
+                // Restoring a wrapper here restores the defect in full.
+                var outcome = FileOps.CopyTruncate(
+                    op.Source, op.Destination!, truncate,
+                    attempts: job.RetryCount, intervalMs: job.RetryIntervalMs);
 
                 // Recorded so the run can judge whether the writer honoured the truncation or
                 // resumed at a cached offset and left NTFS to zero-fill the gap. Both numbers,

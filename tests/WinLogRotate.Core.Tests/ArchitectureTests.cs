@@ -1740,4 +1740,49 @@ public partial class ArchitectureTests
             "doc comment blocks carrying more than one <summary> - the second wins silently and "
             + "the first is left describing a member it is no longer attached to");
     }
+    [GeneratedRegex(@"RetryPolicy\.Execute[^;]*?FileOps\.CopyTruncate", RegexOptions.Singleline | RegexOptions.Compiled)]
+    private static partial Regex RetriedCopyTruncate();
+
+    /// <summary>
+    /// Nothing retries a whole copytruncate.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// <c>CopyTruncate</c> commits the archive and only then empties the live log, so what a
+    /// failure after that point retries decides whether the archive survives. Wrapped from
+    /// outside, the second attempt measured a source the first had already truncated, copied
+    /// nothing, and moved the nothing over the archive it had just saved - and returned normally,
+    /// so the run recorded a success and the rotation clock advanced.
+    /// </para>
+    /// <para>
+    /// The retries live inside it now, one unit for opening, one for the copy, one for the cut.
+    /// Restoring a wrapper anywhere would restore the defect in full, and the behavioural pin for
+    /// that is Windows-only - <c>FileOps</c> goes straight to <c>CreateFile</c> and has no seam -
+    /// so this is the half that runs on every leg.
+    /// </para>
+    /// </remarks>
+    [Fact]
+    public void NothingRetriesTheWholeCopyTruncate()
+    {
+        var root = RepoRoot.Find().FullName;
+
+        var sources = Directory
+            .EnumerateFiles(Path.Combine(root, "src"), "*.cs", SearchOption.AllDirectories)
+            .Where(f => !f.Contains($"{Path.DirectorySeparatorChar}obj{Path.DirectorySeparatorChar}", StringComparison.Ordinal))
+            .ToArray();
+
+        var callers = sources
+            .Where(f => File.ReadAllText(f).Contains("FileOps.CopyTruncate", StringComparison.Ordinal))
+            .ToArray();
+
+        // The needle has to be live, or the scan below is checking nothing at all.
+        callers.ShouldNotBeEmpty("nothing calls FileOps.CopyTruncate any more, so this asserts nothing");
+
+        callers
+            .Where(f => RetriedCopyTruncate().IsMatch(File.ReadAllText(f)))
+            .Select(Path.GetFileName)
+            .ShouldBeEmpty(
+                "a copytruncate wrapped in a retry re-copies a source its own previous attempt "
+                + "truncated, and overwrites the archive it had already committed");
+    }
 }
