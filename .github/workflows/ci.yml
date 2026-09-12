@@ -1206,6 +1206,49 @@ jobs:
           }
           '  per-user install left the machine untouched'
 
+  # The only check in this pipeline that runs the installer smoke job's PowerShell without a
+  # Windows runner. pwsh is preinstalled on ubuntu, and installer-smoke-helpers.ps1 is five
+  # hundred lines that nothing could evaluate before a twenty-minute Windows job reached them.
+  #
+  # What it catches: a file that no longer parses, an automatic variable that does not exist,
+  # an assignment whose result is discarded, a cmdlet that is not there. What it does not catch
+  # is logic - it is a linter, not an executor, and the two CI runs milestone 21 lost were a
+  # -ErrorAction that silenced the next failure and a Receive-Job left last in a finally. Neither
+  # is a lint finding. This shortens the loop; it does not close it.
+  powershell-lint:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+
+      - name: Lint the pipeline's PowerShell
+        shell: pwsh
+        run: |
+          Set-PSRepository PSGallery -InstallationPolicy Trusted
+          Install-Module PSScriptAnalyzer -Scope CurrentUser -Force
+
+          # ParseError is a severity of its own and -Severity Error does NOT include it, so a file
+          # that no longer parses at all would produce zero records and pass - which is the first
+          # thing this job is for.
+          $severity = @('ParseError', 'Error')
+
+          # The control, through the same filter as the scan. If a deliberately broken script does
+          # not produce a record, the filter is wrong and everything below asserts nothing.
+          $control = @(Invoke-ScriptAnalyzer -ScriptDefinition 'function Broken { ' -Severity $severity)
+          if ($control.Count -lt 1) {
+            throw 'the analyzer reported nothing for an unparseable script, so this job is not checking anything'
+          }
+
+          $scripts = @(Get-ChildItem .github/scripts -Filter *.ps1 -Recurse)
+          if ($scripts.Count -lt 1) { throw 'no PowerShell found to lint' }
+          $scripts | ForEach-Object { "linting $($_.Name)" }
+
+          $found = @(Invoke-ScriptAnalyzer -Path .github/scripts -Recurse -Severity $severity)
+          $found | ForEach-Object {
+            "  {0}:{1} [{2}] {3}" -f $_.ScriptName, $_.Line, $_.RuleName, $_.Message
+          }
+          if ($found.Count -gt 0) { throw "$($found.Count) PowerShell finding(s) at Error or worse" }
+
   # Weekly, allowed to fail: tells us the runner image is about to change under us without
   # turning a Tuesday push red. When this goes red, bump the pinned label deliberately.
   #
@@ -1232,7 +1275,7 @@ jobs:
     if: >-
       github.ref == 'refs/heads/main' &&
       (github.event_name == 'push' || github.event_name == 'workflow_dispatch')
-    needs: [build, linux-typecheck, aot, installer, installer-smoke]
+    needs: [build, linux-typecheck, aot, installer, installer-smoke, powershell-lint]
     runs-on: ubuntu-latest
     timeout-minutes: 10
     permissions:
@@ -1317,7 +1360,7 @@ jobs:
   # failure(), cancelled() or success() replaces the implicit "every need succeeded" and would
   # quietly restore the behaviour this commit removes.
   release:
-    needs: [version, build, linux-typecheck, aot, installer, installer-smoke]
+    needs: [version, build, linux-typecheck, aot, installer, installer-smoke, powershell-lint]
     if: needs.version.outputs.new_tag != ''
     runs-on: windows-2025
     timeout-minutes: 45
