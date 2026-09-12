@@ -923,7 +923,14 @@ jobs:
             throw 'C:\smoke\junc-bad is not a reparse point.'
           }
 
+          # Counted with the error suppressed at both ends, so an enumeration that failed for any
+          # reason made both numbers 0 and the comparison below vacuous - on the assertion that
+          # System32 survived a refused junction. A floor first: if nothing was enumerated, the
+          # comparison is measuring nothing.
           $before = @(Get-ChildItem 'C:\Windows\System32' -Filter *.log -ErrorAction SilentlyContinue).Count
+          if ($before -lt 1) {
+            throw 'no .log files were enumerated in System32, so the before/after comparison below would compare nothing'
+          }
 
           @(
             'schema = 1', '[job]', 'name = "junction"', 'kind = "rotate"',
