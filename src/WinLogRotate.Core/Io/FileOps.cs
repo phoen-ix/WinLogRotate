@@ -99,8 +99,16 @@ public static class FileOps
 
         if (truncate)
         {
+            // Read once, cut many. The bytes the writer appended while the copy was running are
+            // captured before the retried unit, not inside it: a cut that applies SetLength and
+            // then fails to put the tail back has changed the file its own next attempt would
+            // measure, and would take the empty branch and drop them. Same mistake as the one
+            // above, one level down.
+            var tail = RetryPolicy.Execute(
+                () => ReadTail(handle, copied), attempts, intervalMs, onRetry);
+
             resumeOffset = RetryPolicy.Execute(
-                () => Cut(handle, copied), attempts, intervalMs, onRetry);
+                () => Cut(handle, tail), attempts, intervalMs, onRetry);
         }
 
         return new TruncationOutcome
@@ -178,26 +186,55 @@ public static class FileOps
     }
 
     /// <summary>
-    /// Empties the live log down to the offset already archived, and reports where it now ends.
+    /// The bytes the writer appended while the copy was running, or none.
     /// </summary>
     /// <remarks>
-    /// Cut at the offset that was copied, not at zero: bytes the writer appended while the copy
-    /// was running are preserved rather than silently dropped.
+    /// Read rather than assumed short: a single read may return fewer bytes than asked for, and
+    /// what it would drop is precisely the tail this exists to save.
     /// </remarks>
-    private static long Cut(SafeFileHandle handle, long copied)
+    private static byte[] ReadTail(SafeFileHandle handle, long copied)
     {
         var written = RandomAccess.GetLength(handle);
 
-        if (written > copied)
+        if (written <= copied)
         {
-            var tail = new byte[written - copied];
-            RandomAccess.Read(handle, tail, copied);
-            RandomAccess.SetLength(handle, 0);
-            RandomAccess.Write(handle, tail, 0);
+            return [];
         }
-        else
+
+        var tail = new byte[written - copied];
+        var got = 0;
+
+        while (got < tail.Length)
         {
-            RandomAccess.SetLength(handle, 0);
+            var read = RandomAccess.Read(handle, tail.AsSpan(got), copied + got);
+            if (read == 0)
+            {
+                // The writer truncated underneath us. What is there is what there is.
+                return tail[..got];
+            }
+
+            got += read;
+        }
+
+        return tail;
+    }
+
+    /// <summary>
+    /// Empties the live log, puts the captured tail back, and reports where it now ends.
+    /// </summary>
+    /// <remarks>
+    /// Idempotent, which is what makes it safe to retry: it is handed the tail rather than
+    /// deriving it, so running it twice sets the same length and writes the same bytes. Cutting
+    /// to zero and restoring the tail - rather than cutting at the copied offset - is what keeps
+    /// bytes that arrived during the copy out of the next archive and in the live log.
+    /// </remarks>
+    private static long Cut(SafeFileHandle handle, byte[] tail)
+    {
+        RandomAccess.SetLength(handle, 0);
+
+        if (tail.Length > 0)
+        {
+            RandomAccess.Write(handle, tail, 0);
         }
 
         RandomAccess.FlushToDisk(handle);
