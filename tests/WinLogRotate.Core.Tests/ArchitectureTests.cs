@@ -805,6 +805,76 @@ public partial class ArchitectureTests
             .ShouldBeEmpty();
     }
 
+    /// <summary>
+    /// Every event ID this product declares is named by code that can emit it.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// The published table is a contract, and the whole value of a contract is that an alert rule
+    /// can name an ID. 100, 101 and 110 - "run completed", quiet, with changes and with failures -
+    /// were declared, documented, and printed in the worked <c>Get-WinEvent</c> recipe as the way
+    /// to ask whether last night's run failed. Nothing ever wrote one. The recipe returned an
+    /// empty result set, which is indistinguishable from a quiet night, on exactly the morning
+    /// somebody was checking.
+    /// </para>
+    /// <para>
+    /// Three constants against two constants is what the old test made of them:
+    /// <c>RunCompletedQuiet.ShouldBeInRange(MinId, MaxId)</c> is green whether or not anything
+    /// emits it, and green for ever. This asks the only question that matters - does any line of
+    /// shipped code name this ID - and it is what makes withdrawal safe: an alert rule can only be
+    /// broken by an ID that used to be produced.
+    /// </para>
+    /// <para>
+    /// Comment lines do not count. A rule satisfiable by prose is the failure mode this file keeps
+    /// rediscovering, and the doc comment above <see cref="EventIds.NotificationDigest"/> would
+    /// otherwise be all the evidence the rule ever needed.
+    /// </para>
+    /// </remarks>
+    [Fact]
+    public void EveryEventIdConstantIsNamedByLiveCode()
+    {
+        var src = Path.Combine(RepoRoot.Find().FullName, "src");
+
+        var declared = typeof(EventIds)
+            .GetFields(BindingFlags.Public | BindingFlags.Static)
+            .Where(f => f.IsLiteral && f.FieldType == typeof(int))
+            .Select(f => (f.Name, Value: (int)f.GetRawConstantValue()!))
+            .ToArray();
+
+        // MinId and MaxId are the renderable range rather than events, so nothing emits them and
+        // nothing should. Named through nameof so a rename cannot quietly widen the exemption.
+        string[] bounds = [nameof(EventIds.MinId), nameof(EventIds.MaxId)];
+
+        var emittable = declared.Where(c => !bounds.Contains(c.Name, StringComparer.Ordinal)).ToArray();
+
+        declared.Length.ShouldBeGreaterThanOrEqualTo(
+            bounds.Length + 2, "reflection finding nothing would make every assertion below agree with itself");
+        emittable.Length.ShouldBeGreaterThanOrEqualTo(2);
+
+        var code = Directory
+            .EnumerateFiles(src, "*.cs", SearchOption.AllDirectories)
+            .Where(f => !f.Contains(Path.Combine("obj", ""), StringComparison.Ordinal))
+            .SelectMany(File.ReadAllLines)
+            .Select(line => line.Trim())
+            .Where(line => !line.StartsWith("//", StringComparison.Ordinal))
+            .Where(line => !line.StartsWith('*'))
+            .ToArray();
+
+        // Tracks a quantity that moves: a scan that stopped reading the tree would report every
+        // ID as an orphan rather than passing, but a scan reading a fraction of it would not.
+        code.Length.ShouldBeGreaterThan(15_000, "the whole of src should have been read");
+
+        var orphans = emittable
+            .Where(id => !code.Any(line =>
+                !line.Contains($"const int {id.Name}", StringComparison.Ordinal)
+                && Regex.IsMatch(line, $@"\b{Regex.Escape(id.Name)}\b")))
+            .Select(id => $"{id.Name} = {id.Value}")
+            .ToArray();
+
+        orphans.ShouldBeEmpty(
+            "an event ID nothing emits is a lie in docs/diagnostics.md - emit it or withdraw it");
+    }
+
     [GeneratedRegex(@"\bOption<[^>\n]+>\s+(\w+)\s*=", RegexOptions.Compiled)]
     private static partial Regex OptionDeclaration();
 

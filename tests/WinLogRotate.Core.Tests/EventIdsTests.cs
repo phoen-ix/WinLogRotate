@@ -68,10 +68,18 @@ public sealed class EventIdsTests
             id.ShouldBeInRange(EventIds.MinId, EventIds.MaxId, name);
         }
 
-        EventIds.Unclassified.ShouldBeInRange(EventIds.MinId, EventIds.MaxId);
-        EventIds.RunCompletedQuiet.ShouldBeInRange(EventIds.MinId, EventIds.MaxId);
-        EventIds.RunCompletedWithChanges.ShouldBeInRange(EventIds.MinId, EventIds.MaxId);
-        EventIds.RunCompletedWithFailures.ShouldBeInRange(EventIds.MinId, EventIds.MaxId);
+        // And every ID declared as a constant, found by reflection rather than listed here. The
+        // list used to be written out by hand, and three of the four entries on it (100, 101 and
+        // 110) named events nothing emitted - constants compared against constants, green for
+        // ever. ArchitectureTests.EveryEventIdConstantIsNamedByLiveCode is what catches that; this
+        // just stops the range check from going stale the next time one is added.
+        foreach (var field in typeof(EventIds)
+            .GetFields(BindingFlags.Public | BindingFlags.Static)
+            .Where(f => f.IsLiteral && f.FieldType == typeof(int)))
+        {
+            ((int)field.GetRawConstantValue()!)
+                .ShouldBeInRange(EventIds.MinId, EventIds.MaxId, field.Name);
+        }
     }
 
     /// <remarks>

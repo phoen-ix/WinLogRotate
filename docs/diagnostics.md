@@ -43,10 +43,15 @@ file. The full record is always in the journal.
 
 ## Event IDs
 
-**This table is a contract.** IDs are append-only and are never renumbered or reused: an alert
-rule names an ID, and nothing tells its author when that ID silently stops being produced. A
-unit test asserts that every `DiagnosticCode` maps to exactly one ID here, that no two share
-one, and that all of them fall in the range below.
+**This table is a contract.** IDs are never renumbered and never reused: an alert rule names an
+ID, and nothing tells its author when that ID silently stops being produced. A unit test asserts
+that every `DiagnosticCode` maps to exactly one ID here, that no two share one, and that all of
+them fall in the range below.
+
+An ID that has **never** been emitted may be withdrawn, and its number stays spent. 100, 101 and
+110 - "run completed", quiet, with changes and with failures - were published here and written
+by nothing, and 110 was the worked example below for *did last night's run fail?*. A test now asserts that every declared ID is named by code that can emit it, which is what
+makes withdrawal safe: an alert rule can only be broken by an ID that used to be produced.
 
 > **Why 1–1000.** The installer registers
 > `EventMessageFile = %SystemRoot%\System32\EventCreate.exe`, whose message table defines that
@@ -66,9 +71,6 @@ same guard is a Warning. The **ID** never varies, which is what an alert rule sh
 
 | ID | Type | Condition | Code |
 |---:|---|---|---|
-| 100 | Information | Run completed, nothing was due | — |
-| 101 | Information | Run completed with changes | — |
-| 110 | Error | Run completed with failures | — |
 | 111 | Error | Administrator rights are required | `LR1001` |
 | 112 | Error | The configuration could not be read | `LR1002` |
 | 113 | Error | The configuration is invalid; nothing was attempted | `LR1003` |
@@ -126,11 +128,15 @@ Get-WinEvent -FilterHashtable @{ LogName = 'Application'; ProviderName = 'WinLog
 # Just the security band
 Get-WinEvent -FilterHashtable @{ LogName='Application'; ProviderName='WinLogRotate'; Id=190..193 }
 
-# Did last night's run fail?
+# Did anything fail last night? Level 2 is Error, which is also how Critical is written.
 Get-WinEvent -FilterHashtable @{
-    LogName='Application'; ProviderName='WinLogRotate'; Id=110; StartTime=(Get-Date).AddDays(-1)
+    LogName='Application'; ProviderName='WinLogRotate'; Level=2; StartTime=(Get-Date).AddDays(-1)
 }
 ```
+
+There is **no per-run summary event**, so silence is not proof that a run happened - a machine
+that never woke up looks exactly like a machine with nothing to rotate. `winlogrotate doctor`
+answers that question; the Application log answers *what went wrong*.
 
 If a message reads *"The description for Event ID … cannot be found"*, the event source is
 registered but its `EventMessageFile` value is missing or wrong. Reinstall, or run

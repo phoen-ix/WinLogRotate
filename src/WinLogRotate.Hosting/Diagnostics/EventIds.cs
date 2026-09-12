@@ -7,11 +7,20 @@ namespace WinLogRotate.Hosting.Diagnostics;
 /// </summary>
 /// <remarks>
 /// <para>
-/// <strong>Append-only, and never renumbered.</strong> An alert rule cannot exist without a
+/// <strong>Never renumbered, and never reused.</strong> An alert rule cannot exist without a
 /// documented event ID, and a table that changes between versions is worse than no table at
 /// all: it silently stops matching, and the alert that was configured to page someone simply
 /// never fires again. Same discipline as <see cref="DiagnosticCode"/> itself, for the same
 /// reason. The published copy is in <c>docs/diagnostics.md</c>.
+/// </para>
+/// <para>
+/// <strong>An ID that has never been emitted may be withdrawn</strong>, and the number stays
+/// spent. That is not a hole in the rule above; it is what makes the rule checkable. 100, 101 and
+/// 110 were declared here, published in the table, and printed in the worked <c>Get-WinEvent</c>
+/// recipe as the way to ask whether last night's run failed - and no code path ever wrote one of
+/// them. The recipe returned nothing, which reads exactly like a quiet night. An alert rule can
+/// only be broken by an ID that used to be produced, so withdrawal is conditional on a fact a
+/// test can check: <c>ArchitectureTests.EveryEventIdConstantIsNamedByLiveCode</c>.
 /// </para>
 /// <para>
 /// <strong>Every ID must be between 1 and 1000.</strong> That is not a style choice. The
@@ -34,10 +43,8 @@ public static class EventIds
     public const int MinId = 1;
     public const int MaxId = 1000;
 
-    // Outcomes, which have no diagnostic code because nothing went wrong.
-    public const int RunCompletedQuiet = 100;
-    public const int RunCompletedWithChanges = 101;
-    public const int RunCompletedWithFailures = 110;
+    // 100, 101 and 110 were "run completed" outcomes that nothing ever emitted. Withdrawn;
+    // not to be handed to anything else.
 
     /// <summary>
     /// A notification digest delivered to an <c>eventlog:</c> target.
@@ -46,8 +53,8 @@ public static class EventIds
     /// Deliberately distinct from the 150-154 diagnostics, which report on the notification
     /// machinery itself. This one carries the message an operator asked to be told, so an alert
     /// rule can name it without also firing on "a webhook could not be reached". It has no
-    /// <see cref="DiagnosticCode"/> for the same reason the run outcomes above have none: nothing
-    /// went wrong.
+    /// <see cref="DiagnosticCode"/> because nothing went wrong: a digest is what somebody asked
+    /// to be sent, not a report of a fault.
     /// </remarks>
     public const int NotificationDigest = 155;
 
