@@ -276,12 +276,23 @@ deliberately differs, and what cannot exist on Windows.
 
 ## Status, honestly
 
-**v0.8.x.** The installer and scheduler are verified end to end on Windows. Rotation itself ran
+**v0.10.x.** The installer and scheduler are verified end to end on Windows. Rotation itself ran
 for the first time in 0.4.0 — before that the engine skipped every `kind = "rotate"` job silently,
 which is to say the headline feature had never executed at all. It is verified only against files
 nothing holds open. The GUI has still never rendered a window; what it does with the CLI's
 output — following the stream, wording an exit code, reading a failure out of an envelope — now
 lives in a plain library and is covered, which is the part that was silently wrong.
+
+**And the planner was wrong in five ways until 0.11.0.** No test anywhere had ever *executed* a
+rotate plan — the executor refuses to run off Windows, and every planner test stopped at the list
+of intentions, asserting that an operation of the right kind existed and never what it would do to
+a directory. Underneath that: `delaycompress` renamed the archive compression had just consumed,
+failing one operation a night for ever; two spellings of one generation ended the whole run at
+exit 4, from the exact state the crash-recovery path warns about and promises the planners cope
+with; `maxage` deleted yesterday's archive and reported the month-old one it had left behind;
+archives above the retention count were probed for at up to a thousand existence checks per log
+and then never touched; and `rotate = n` kept `n + 1` under `dateext`. A plan is now judged by the
+directory it leaves behind, and one is carried out on real files on every Windows build.
 
 ### What has actually run on Windows
 
@@ -324,6 +335,12 @@ from elevation rather than from the install.
 
 ### What has not
 
+- **The installed product still rotates one file, once, with compression off.** `installer-smoke`
+  runs a real `rotate` job as SYSTEM, and that is the configuration it runs — `rotate = 3`,
+  `compress = false`, from an empty directory. It is the one shape in which none of the five
+  planner defects above can occur, which is why they survived on a green pipeline. Multi-generation
+  chains, `delaycompress`, `maxage` and `dateext` are exercised against real files only by the
+  Windows unit suite, and against a directory model everywhere else.
 - **The GUI has never rendered.** No window, no theme, no dialog. The runner is Server and every
   install is silent, so the installer's own wizard pages have never been drawn either. That now
   includes the Notifications page and the credential dialog; the pipe *behind* that dialog is
@@ -360,13 +377,15 @@ from elevation rather than from the install.
 
 ### What is thoroughly tested, everywhere
 
-972 tests, and the platform-neutral half is where the subtle bugs live:
+1,188 tests, and the platform-neutral half is where the subtle bugs live:
 
 - logrotate's scheduling rules, including that `--force` does **not** override `notifempty`,
   `minsize` or `minage` — one test per gate
 - DST transitions, `monthly 31` in February, `weekly 7`, a clock moved backwards by a snapshot
   restore
-- retention arithmetic, the numbered shift order, the `delaycompress` hand-off
+- retention arithmetic, the numbered shift order, the `delaycompress` hand-off — and, since the
+  planner turned out to be wrong about all three, the **directory each plan leaves behind**: which
+  original file ends up under which name, rather than which operations were intended
 - glob matching — including a test asserting we reject `something.logfile` for `*.log` **and**
   that Windows itself accepts it, via 8.3 short names
 - the TOML round-trip, and that generated imports parse back through our own binder
