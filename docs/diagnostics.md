@@ -192,6 +192,27 @@ writes that registry value and creating one needs administrator. `winlogrotate h
 not help: it restores the run host and the configuration directory's permissions, and has never
 touched the event source.
 
+## What exit 4 means, and what it does not
+
+`LR1006` and exit 4 mean **a defect in WinLogRotate** — an exception nobody anticipated. They do
+not mean a full disk.
+
+That distinction had to be made, because for a long time exit 4 was where every unguarded write
+ended up. A disk with nothing left on it, a journal directory that had become a file, a locked
+secrets file: each arrived as `LR1006`, whose remedy reads *"Nothing about what was or was not
+done can be relied on"* — and each time that was false. The rotations had happened. They were in
+the journal.
+
+| What failed | Now | Then |
+|---|---|---|
+| the rotation clocks | `LR3105`, exit 1 | `LR1006`, exit 4 |
+| opening or writing the journal | `LR3106`, the run continues | `LR1006`, exit 4, mid-rotation |
+| the secret store | `LR9008`, exit 1 | `LR1006`, exit 4 |
+
+`LR3105` is the one to watch. Nothing was lost when it fires, but the clocks were not written, so
+**every log that run rotated is due again on the next one** — which on a full disk is the worst
+possible second act. `LR3106` is a warning: the record is gone, the rotation is not.
+
 ## Why not `LastTaskResult`?
 
 Because it cannot be trusted to mean what it appears to mean. The registered task passes

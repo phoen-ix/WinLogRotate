@@ -46,6 +46,14 @@ public static class ExitCode
     /// <para>
     /// An alert rule should read this as "read the diagnostic, then file a bug", never as "some
     /// files could not be rotated".
+    /// </para>
+    /// <para>
+    /// <b>It does not cover a write the machine refused.</b> For a long time it did, by default,
+    /// because nothing caught them: a full disk under <c>state.Save</c>, a journal directory that
+    /// had become a file, a locked secret store. Each of those is a problem with the machine, each
+    /// leaves what was done perfectly well known, and each now has a code that says which one it
+    /// was - <c>LR3105</c>, <c>LR3106</c>, <c>LR9008</c>. What is left here is what the summary
+    /// says: a defect.
     /// </para></summary>
     public const int InternalError = 4;
 }
