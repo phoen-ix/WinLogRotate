@@ -36,22 +36,22 @@ public static class EventLogWriter
     /// </summary>
     private const int MaxMessageChars = 31_000;
 
-    /// <summary>
-    /// Most events one invocation may write before it stops.
-    /// </summary>
-    /// <remarks>
-    /// A job whose directory is unreachable can produce a diagnostic per file, and a few
-    /// hundred near-identical entries in the Application log is how an administrator decides
-    /// this source is noise and filters it out - taking the one event that mattered with it.
-    /// The cap is announced by a final event rather than applied silently.
-    /// </remarks>
-    private const int MaxEventsPerRun = 50;
 
     private static readonly Lock Gate = new();
     private static nint _handle;
     private static bool _tried;
-    private static int _written;
-    private static bool _capAnnounced;
+
+    /// <summary>
+    /// The two streams, and why they are two.
+    /// </summary>
+    /// <remarks>
+    /// Static because "per invocation" is a property of the process rather than of an object: an
+    /// allowance owned by the sink or by the sender would be one counter per decorator
+    /// constructed, so the published ceiling would mean whatever the wiring happened to do that
+    /// day, and two of either would silently double it.
+    /// </remarks>
+    private static readonly EventLogBudget Mirrored = EventLogBudget.ForDiagnostics();
+    private static readonly EventLogBudget Digests = EventLogBudget.ForDigests();
 
     /// <summary>True if the source is registered and writable on this machine.</summary>
     public static bool IsRegistered(string source)
@@ -63,31 +63,52 @@ public static class EventLogWriter
     }
 
     /// <summary>Writes one event. Returns false if it was not written, for any reason.</summary>
-    public static bool TryWrite(string source, Severity severity, int eventId, string message)
+    /// <remarks>
+    /// That sentence is true now and was not before. When the allowance ran out this returned the
+    /// result of writing the <i>announcement</i> - a different event, with a different id - as
+    /// though it were the caller's own, so a caller whose message had been discarded was told it
+    /// had gone. The notification digest is the caller that mattered: it recorded the incident as
+    /// reported and advanced the job's state, permanently, on exactly the runs noisy enough to
+    /// spend the allowance.
+    /// </remarks>
+    public static bool TryWrite(string source, Severity severity, int eventId, string message) =>
+        Write(Mirrored, source, severity, eventId, message) == EventLogOutcome.Written;
+
+    /// <summary>
+    /// Writes one notification digest, against the digests' own allowance.
+    /// </summary>
+    /// <remarks>
+    /// Internal because it reports an <see cref="EventLogOutcome"/>, which the sender needs and
+    /// nothing outside this assembly does. The diagnostic sink lives in the CLI and keeps the
+    /// public bool above.
+    /// </remarks>
+    internal static EventLogOutcome WriteDigest(string source, Severity severity, string message) =>
+        Write(Digests, source, severity, EventIds.NotificationDigest, message);
+
+    private static EventLogOutcome Write(
+        EventLogBudget budget, string source, Severity severity, int eventId, string message)
     {
         lock (Gate)
         {
             var handle = Open(source);
             if (handle == 0)
             {
-                return false;
+                return EventLogOutcome.Unavailable;
             }
 
-            if (_written >= MaxEventsPerRun)
+            var verdict = budget.Take();
+
+            if (verdict == EventLogBudgetVerdict.Announce)
             {
-                if (_capAnnounced)
-                {
-                    return false;
-                }
-
-                _capAnnounced = true;
-                return Report(handle, Severity.Warning, EventIds.Unclassified,
-                    $"More than {MaxEventsPerRun} diagnostics were reported by a single run; the "
-                    + "rest were not written here. Run \"winlogrotate journal\" for the full record.");
+                // Deliberately discarded. Whether the announcement landed says nothing about the
+                // caller's event, which was not written either way.
+                _ = Report(handle, Severity.Warning, EventIds.Unclassified, budget.Announcement);
             }
 
-            _written++;
-            return Report(handle, severity, eventId, message);
+            var reported = verdict == EventLogBudgetVerdict.Write
+                && Report(handle, severity, eventId, message);
+
+            return EventLogOutcomes.For(verdict, reported);
         }
     }
 
