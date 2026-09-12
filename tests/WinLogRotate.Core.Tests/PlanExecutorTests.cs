@@ -174,6 +174,59 @@ public sealed class PlanExecutorTests : IDisposable
         public LinkTarget Resolve(string path) => LinkTarget.At(to);
     }
 
+    /// <summary>A resolver reporting that the directory is simply not there.</summary>
+    /// <remarks>
+    /// ERROR_PATH_NOT_FOUND, which is the ordinary answer for a destination a plan has not
+    /// created yet - every numbered archive, and every olddir under createolddir.
+    /// </remarks>
+    private sealed class Absent : ILinkResolver
+    {
+        public LinkTarget Resolve(string path) => LinkTarget.Unresolvable(3);
+    }
+
+    /// <summary>
+    /// A directory that is not there is judged by its spelling, not refused as unverifiable.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// The distinction the fail-closed rule has to draw, and the one I got wrong first: a path
+    /// that does not exist is not a link whose target could not be established. There is nothing
+    /// behind it to have been swapped, so the textual rules still apply in full - and refusing
+    /// it as unverifiable would refuse every plan whose destination has not been created yet.
+    /// </para>
+    /// <para>
+    /// Found by windows-2025, which has no <c>C:\logs</c>: the source of a perfectly ordinary
+    /// plan became unverifiable and pre-empted the destination check, so a rename into System32
+    /// was refused for the wrong reason and under the wrong code. On the Linux leg every path in
+    /// that fixture is refused as not-absolute long before any of this, so nothing saw it.
+    /// </para>
+    /// </remarks>
+    [Fact]
+    public void ADirectoryThatIsNotThereIsStillJudgedByItsSpelling()
+    {
+        var plan = PlanDeleting("a.log.gz");
+
+        var result = new PlanExecutor(
+                _journal,
+                new PathGuard(new GuardOptions { ProtectedRoots = [_dir.FullName] }),
+                _clock,
+                new Absent())
+            .Execute(plan, Job(), dryRun: false);
+
+        result.Failed.ShouldBe(1);
+
+        var refusal = result.Diagnostics.ShouldHaveSingleItem();
+
+        // Asserted as "not the unverifiable answer" rather than as one code, because which
+        // textual rule refuses depends on the leg: on Windows it is the protected root, and on
+        // Linux CheckPath turns the temp path down as not absolute long before that. Both are
+        // the guard judging a spelling, which is the property under test.
+        refusal.Code.ShouldNotBe(DiagnosticCode.JobSkipped,
+            "a path that is not there was judged by its spelling, not reported as unverifiable");
+
+        refusal.Message.ShouldNotBeNull().ShouldNotContain("could not be established");
+    }
+
     /// <summary>A resolver that cannot say where anything leads.</summary>
     /// <remarks>
     /// ERROR_ACCESS_DENIED, because that is the ordinary way this happens: a junction to a share

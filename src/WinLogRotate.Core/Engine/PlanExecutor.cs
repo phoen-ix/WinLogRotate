@@ -209,6 +209,17 @@ public sealed class PlanExecutor(
         };
     }
 
+    /// <summary>ERROR_FILE_NOT_FOUND and ERROR_PATH_NOT_FOUND.</summary>
+    /// <remarks>
+    /// Named rather than inlined because the distinction they draw is the whole of the rule
+    /// above: absent is not the same as unverifiable, and conflating them refuses every plan
+    /// whose destination does not exist yet - which is every numbered archive.
+    /// </remarks>
+    private const int NotFound = 2;
+
+    /// <inheritdoc cref="NotFound"/>
+    private const int PathNotFound = 3;
+
     /// <summary>
     /// The path as the file system sees it, with each directory resolved at most once - or null
     /// when where it really leads could not be established.
@@ -219,7 +230,8 @@ public sealed class PlanExecutor(
     /// open, not forty.
     /// </para>
     /// <para>
-    /// Null rather than the spelled path. This used to fall back to the spelling when the
+    /// Null rather than the spelled path, but only when the directory is really there and its
+    /// location could not be established. This used to fall back to the spelling whenever the
     /// directory would not resolve, on the argument that an unresolvable path was then no worse
     /// guarded than before - but the spelling is exactly what the guard cannot trust here, and
     /// this is the last check before a file is deleted. <c>FileEnumerator.Vet</c> has answered
@@ -241,7 +253,23 @@ public sealed class PlanExecutor(
         if (!cache.TryGetValue(directory, out var real))
         {
             var target = (links ?? new LinkResolver()).Resolve(directory);
-            real = target.Resolved && target.FinalPath is { } final ? final : null;
+
+            real = target switch
+            {
+                { Resolved: true, FinalPath: { } final } => final,
+
+                // A directory that is not there is not a link whose target could not be
+                // established - there is nothing behind it to have been swapped, so the spelled
+                // path is the whole truth about it and the guard can judge that textually. The
+                // plan names destinations that do not exist yet by design: createolddir, and
+                // every numbered archive.
+                { Error: NotFound or PathNotFound } => directory,
+
+                // Anything else means the directory is there and where it leads could not be
+                // established. That is the case this refuses.
+                _ => null,
+            };
+
             cache[directory] = real;
         }
 
