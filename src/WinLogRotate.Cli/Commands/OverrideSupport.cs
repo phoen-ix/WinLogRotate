@@ -48,14 +48,14 @@ internal static class OverrideSupport
             return OverrideGate.Open;
         }
 
-        // Tied to the same verdict hooks use, rather than a second, softer rule. One directory,
+        // Tied to the same verdict hooks use, rather than a second, softer rule. One surface,
         // one question, one answer - and ExpectedForScope deliberately does not soften it, so a
         // per-user installation loses overrides for the same reason it loses hooks. The wording
         // has to carry that, because "expected" and "safe" are not the same thing and the
         // operator is entitled to know which one applies to them.
         var reason = finding.ExpectedForScope
-            ? $"'{finding.Path}' is writable by its owner, as a per-user installation's "
-              + "configuration directory is by design"
+            ? $"'{finding.Path}' is writable by its owner, as everything in a per-user "
+              + "installation's configuration is by design"
             : $"'{finding.Path}' is not safe to read an override from";
 
         return OverrideGate.Shut(reason, finding.FixCommand);

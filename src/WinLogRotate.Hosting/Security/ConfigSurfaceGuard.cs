@@ -82,9 +82,13 @@ internal static class ConfigSurfaceGuard
 
         // The children come last, and the first-refusal rule means their descriptors are read
         // only once the directories are clean: a loose directory refuses hooks whatever its
-        // files say. On the path that does read them it is one descriptor per job file -
-        // strictly fewer syscalls than ConfigLoader spends opening and parsing that same set a
-        // moment later, on every run.
+        // files say. On the path that does read them it is one descriptor per job file. For a
+        // run that is strictly fewer syscalls than ConfigLoader spends opening and TOML-parsing
+        // that same set a moment later; for doctor it is not, because doctor never loads the
+        // configuration at all and the GUI polls it. A local GetNamedSecurityInfo per job file
+        // per refresh is the price, and it is the reason C6's alternative - probing the mutex
+        // from doctor - was rejected outright: reading a descriptor cannot cause the fault it
+        // reports, and taking the machine-wide rotation lock can.
         surface.AddRange(JobFiles.In(paths.ConfigDirectory).Select(f => (f, false)));
 
         return surface;

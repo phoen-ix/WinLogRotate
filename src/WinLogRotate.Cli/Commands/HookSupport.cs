@@ -78,21 +78,26 @@ internal sealed record HookSupport
     }
 
     /// <summary>The clause that completes "this hook runs code, and ...".</summary>
+    /// <remarks>
+    /// Named by path rather than as "the configuration directory". The gate judges the root,
+    /// conf.d, config.toml and every job file, and a sentence about the directory attached to a
+    /// finding about a file sends the operator to check permissions that are already correct.
+    /// </remarks>
     private static string Reason(AclFinding finding) => finding.Verdict switch
     {
         AclVerdict.LooseWritable =>
-            "the configuration directory can be written by an account that is not an administrator",
+            $"'{finding.Path}' can be written by an account that is not an administrator",
 
         AclVerdict.LooseOwner =>
-            "the configuration directory is owned by a non-administrator, who can rewrite its "
+            $"'{finding.Path}' is owned by a non-administrator, who can rewrite its "
             + "permissions at will",
 
         AclVerdict.Inherited =>
-            "the configuration directory inherits its permissions, so it will re-inherit "
+            $"'{finding.Path}' inherits its permissions, so it will re-inherit "
             + "ProgramData's the moment anyone changes them",
 
-        AclVerdict.Unknown => "the configuration directory could not be checked",
+        AclVerdict.Unknown => $"the permissions on '{finding.Path}' could not be read",
 
-        _ => "the configuration directory is not safe to execute from",
+        _ => $"'{finding.Path}' is not safe to execute from",
     };
 }
