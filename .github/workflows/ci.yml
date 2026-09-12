@@ -690,7 +690,12 @@ jobs:
           # The floor, and it tracks a quantity that moves. Asserting "a 155 exists" would be
           # satisfied by one written at any point in this job's life; asserting that the count
           # went up can only be satisfied by the run below.
-          $before = (& $digests).Count
+          #
+          # @() around every invocation, and it is load-bearing. Invoking a scriptblock unrolls
+          # its output, so the @() inside it does not survive the call: no events come back as
+          # $null and one comes back as a bare record, and under the Set-StrictMode the helpers
+          # set, .Count on either throws rather than answering 0 or 1.
+          $before = @(& $digests).Count
           "  event 155 count before: $before"
 
           # No --json, deliberately. An invocation that passes it writes nothing to the Event Log
@@ -702,10 +707,10 @@ jobs:
 
           # The Event Log is written asynchronously, so this polls rather than checking once.
           Wait-Until -TimeoutSeconds 30 -Because 'the eventlog: digest to appear as event 155' -Condition {
-            (& $digests).Count -gt $before
+            @(& $digests).Count -gt $before
           }
 
-          $latest = (& $digests)[0]
+          $latest = @(& $digests)[0]
           "  event $($latest.Id) $($latest.LevelDisplayName) from $($latest.ProviderName)"
 
           # The digest for the job that failed, not merely an event with the right number on it.
