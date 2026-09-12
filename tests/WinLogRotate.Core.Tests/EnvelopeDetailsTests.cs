@@ -206,26 +206,13 @@ public sealed class EnvelopeDetailsTests : IDisposable
     [Fact]
     public void AnUnelevatedJsonVerbThatCrashesExplainsItself()
     {
-        var blocker = Path.Combine(_dir.FullName, "blocker");
-        File.WriteAllText(blocker, "not a directory");
-
-        // The crash fixture milestone 21 established: state is saved after the run is journaled,
-        // and saving creates the state file's directory.
-        File.WriteAllText(Path.Combine(_dir.FullName, "config.toml"), "schema = 1\n");
-        var confd = Directory.CreateDirectory(Path.Combine(_dir.FullName, "conf.d"));
-        File.WriteAllText(Path.Combine(confd.FullName, "a.toml"), """
-            schema = 1
-            [job]
-            name      = "app"
-            kind      = "manage"
-            paths     = ["C:/app/logs/*.log"]
-            missingok = true
-            """);
-
+        // Handed to the guard directly, for the reason SafetyNetTests.Crash gives in full: every
+        // fault that used to crash a verb here - the unwritable state file, the journal that
+        // cannot be opened, the secret store that cannot be written - is now caught and reported
+        // as the machine condition it is. What is left for LR1006 is a defect, and a test for one
+        // has to supply it.
         var parse = Cli.Commands.CommandTree.Build().Parse(
-            ["run", "--json", "--no-notify", "--no-event-log",
-             "--config-dir", _dir.FullName,
-             "--state", Path.Combine(blocker, "state.json")]);
+            ["run", "--json", "--no-notify", "--no-event-log", "--config-dir", _dir.FullName]);
 
         parse.Errors.ShouldBeEmpty();
 
@@ -236,7 +223,8 @@ public sealed class EnvelopeDetailsTests : IDisposable
         try
         {
             Console.SetOut(captured);
-            exit = parse.Invoke();
+            exit = Cli.Commands.CommandContext.Guarded(
+                parse, _ => throw new IOException("the fault nobody anticipated"));
         }
         finally
         {

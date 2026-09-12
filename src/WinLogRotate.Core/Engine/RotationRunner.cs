@@ -434,15 +434,6 @@ public sealed class RotationRunner(
             }
         }
 
-        journal.Write(new CliEvent
-        {
-            Ts = string.Empty,
-            Run = string.Empty,
-            Operation = Op.RunEnd,
-            Phase = options.DryRun ? Phase.Plan : Phase.Apply,
-            Result = failed > 0 ? OpResult.Failed : OpResult.Ok,
-        });
-
         // State is written even when jobs failed - deliberately, and matching logrotate. A
         // failing job must not cause the healthy ones to re-rotate on every subsequent run.
         if (!options.DryRun)
@@ -457,8 +448,47 @@ public sealed class RotationRunner(
                 state.Prune(now, TimeSpan.FromDays(StateStore.ForgetAfterDays));
             }
 
-            state.Save(clock);
+            try
+            {
+                state.Save(clock);
+            }
+            catch (Exception e) when (e is IOException or UnauthorizedAccessException)
+            {
+                // Reported rather than thrown, which is what it was. Nothing caught this, so a
+                // full disk reached CommandContext.Guarded and became LR1006 - "a defect in the
+                // product, not a problem with the machine", with a remedy saying nothing about
+                // what was done can be relied on. Both false: the rotations happened, and they
+                // are in the journal being written to right now.
+                //
+                // NotifyPhase has guarded the identical call for its own store since it was
+                // written, and NotifyStateStore.Load says why in full: "the cost of refusing to
+                // run would be a rotation that does not happen". The more important of the two
+                // stores was the one applying that only to corruption.
+                Report(new CliDiagnostic
+                {
+                    Severity = Severity.Error,
+                    Code = DiagnosticCode.StateNotSaved,
+                    Message = $"The rotation clocks could not be written: {e.Message}",
+                    Path = state.Path,
+                    Remedy = "Every log this run rotated is due again on the next one. "
+                           + "Check free space and the permissions on the state file.",
+                });
+            }
         }
+
+        // After the save, and that ordering is the point. run.end carried Result = Ok while the
+        // clock that records the run was still unwritten - so the journal, which docs/diagnostics
+        // names as the record of what happened to a file, said the run succeeded; the state file
+        // said it never happened; and the exit code said nobody knew. Three channels, three
+        // answers.
+        journal.Write(new CliEvent
+        {
+            Ts = string.Empty,
+            Run = string.Empty,
+            Operation = Op.RunEnd,
+            Phase = options.DryRun ? Phase.Plan : Phase.Apply,
+            Result = failed > 0 ? OpResult.Failed : OpResult.Ok,
+        });
 
         return new RunReport
         {

@@ -96,6 +96,25 @@ public static class DiagnosticCode
     public const string HookFailed = "LR3103";
 
     /// <summary>
+    /// The rotation clocks could not be written. The run happened; its record of it did not.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// Deliberately not <see cref="InternalError"/>, which this used to be by default because
+    /// nothing caught it. That code promises "a defect in the product, not a problem with the
+    /// machine or the configuration", and its remedy says nothing about what was or was not done
+    /// can be relied on - both of which are false here. The rotations happened and are in the
+    /// journal; what failed is a file write, which is the machine's business.
+    /// </para>
+    /// <para>
+    /// An Error, because the consequence is real and arrives later: with no clock written, every
+    /// log the run rotated is due again on the next one. A full disk is exactly when this fires,
+    /// which is exactly when a second rotation of everything is least affordable.
+    /// </para>
+    /// </remarks>
+    public const string StateNotSaved = "LR3105";
+
+    /// <summary>
     /// One rotation index is held by two files - <c>app.log.1</c> beside <c>app.log.1.gz</c>.
     /// </summary>
     /// <remarks>

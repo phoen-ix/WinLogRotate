@@ -31,6 +31,9 @@ public sealed class StateStore
 
     public IReadOnlyDictionary<string, PathState> Paths => _document.Paths;
 
+    /// <summary>Where this store reads and writes, so a failure to write can name it.</summary>
+    public string Path => _path;
+
     /// <summary>Loads state, or starts fresh if there is none.</summary>
     /// <param name="corrupt">Set when an existing file could not be read and was replaced.</param>
     public static StateStore Load(string path, out string? corrupt)

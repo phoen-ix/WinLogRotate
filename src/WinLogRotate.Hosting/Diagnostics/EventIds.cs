@@ -86,6 +86,7 @@ public static class EventIds
         DiagnosticCode.NulFillDetected => 134,
         DiagnosticCode.HookFailed => 135,
         DiagnosticCode.DuplicateGeneration => 136,
+        DiagnosticCode.StateNotSaved => 137,
 
         // 4xxx - host and scheduling.
         DiagnosticCode.NoRunHost => 140,

@@ -52,25 +52,59 @@ public sealed class SafetyNetTests : IDisposable
         return _dir.FullName;
     }
 
-    /// <summary>A state path whose parent is an ordinary file, so saving it must throw.</summary>
-    private string Unwritable()
-    {
-        var blocker = Path.Combine(_dir.FullName, "blocker");
-        File.WriteAllText(blocker, "not a directory");
-        return Path.Combine(blocker, "state.json");
-    }
-
+    /// <summary>
+    /// A verb that throws, for a reason the product genuinely does not anticipate.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// This drove the real <c>run</c> verb against a state path whose parent was an ordinary
+    /// file, which threw <c>IOException</c> out of the save. That is a machine condition - a full
+    /// disk and a locked file arrive the same way - and milestone 27 catches it and reports
+    /// <c>LR3105</c>, because the rotations really did happen and calling it "a defect in the
+    /// product" was false in both directions.
+    /// </para>
+    /// <para>
+    /// Every other fault that used to reach here has gone the same way: the journal that cannot
+    /// be opened, the one that stops accepting entries, the secret store that cannot be written.
+    /// That is the milestone working, and it leaves this class without a reachable crash to use -
+    /// which is the right problem to have. So the fault is now handed to
+    /// <see cref="Cli.Commands.CommandContext.Guarded"/> directly, which is this class's subject
+    /// anyway: not that <c>run</c> crashes, but that a verb which does still leaves an envelope,
+    /// an honest exit code and a closed file behind it.
+    /// </para>
+    /// <para>
+    /// The two events are emitted first, through the real sink and into the real
+    /// <c>--output</c> file, because the crash this guards against is the one that arrives after
+    /// the work - and what the run reached has to survive it.
+    /// </para>
+    /// </remarks>
     private (int Exit, string[] Lines) Crash(string? output = null)
     {
         var file = output ?? Path.Combine(_dir.FullName, $"out-{Guid.NewGuid():N}.ndjson");
 
         var parse = Cli.Commands.CommandTree.Build().Parse(
             ["run", "--no-notify", "--no-event-log", "--config-dir", Config(),
-             "--state", Unwritable(), "--json-stream", "--output", file]);
+             "--json-stream", "--output", file]);
 
         parse.Errors.ShouldBeEmpty();
 
-        var exit = parse.Invoke();
+        var exit = Cli.Commands.CommandContext.Guarded(parse, ctx =>
+        {
+            foreach (var operation in new[] { Op.RunStart, Op.RunEnd })
+            {
+                ctx.Output.Event(new CliEvent
+                {
+                    Ts = string.Empty,
+                    Run = string.Empty,
+                    Operation = operation,
+                    Phase = Phase.Apply,
+                    Result = OpResult.Ok,
+                });
+            }
+
+            throw new IOException("the fault nobody anticipated");
+        });
+
         return (exit, File.Exists(file) ? File.ReadAllLines(file) : []);
     }
 
