@@ -357,9 +357,7 @@ internal static class HostCommand
         Scope = paths.Scope.ToString(),
     };
 
-    private static int NotOnWindows(CommandContext ctx, string verb)
-    {
-        ctx.Output.Line($"winlogrotate: '{verb}' needs Windows.");
-        return ctx.Output.Complete<HostResult>(verb, ExitCode.Errors, null);
-    }
+    private static int NotOnWindows(CommandContext ctx, string verb) =>
+        Refusals.NeedsWindows<HostResult>(
+            ctx, verb, "run hosts are Windows scheduled tasks and services.");
 }

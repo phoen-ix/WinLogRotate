@@ -11,8 +11,8 @@ internal static class ScanCommand
     {
         if (!OperatingSystem.IsWindows())
         {
-            ctx.Output.Line("winlogrotate: 'scan' needs Windows.");
-            return ctx.Output.Complete<ScanResult>("scan", ExitCode.Errors, null);
+            return Refusals.NeedsWindows<ScanResult>(
+                ctx, "scan", "it reads the share modes other processes hold your logs with.");
         }
 
         var findings = ProducerScanner.Scan();

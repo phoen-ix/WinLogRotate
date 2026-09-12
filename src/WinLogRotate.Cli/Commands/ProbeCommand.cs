@@ -20,8 +20,8 @@ internal static class ProbeCommand
     {
         if (!OperatingSystem.IsWindows())
         {
-            ctx.Output.Line("winlogrotate: 'probe' needs Windows - it asks the OS about share modes.");
-            return ctx.Output.Complete<ProbeResultDto>("probe", ExitCode.Errors, null);
+            return Refusals.NeedsWindows<ProbeResultDto>(
+                ctx, "probe", "it asks the OS about share modes.");
         }
 
         if (!File.Exists(path))
