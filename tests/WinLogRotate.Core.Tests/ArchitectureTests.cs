@@ -1205,4 +1205,213 @@ public partial class ArchitectureTests
         unread.ShouldBeEmpty("commands that declare --config-dir and never read it");
     }
 
+    /// <summary>
+    /// One NSIS instruction, with its string literals and comments removed.
+    /// </summary>
+    /// <remarks>
+    /// Both removals are the point. A <c>MessageBox</c> whose <i>message</i> happens to contain
+    /// the characters "/SD " is not a MessageBox with a silent default, and a scanner that cannot
+    /// tell those apart passes the one case that matters.
+    /// </remarks>
+    private readonly record struct NsisInstruction(int Line, string Code);
+
+    /// <summary>
+    /// Reads an NSIS script the way the compiler does, near enough to judge one rule.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// Line continuations are joined, because a MessageBox is routinely split across several lines
+    /// with a trailing backslash and the <c>/SD</c> usually lives on the last of them. Carriage
+    /// returns are stripped first: <c>.gitattributes</c> checks <c>.nsi</c> out as CRLF - which is
+    /// right for an NSIS script - so a continued line ends backslash-CR rather than backslash, and
+    /// a join that does not know it never matches.
+    /// </para>
+    /// <para>
+    /// Strings are removed rather than skipped, so a quoted message cannot satisfy or break a rule
+    /// about the instruction around it. NSIS escapes a quote as <c>$\"</c>, and single quotes and
+    /// backticks open strings too. Line comments are <c>;</c> and <c>#</c>; block comments are not
+    /// handled and nothing in this repository uses them.
+    /// </para>
+    /// </remarks>
+    private static IReadOnlyList<NsisInstruction> ReadNsis(string text)
+    {
+        var lines = text.Replace("\r", string.Empty, StringComparison.Ordinal).Split('\n');
+        var instructions = new List<NsisInstruction>();
+
+        for (var i = 0; i < lines.Length; i++)
+        {
+            var start = i;
+            var joined = new System.Text.StringBuilder();
+
+            while (true)
+            {
+                var line = lines[i];
+                if (line.EndsWith('\\') && i + 1 < lines.Length)
+                {
+                    joined.Append(line, 0, line.Length - 1);
+                    i++;
+                    continue;
+                }
+
+                joined.Append(line);
+                break;
+            }
+
+            instructions.Add(new NsisInstruction(start + 1, StripStringsAndComments(joined.ToString())));
+        }
+
+        return instructions;
+    }
+
+    private static string StripStringsAndComments(string line)
+    {
+        var code = new System.Text.StringBuilder(line.Length);
+
+        for (var i = 0; i < line.Length; i++)
+        {
+            var c = line[i];
+
+            if (c is ';' or '#')
+            {
+                break;
+            }
+
+            if (c is not ('"' or '\'' or '`'))
+            {
+                code.Append(c);
+                continue;
+            }
+
+            // A string. Consume to its close, honouring NSIS's $\" escape, and emit nothing.
+            var quote = c;
+            for (i++; i < line.Length; i++)
+            {
+                if (line[i] == '$' && i + 2 < line.Length && line[i + 1] == '\\' && line[i + 2] == quote)
+                {
+                    i += 2;
+                    continue;
+                }
+
+                if (line[i] == quote)
+                {
+                    break;
+                }
+            }
+        }
+
+        return code.ToString();
+    }
+
+    [GeneratedRegex(@"^\s*MessageBox\b", RegexOptions.IgnoreCase | RegexOptions.Compiled)]
+    private static partial Regex NsisMessageBox();
+
+    [GeneratedRegex(@"(^|\s)/SD\s", RegexOptions.IgnoreCase | RegexOptions.Compiled)]
+    private static partial Regex NsisSilentDefault();
+
+    /// <summary>
+    /// Every MessageBox in an installer script carries an <c>/SD</c> silent default.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// NSIS does not suppress message boxes under <c>/S</c>. A box without a default therefore
+    /// hangs an unattended install for ever, on a dialog nobody can see, and the deployment that
+    /// invoked it simply never returns. The reference project calls this its single most important
+    /// gotcha.
+    /// </para>
+    /// <para>
+    /// This was four lines of grep in <c>.github/scripts/check-nsis-silent-defaults.sh</c>, and it
+    /// could not fail in three ways. Given a file with no MessageBox at all - a renamed script, a
+    /// changed path - the loop never ran and it printed success. Its pattern was case-sensitive
+    /// while <b>NSIS instruction names are not</b>, so <c>messagebox MB_OK "..."</c> with no
+    /// default compiled, shipped, and reported clean. And it matched <c>/SD </c> anywhere on the
+    /// line, including inside the message text.
+    /// </para>
+    /// <para>
+    /// Being a test rather than a workflow step is not incidental. The release path runs
+    /// <c>dotnet test</c> and did not run that script, so this is also the difference between a
+    /// rule that guards releases and one that guards only the builds nobody ships.
+    /// </para>
+    /// </remarks>
+    [Fact]
+    public void EverySilentInstallHasADefault()
+    {
+        var packaging = Path.Combine(RepoRoot.Find().FullName, "packaging");
+
+        var scripts = Directory.EnumerateFiles(packaging, "*", SearchOption.AllDirectories)
+            .Where(f => Path.GetExtension(f).Equals(".nsi", StringComparison.OrdinalIgnoreCase)
+                     || Path.GetExtension(f).Equals(".nsh", StringComparison.OrdinalIgnoreCase))
+            .Order(StringComparer.Ordinal)
+            .ToArray();
+
+        scripts.ShouldNotBeEmpty("there is no installer script to check");
+
+        var boxes = new List<string>();
+        var undefaulted = new List<string>();
+
+        foreach (var script in scripts)
+        {
+            foreach (var instruction in ReadNsis(File.ReadAllText(script)))
+            {
+                if (!NsisMessageBox().IsMatch(instruction.Code))
+                {
+                    continue;
+                }
+
+                var where = $"{Path.GetFileName(script)}:{instruction.Line}";
+                boxes.Add(where);
+
+                if (!NsisSilentDefault().IsMatch(instruction.Code))
+                {
+                    undefaulted.Add(where);
+                }
+            }
+        }
+
+        // The floor the shell version never had. Zero matches is not a clean bill of health, it is
+        // a scanner that stopped understanding its input - which is the failure this whole file
+        // exists to prevent.
+        boxes.Count.ShouldBeGreaterThan(4,
+            "found almost no MessageBox at all, so everything below asserted nothing");
+
+        undefaulted.ShouldBeEmpty(
+            "a MessageBox with no /SD hangs a silent install for ever on a dialog nobody can see");
+    }
+
+    /// <summary>
+    /// The scanner reads NSIS, not text that looks like it.
+    /// </summary>
+    /// <remarks>
+    /// Every case here is one the shipped rule depends on, and two of them are cases the shell
+    /// script it replaces got wrong. Without this the rule above is only ever exercised against a
+    /// file that passes, so nothing would show that it can fail.
+    /// </remarks>
+    [Fact]
+    public void TheSilentDefaultScannerReadsNsisRatherThanText()
+    {
+        const string Script = """
+            ; MessageBox MB_OK "a commented-out box is not a call"
+            Function Cases
+              MessageBox MB_OK "plain, with a default" /SD IDOK
+              MessageBox MB_OK "plain, without one"
+              messagebox MB_OK "lowercase, without one"
+              MessageBox MB_OK \
+                "split across lines" \
+                /SD IDOK
+              MessageBox MB_OK "type /SD IDOK to continue"
+              MessageBox MB_OK "quoted $\"/SD IDOK$\" inside a message"
+              DetailPrint "MessageBox MB_OK is not a call here"
+            FunctionEnd
+            """;
+
+        var found = ReadNsis(Script)
+            .Where(i => NsisMessageBox().IsMatch(i.Code))
+            .ToArray();
+
+        // Six calls: the comment and the DetailPrint are not among them.
+        found.Select(i => i.Line).ShouldBe([3, 4, 5, 6, 9, 10]);
+
+        found.Where(i => !NsisSilentDefault().IsMatch(i.Code)).Select(i => i.Line)
+            .ShouldBe([4, 5, 9, 10],
+                "a lowercase instruction is still an instruction, and /SD inside a message is not a default");
+    }
 }

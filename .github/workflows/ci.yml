@@ -161,11 +161,10 @@ jobs:
       - name: Install NSIS
         run: sudo apt-get update && sudo apt-get install -y nsis
 
-      # NSIS does NOT suppress message boxes under /S, so one without an /SD default hangs an
-      # unattended install forever on a dialog nobody can see. The reference project calls this
-      # its single most important gotcha and enforces it by review; this enforces it properly.
-      - name: Every MessageBox has a silent default
-        run: ./.github/scripts/check-nsis-silent-defaults.sh packaging/winlogrotate.nsi
+      # The /SD silent-default rule used to live here as a shell script. It is now
+      # ArchitectureTests.EverySilentInstallHasADefault, because the script could not fail on an
+      # input it did not understand - and because a rule that lives in `dotnet test` is one the
+      # release path already runs, which a step in this job is not.
 
       - name: Stub the release binaries
         run: |
