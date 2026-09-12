@@ -257,7 +257,8 @@ function Measure-MutexHeldUpgrade {
     Start-Sleep -Seconds 3
 
     $elapsed = Measure-Command {
-        Start-Process -FilePath $Setup -ArgumentList $Arguments -Wait
+        $upgrade = Start-Process -FilePath $Setup -ArgumentList $Arguments -PassThru -Wait
+        if ($upgrade.ExitCode -ne 0) { throw "the upgrade installer exited $($upgrade.ExitCode)" }
     }
 
     Receive-Job $job -Wait -AutoRemoveJob | Out-Null

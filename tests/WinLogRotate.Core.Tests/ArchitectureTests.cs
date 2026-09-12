@@ -1594,4 +1594,72 @@ public partial class ArchitectureTests
         WorkflowJobs().Where(j => JobMayFail().IsMatch(j.Text)).Select(j => j.Id)
             .ShouldBe(["runner-canary"]);
     }
+    [GeneratedRegex(@"Start-Process\b[^\r\n]*(\r?\n[^\r\n]*)?", RegexOptions.Compiled)]
+    private static partial Regex StartProcess();
+
+    /// <summary>
+    /// A process this pipeline waits for has its exit code read.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// <c>Start-Process -Wait</c> without <c>-PassThru</c> returns nothing, so every installer
+    /// invocation in the smoke job discarded the number the installer had just set to report its
+    /// own outcome. <c>winlogrotate.nsi</c> sets <c>SetErrorLevel 2</c> for an unusable
+    /// <c>/HOST=</c> and <c>3</c> for an unelevated silent per-machine install, and nothing ever
+    /// looked. An installer that reported failure and one that reported success were
+    /// indistinguishable to CI - on the pipeline whose own history is a silent install reporting
+    /// success with nothing scheduled to run.
+    /// </para>
+    /// <para>
+    /// Keyed on <c>-Wait</c>, which is the honest boundary. The three uninstaller launches
+    /// deliberately do not wait: an NSIS uninstaller copies itself to temp and returns
+    /// immediately, so its exit code describes the copy rather than the uninstall, and
+    /// <c>Wait-Removed</c> polls for the result instead. Requiring <c>-PassThru</c> there would
+    /// be requiring a number that means nothing.
+    /// </para>
+    /// <para>
+    /// Both the workflow and the helper script are read. The helper holds one of the launches,
+    /// and a rule that looked only at YAML could be satisfied by moving a launch into PowerShell.
+    /// </para>
+    /// </remarks>
+    [Fact]
+    public void EveryStartProcessCapturesItsExitCode()
+    {
+        var root = RepoRoot.Find().FullName;
+
+        var sources = new[] { Path.Combine(root, ".github", "workflows", "ci.yml") }
+            .Concat(Directory.EnumerateFiles(Path.Combine(root, ".github", "scripts"), "*.ps1"))
+            .Where(File.Exists)
+            .Order(StringComparer.Ordinal)
+            .ToArray();
+
+        sources.Length.ShouldBeGreaterThan(1, "the pipeline's PowerShell has gone missing");
+
+        var waiting = new List<(string Where, string Text)>();
+
+        foreach (var source in sources)
+        {
+            var text = File.ReadAllText(source).Replace("\r", string.Empty, StringComparison.Ordinal);
+
+            foreach (Match m in StartProcess().Matches(text))
+            {
+                // The launch plus its continuation, so an argument list wrapped onto a second line
+                // is judged as one command rather than as a truncated one.
+                if (m.Value.Contains("-Wait", StringComparison.Ordinal))
+                {
+                    var line = text.Take(m.Index).Count(c => c == '\n') + 1;
+                    waiting.Add(($"{Path.GetFileName(source)}:{line}", m.Value));
+                }
+            }
+        }
+
+        // Four installs wait today. A floor here is not decoration: a scan that stopped matching
+        // would report every launch as compliant.
+        waiting.Count.ShouldBeGreaterThan(2,
+            "found almost no waiting launch, so the scan has stopped understanding its input");
+
+        waiting.Where(w => !w.Text.Contains("-PassThru", StringComparison.Ordinal))
+            .Select(w => w.Where)
+            .ShouldBeEmpty("a process this pipeline waits for whose exit code it then discards");
+    }
 }

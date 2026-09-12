@@ -317,7 +317,23 @@ jobs:
           # entry when this is read back, and the last entry would look like it went missing.
           Set-Content machine-path-before.txt -Value $pathBefore -NoNewline
 
-          Start-Process -FilePath (Resolve-Path setup.exe) -ArgumentList '/S','/AllUsers','/HOST=task','/NORUNTIME' -Wait
+          # The installer's own refusals, asserted before its successes. winlogrotate.nsi sets
+          # SetErrorLevel 2 for an unusable /HOST= and quits without installing anything, and
+          # nothing in this pipeline has ever read that number - every Start-Process here ran
+          # without -PassThru, so an installer that reported failure and one that reported success
+          # were indistinguishable.
+          $bad = Start-Process -FilePath (Resolve-Path setup.exe) -PassThru -Wait `
+            -ArgumentList '/S','/AllUsers','/HOST=banana','/NORUNTIME'
+          if ($bad.ExitCode -ne 2) {
+            throw "an unusable /HOST= must exit 2 and install nothing; it exited $($bad.ExitCode)"
+          }
+          if (Get-UninstallEntry -Scope machine) {
+            throw 'the installer refused /HOST=banana and installed anyway'
+          }
+
+          $setup = Start-Process -FilePath (Resolve-Path setup.exe) -PassThru -Wait `
+            -ArgumentList '/S','/AllUsers','/HOST=task','/NORUNTIME'
+          if ($setup.ExitCode -ne 0) { throw "the installer exited $($setup.ExitCode)" }
 
           $entry = Get-UninstallEntry -Scope machine
           if (-not $entry) { throw 'No per-machine Add/Remove entry was registered.' }
@@ -1097,7 +1113,9 @@ jobs:
         shell: pwsh
         run: |
           . .github/scripts/installer-smoke-helpers.ps1
-          Start-Process -FilePath (Resolve-Path setup.exe) -ArgumentList '/S','/AllUsers','/HOST=none','/NORUNTIME' -Wait
+          $setup = Start-Process -FilePath (Resolve-Path setup.exe) -PassThru -Wait `
+            -ArgumentList '/S','/AllUsers','/HOST=none','/NORUNTIME'
+          if ($setup.ExitCode -ne 0) { throw "the installer exited $($setup.ExitCode)" }
 
           $entry = Get-UninstallEntry -Scope machine
           if (-not (Test-Path "$env:DATA_DIR\conf.d\smoke.toml")) {
@@ -1122,7 +1140,9 @@ jobs:
           . .github/scripts/installer-smoke-helpers.ps1
           $machineBefore = [Environment]::GetEnvironmentVariable('PATH', 'Machine')
 
-          Start-Process -FilePath (Resolve-Path setup.exe) -ArgumentList '/S','/CurrentUser','/HOST=none','/NORUNTIME' -Wait
+          $setup = Start-Process -FilePath (Resolve-Path setup.exe) -PassThru -Wait `
+            -ArgumentList '/S','/CurrentUser','/HOST=none','/NORUNTIME'
+          if ($setup.ExitCode -ne 0) { throw "the installer exited $($setup.ExitCode)" }
 
           $entry = Get-UninstallEntry -Scope user
           if (-not $entry) { throw 'No per-user Add/Remove entry was registered.' }
