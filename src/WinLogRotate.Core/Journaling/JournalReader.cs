@@ -47,12 +47,19 @@ public sealed record JournalFilter
 
         // Written with "O", so parsed with InvariantCulture and RoundtripKind. A culture-aware
         // parse would read this file differently on a German machine than the one that wrote it.
-        if (Since is not null
-            && DateTimeOffset.TryParse(e.Ts, CultureInfo.InvariantCulture,
-                DateTimeStyles.RoundtripKind, out var ts)
-            && ts < Since)
+        //
+        // A timestamp that will not parse excludes the record, and that is the correction: the
+        // `&&` used to short-circuit on a failed parse and fall through to `return true`, so
+        // `--since` answered with records it could not place in time - from outside the window
+        // the caller asked for, in a filter whose whole job is to narrow. An unplaceable record
+        // is still there unfiltered, which is where a forensic reader should look for it.
+        if (Since is not null)
         {
-            return false;
+            if (!DateTimeOffset.TryParse(e.Ts, CultureInfo.InvariantCulture,
+                    DateTimeStyles.RoundtripKind, out var ts) || ts < Since)
+            {
+                return false;
+            }
         }
 
         return true;
@@ -82,7 +89,7 @@ public sealed class JournalReader(string journalDirectory)
         var files = Directory
             .EnumerateFiles(journalDirectory, "journal-*")
             .Where(IsJournal)
-            .OrderBy(f => f, StringComparer.Ordinal);
+            .OrderBy(Chronological, Order);
 
         foreach (var file in files)
         {
@@ -103,12 +110,62 @@ public sealed class JournalReader(string journalDirectory)
             .Select(g => new JournalRun
             {
                 RunId = g.Key,
-                Started = g.Select(e => DateTimeOffset.TryParse(e.Ts, CultureInfo.InvariantCulture,
-                    DateTimeStyles.RoundtripKind, out var t) ? t : default).Min(),
+                // Only the timestamps that parse. This used to map an unparseable one to
+                // `default`, which is DateTimeOffset.MinValue, and Min() then selected it - so a
+                // single malformed Ts reported an entire run as having started in the year 1.
+                // A run with no readable timestamp at all keeps MinValue, which is honest: it
+                // cannot be placed.
+                Started = g
+                    .Select(e => DateTimeOffset.TryParse(e.Ts, CultureInfo.InvariantCulture,
+                        DateTimeStyles.RoundtripKind, out var t) ? t : (DateTimeOffset?)null)
+                    .Where(t => t is not null)
+                    .DefaultIfEmpty(DateTimeOffset.MinValue)
+                    .Min()!
+                    .Value,
                 Entries = g.ToArray(),
             })
             .OrderByDescending(r => r.RunId, StringComparer.Ordinal)
             .Take(take);
+
+    /// <summary>
+    /// Sorts a day's files the way they were written: the base file, then its numbered rolls.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// Ordinal on the whole name read a rolled day backwards. <c>journal-2026-09-12.1.ndjson</c>
+    /// sorts before <c>journal-2026-09-12.ndjson</c> because '1' is 0x31 and 'n' is 0x6E, and
+    /// <c>.10.</c> sorts before <c>.2.</c> for the same reason - so on any day busy enough to hit
+    /// <c>maxsize</c>, the verb printed the later half of the day first and then the earlier.
+    /// </para>
+    /// <para>
+    /// The base file is index 0 because that is when it was written: <c>JournalWriter.Open</c>
+    /// rolls to <c>.1</c> only once the base has reached its size.
+    /// </para>
+    /// </remarks>
+    private static (string Day, int Index) Chronological(string path)
+    {
+        var name = Path.GetFileName(path);
+
+        foreach (var suffix in new[] { ".ndjson.zip", ".ndjson.gz", ".ndjson" })
+        {
+            if (name.EndsWith(suffix, StringComparison.OrdinalIgnoreCase))
+            {
+                name = name[..^suffix.Length];
+                break;
+            }
+        }
+
+        var dot = name.LastIndexOf('.');
+
+        return dot > 0 && int.TryParse(
+            name.AsSpan(dot + 1), NumberStyles.None, CultureInfo.InvariantCulture, out var index)
+            ? (name[..dot], index)
+            : (name, 0);
+    }
+
+    private static readonly IComparer<(string Day, int Index)> Order =
+        Comparer<(string Day, int Index)>.Create((a, b) =>
+            string.CompareOrdinal(a.Day, b.Day) is var day && day != 0 ? day : a.Index - b.Index);
 
     /// <summary>
     /// The three shapes a journal file takes on disk, and the only three.
