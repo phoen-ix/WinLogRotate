@@ -33,6 +33,20 @@ public enum PathProblem
     /// upward past its own root is almost always a mistake, and resolving it silently is how a
     /// rotation ends up outside the directory the operator was looking at.</summary>
     ParentTraversal,
+
+    /// <summary>
+    /// Names a Win32 device rather than a file - <c>\\.\</c>, or <c>\\?\</c> followed by
+    /// anything but a drive or <c>UNC\</c>.
+    /// </summary>
+    /// <remarks>
+    /// Refused rather than resolved, and this one is a guard bypass rather than a tidiness rule.
+    /// <c>\\?\GLOBALROOT\Device\HarddiskVolume1\Windows\System32</c> and
+    /// <c>\\.\C:\Windows\System32</c> both reach the files the protected-root rule exists to
+    /// keep this product out of, and neither can be compared against <c>C:\Windows</c> without
+    /// asking the operating system where the device points. So the guard says no: it is biased
+    /// toward refusing, and nothing legitimate needs to spell a log directory this way.
+    /// </remarks>
+    DeviceNamespace,
 }
 
 /// <summary>
@@ -114,6 +128,15 @@ public static class WinPath
         if (!IsAbsolute(normalized))
         {
             return PathProblem.NotAbsolute;
+        }
+
+        // Before anything textual, because a device path defeats every textual rule after it.
+        // \\?\GLOBALROOT\Device\HarddiskVolume1\Windows\System32 reaches exactly the files
+        // the protected-root rule exists to keep this product out of, and cannot be compared
+        // against C:\Windows without asking the operating system where the device points.
+        if (IsDeviceNamespace(normalized))
+        {
+            return PathProblem.DeviceNamespace;
         }
 
         var body = StripPrefix(normalized, out var isUnc);
@@ -237,10 +260,68 @@ public static class WinPath
         return p.Length >= 3 && char.IsAsciiLetter(p[0]) && p[1] == ':' && p[2] == '\\';
     }
 
+    /// <summary>
+    /// The same path with any Win32 extended-length prefix removed, so two spellings of one
+    /// location compare equal.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// <c>\\?\C:\Windows\System32</c> and <c>C:\Windows\System32</c> are the same directory
+    /// to Windows and were two different strings to the guard - so the protected-root rule, which
+    /// is a textual comparison, said no to one and yes to the other. The prefix is not exotic:
+    /// .NET emits it internally for long paths, and an operator who has hit MAX_PATH has probably
+    /// been told to write it.
+    /// </para>
+    /// <para>
+    /// Only the two forms that name a filesystem location are unwrapped - <c>\\?\C:\…</c> and
+    /// <c>\\?\UNC\server\share\…</c>. Anything else under <c>\\?\</c>, and everything under
+    /// <c>\\.\</c>, names a device; those are left exactly as they are so that
+    /// <see cref="Validate(string, bool)"/> refuses them rather than this quietly inventing a
+    /// drive letter for them.
+    /// </para>
+    /// </remarks>
+    public static string Unprefixed(string path)
+    {
+        var p = Normalize(path);
+
+        if (!p.StartsWith(@"\\?\", StringComparison.Ordinal))
+        {
+            return p;
+        }
+
+        var rest = p[4..];
+
+        if (rest.StartsWith(@"UNC\", StringComparison.OrdinalIgnoreCase))
+        {
+            return @"\\" + rest[4..];
+        }
+
+        // A drive, and nothing else. "GLOBALROOT\..." and a volume GUID both land here and are
+        // returned untouched, which is what makes them reach the device-namespace refusal.
+        return rest.Length >= 2 && char.IsAsciiLetter(rest[0]) && rest[1] == ':' ? rest : p;
+    }
+
+    /// <summary>True for a path that names a device rather than a file.</summary>
+    public static bool IsDeviceNamespace(string path)
+    {
+        var p = Normalize(path);
+
+        if (p.StartsWith(@"\\.\", StringComparison.Ordinal))
+        {
+            return true;
+        }
+
+        // Anything still carrying the prefix after Unprefixed is one it could not resolve to a
+        // drive or a share - which leaves the device namespace.
+        return Unprefixed(p).StartsWith(@"\\?\", StringComparison.Ordinal);
+    }
+
     /// <summary>True when the path is nothing but a drive or share root.</summary>
     public static bool IsRoot(string path)
     {
-        var p = Normalize(path);
+        // Unprefixed, so that \\?\C: is the same volume root as C: - otherwise a pattern
+        // anchored at the whole drive slips past the rule that exists to refuse exactly that.
+        var p = Unprefixed(path);
 
         if (p.Length is 2 or 3 && char.IsAsciiLetter(p[0]) && p[1] == ':')
         {

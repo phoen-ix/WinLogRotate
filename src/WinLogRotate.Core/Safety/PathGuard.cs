@@ -539,8 +539,13 @@ public sealed class PathGuard(GuardOptions options)
     /// </summary>
     internal static bool IsWithin(string candidate, string root)
     {
-        var c = WinPath.Normalize(candidate);
-        var r = WinPath.Normalize(root);
+        // Unprefixed, not Normalize. This comparison is textual, and Windows accepts more than
+        // one spelling of a location: \\?\C:\Windows\System32 and C:\Windows\System32 are the
+        // same directory and were two different strings here, so the protected-root rule said no
+        // to one and yes to the other. Every rule built on this one - the job's paths, olddir,
+        // the executor's last-moment check - inherited that.
+        var c = WinPath.Unprefixed(candidate);
+        var r = WinPath.Unprefixed(root);
 
         if (c.Equals(r, StringComparison.OrdinalIgnoreCase))
         {
@@ -580,6 +585,7 @@ public sealed class PathGuard(GuardOptions options)
         PathProblem.AlternateDataStream => $"'{path}' names an alternate data stream.",
         PathProblem.InvalidCharacter => $"'{path}' contains a character that is not valid in a Windows path.",
         PathProblem.ParentTraversal => $"'{path}' contains '..'. Resolve the path yourself rather than having it walk upward at runtime.",
+        PathProblem.DeviceNamespace => $"'{path}' names a Windows device rather than a file. Where it leads cannot be established without asking the operating system, so the protected-location rules cannot be applied to it. Name the directory by its drive letter or UNC path.",
         _ => $"'{path}' is not usable.",
     };
 }

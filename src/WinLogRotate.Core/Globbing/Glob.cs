@@ -139,7 +139,16 @@ public static class Glob
         // stops being recognised as a volume root - which is one of the refusals that matters.
         var normalized = pattern.Replace('/', '\\');
 
-        var firstWildcard = normalized.AsSpan().IndexOfAny('*', '?', '[');
+        // The '?' in a \\?\ prefix is not a wildcard, and reading it as one was a defect with
+        // two halves. The scan found it at index 2, the separator before it is at index 1, and
+        // the anchor came back as a single backslash - so PathGuard measured its protected-root
+        // and volume-root rules against the wrong directory entirely, and FileEnumerator would
+        // have walked from the root of the current drive. The prefix itself is kept: it is what
+        // makes a path longer than MAX_PATH work, and this result is handed to the OS.
+        var scanFrom = normalized.StartsWith(@"\\?\", StringComparison.Ordinal) ? 4 : 0;
+
+        var found = normalized.AsSpan(scanFrom).IndexOfAny('*', '?', '[');
+        var firstWildcard = found < 0 ? -1 : found + scanFrom;
 
         // No wildcard at all: the last segment is the filename, so the prefix is its directory.
         var searchFrom = firstWildcard < 0 ? normalized.Length - 1 : firstWildcard;
