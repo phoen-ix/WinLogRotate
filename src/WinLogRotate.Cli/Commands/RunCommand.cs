@@ -179,10 +179,38 @@ internal static class RunCommand
         // rather than checking - so every real run ended on an ObjectDisposedException from the
         // last line of the verb, after all the work was done and before the exit code was
         // returned. The test that runs the verb for real found it on the first attempt.
-        IJournal durable = options.DryRun || !journalSettings.Enabled
-            ? new NullJournal()
-            : JournalWriter.Open(
-                paths.JournalDirectory, TimeProvider.System, maxSize: journalSettings.MaxSize);
+        IJournal durable = new NullJournal();
+
+        if (!options.DryRun && journalSettings.Enabled)
+        {
+            try
+            {
+                durable = JournalWriter.Open(
+                    paths.JournalDirectory, TimeProvider.System, maxSize: journalSettings.MaxSize);
+            }
+            catch (Exception e) when (e is IOException or UnauthorizedAccessException)
+            {
+                // The rotation goes ahead without it. docs/diagnostics.md names three channels,
+                // each for a different reader, and this one is "whoever is asking what happened
+                // to a specific file" - losing it costs that reader and nobody else. Unguarded,
+                // a journal directory that had become a file, or a disk with nothing left on it,
+                // took the whole run down before a single log was touched and reported LR1006:
+                // "a defect in the product, not a problem with the machine".
+                //
+                // JournalMaintenance, ten lines above, has always reported its own failures this
+                // way. Opening the file was the half nobody had guarded.
+                ctx.Output.Diagnostic(new CliDiagnostic
+                {
+                    Severity = Severity.Warning,
+                    Code = DiagnosticCode.JournalUnavailable,
+                    Message = $"The journal could not be opened: {e.Message}",
+                    Path = paths.JournalDirectory,
+                    Job = JournalMaintenance.JobName,
+                    Remedy = "The rotation went ahead. 'winlogrotate journal' will not show this "
+                           + "run; check free space and the permissions on that directory.",
+                });
+            }
+        }
 
         // Wrapped unconditionally, NullJournal included. A dry run is the one that most needs to
         // say what it would do, and it is the run that journals nothing - so making the tee

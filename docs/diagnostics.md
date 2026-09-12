@@ -134,6 +134,7 @@ mean the same thing wherever it is read.
 | 135 | Error | A hook ran and failed, timed out, or could not be started | `LR3103` |
 | 136 | Warning | One rotation index is held by two files; both were kept | `LR3104` |
 | 137 | Error | The rotation clocks could not be written; every log is due again | `LR3105` |
+| 138 | Warning | The journal is unavailable; the rotation carried on without it | `LR3106` |
 | 140 | Warning | No run host is registered | `LR4001` |
 | 141 | Warning | The run host this install was set up with is no longer registered | `LR4002` |
 | 142 | Error | Registering the run host failed | `LR4003` |

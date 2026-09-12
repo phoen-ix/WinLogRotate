@@ -115,6 +115,18 @@ public static class DiagnosticCode
     public const string StateNotSaved = "LR3105";
 
     /// <summary>
+    /// The journal could not be opened or stopped accepting entries. The run carries on without it.
+    /// </summary>
+    /// <remarks>
+    /// <c>docs/diagnostics.md</c> names three channels, each for a different reader, and the
+    /// journal's is "whoever is asking what happened to a specific file". Losing it costs that
+    /// reader and nobody else - so a rotation must not stop because its diary is full, which is
+    /// what happened while <c>JournalWriter.Open</c> and <c>Write</c> were unguarded: a full disk
+    /// aborted the run mid-rotation and reported <c>LR1006</c>.
+    /// </remarks>
+    public const string JournalUnavailable = "LR3106";
+
+    /// <summary>
     /// One rotation index is held by two files - <c>app.log.1</c> beside <c>app.log.1.gz</c>.
     /// </summary>
     /// <remarks>

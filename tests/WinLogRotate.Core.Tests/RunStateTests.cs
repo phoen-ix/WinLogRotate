@@ -158,6 +158,81 @@ public sealed class RunStateTests : IDisposable
             .Result.ShouldBe(OpResult.Failed);
     }
 
+    /// <summary>
+    /// A journal that cannot be opened does not stop the rotation.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// <c>JournalWriter.Open</c> was called with nothing around it, so a journal directory that
+    /// had become a file - or a disk with nothing left on it - took the whole run down before a
+    /// single log was touched, and reported <c>LR1006</c>: "a defect in the product, not a
+    /// problem with the machine". Measured on the real CLI, the same fixture as here: exit 4 and
+    /// a null payload before, exit 0 and a completed run after.
+    /// </para>
+    /// <para>
+    /// <c>docs/diagnostics.md</c> names three channels, each for a different reader, and this
+    /// one's is "whoever is asking what happened to a specific file". Losing it costs that reader
+    /// and nobody else. <c>JournalMaintenance</c>, ten lines above the open, has always reported
+    /// its own failures this way; opening the file was the half nobody had guarded.
+    /// </para>
+    /// </remarks>
+    [Fact]
+    public void AJournalThatCannotBeOpenedDoesNotStopTheRotation()
+    {
+        var confd = Directory.CreateDirectory(Path.Combine(_dir.FullName, "conf.d"));
+        File.WriteAllText(Path.Combine(_dir.FullName, "config.toml"), "schema = 1\n");
+        File.WriteAllText(Path.Combine(confd.FullName, "a.toml"), """
+            schema = 1
+            [job]
+            name      = "app"
+            kind      = "manage"
+            paths     = ["C:/app/logs/*.log"]
+            missingok = true
+            """);
+
+        // A file where the journal directory goes, which is what a botched restore leaves behind.
+        File.WriteAllText(Path.Combine(_dir.FullName, "journal"), "not a directory");
+
+        var sink = new Collecting();
+        var parse = Cli.Commands.CommandTree.Build().Parse(["run", "--no-notify", "--no-event-log"]);
+
+        var exit = Cli.Commands.RunCommand.Run(
+            new Cli.Commands.CommandContext(sink, parse),
+            new RunOptions(),
+            _dir.FullName,
+            StatePath);
+
+        exit.ShouldBe(ExitCode.Ok, "the logs still needed rotating");
+
+        var diagnostic = sink.Diagnostics.ShouldHaveSingleItem();
+
+        diagnostic.Code.ShouldBe(DiagnosticCode.JournalUnavailable);
+        diagnostic.Severity.ShouldBe(Severity.Warning);
+
+        File.Exists(StatePath).ShouldBeTrue("the run happened, so its clocks were written");
+    }
+
+    private sealed class Collecting : Cli.Output.IOutputSink
+    {
+        private readonly List<CliDiagnostic> _diagnostics = [];
+
+        public bool Verbose => false;
+
+        public IReadOnlyList<CliDiagnostic> Diagnostics => _diagnostics;
+
+        public void Diagnostic(CliDiagnostic d) => _diagnostics.Add(d);
+
+        public void Event(CliEvent evt)
+        {
+        }
+
+        public void Line(string text)
+        {
+        }
+
+        public int Complete<T>(string verb, int exitCode, T? result) => exitCode;
+    }
+
     private RunReport Run(StateStore state, List<CliDiagnostic> reported, IJournal? journal = null)
     {
         var runner = new RotationRunner(
