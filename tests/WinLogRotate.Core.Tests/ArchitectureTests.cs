@@ -1169,6 +1169,89 @@ public partial class ArchitectureTests
             "where a hook's program ends is decided by the string alone - see the remarks on TrySplit");
     }
 
+    [GeneratedRegex(@"^\|(?!\s*-)([^|]+)\|([^|]+)\|\s*([^|]*?)\s*\|\s*$", RegexOptions.Compiled)]
+    private static partial Regex CompatibilityRow();
+
+    /// <summary>
+    /// Every behaviour the compatibility page claims we reproduce exactly names a test that exists.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// <c>docs/logrotate-compatibility.md</c> was read by no test at all. Its first table is
+    /// headed "Behaviour we reproduce exactly, including the surprising parts", which is the
+    /// strongest claim this product makes anywhere - and one of its eleven rows was false for
+    /// four releases. "Frequency keywords are mutually exclusive, last one wins" sat under that
+    /// heading while the binder probed a fixed list, and the test named for the property could
+    /// not fail on it.
+    /// </para>
+    /// <para>
+    /// Another row, "1 still writes state - a failing job must not make the healthy ones
+    /// re-rotate forever", turned out to have no test of any kind. Writing this rule is what
+    /// found that; <c>RunStateTests.AFailedRunStillWritesItsState</c> is the answer.
+    /// </para>
+    /// <para>
+    /// A row may name several tests, because some claims are several gates - <c>--force</c>
+    /// against <c>notifempty</c>, <c>minsize</c> and <c>minage</c> is three - and a rule that
+    /// demanded exactly one would be answered by inventing one. Two rows may also name the same
+    /// test, for the same reason: the rule's job is that every claim is covered, not that the
+    /// suite is shaped to suit a table.
+    /// </para>
+    /// </remarks>
+    [Fact]
+    public void EveryCompatibilityClaimNamesATestThatExists()
+    {
+        var doc = Path.Combine(RepoRoot.Find().FullName, "docs", "logrotate-compatibility.md");
+        var lines = File.ReadAllLines(doc);
+
+        var start = Array.FindIndex(lines, l => l.StartsWith("## Behaviour we reproduce exactly", StringComparison.Ordinal));
+        start.ShouldBeGreaterThan(0, "the section this reads should still be there");
+
+        var end = Array.FindIndex(lines, start + 1, l => l.StartsWith("## ", StringComparison.Ordinal));
+        end.ShouldBeGreaterThan(start, "the section should still end somewhere");
+
+        var section = lines[start..end];
+
+        // The identity that makes this non-vacuous: every table line in the section is parsed.
+        // A regex that stopped matching would leave nothing to check and agree with itself, which
+        // is how a rule in this file has gone quiet before.
+        var candidates = section
+            .Where(l => l.StartsWith('|') && !l.StartsWith("|---", StringComparison.Ordinal))
+            .Where(l => !l.Contains("| Behaviour |", StringComparison.Ordinal))
+            .ToArray();
+
+        var rows = section
+            .Select(l => CompatibilityRow().Match(l))
+            .Where(m => m.Success)
+            .Where(m => !m.Groups[1].Value.Contains("Behaviour", StringComparison.Ordinal))
+            .ToArray();
+
+        rows.Length.ShouldBe(candidates.Length, "every row in the table has to be read");
+        rows.Length.ShouldBeGreaterThan(8, "the table should still hold the claims it held");
+
+        var declared = typeof(ArchitectureTests).Assembly
+            .GetTypes()
+            .SelectMany(t => t.GetMethods(BindingFlags.Public | BindingFlags.Instance | BindingFlags.DeclaredOnly))
+            .Select(m => m.Name)
+            .ToHashSet(StringComparer.Ordinal);
+
+        declared.Count.ShouldBeGreaterThan(500, "the test assembly should have been reflected over");
+
+        var missing = rows
+            .SelectMany(m => m.Groups[3].Value
+                .Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
+                .Select(name => (Claim: m.Groups[1].Value.Trim(), Test: name)))
+            .Where(x => !declared.Contains(x.Test))
+            .Select(x => $"{x.Claim} names {(x.Test.Length == 0 ? "nothing" : x.Test)}")
+            .ToArray();
+
+        missing.ShouldBeEmpty(
+            "a behaviour claimed as reproduced exactly needs a test that proves it, by name");
+
+        rows.Where(m => m.Groups[3].Value.Trim().Length == 0)
+            .Select(m => m.Groups[1].Value.Trim())
+            .ShouldBeEmpty("every row names at least one test");
+    }
+
     [GeneratedRegex(@"\bOption<[^>\n]+>\s+(\w+)\s*=", RegexOptions.Compiled)]
     private static partial Regex OptionDeclaration();
 

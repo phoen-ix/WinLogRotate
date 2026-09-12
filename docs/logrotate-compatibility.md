@@ -8,19 +8,22 @@ This page is the honest account of what matches, what differs, and what cannot e
 
 ## Behaviour we reproduce exactly, including the surprising parts
 
-| Behaviour | Note |
-|---|---|
-| **First sighting records a baseline and rotates nothing** | Delete the state file and nothing rotates that night. This catches everyone once. `--catchup` opts out. |
-| **At most one rotation per log per invocation** | A machine off for a month rotates once, not thirty times. Missed intervals are gone, not queued. |
-| **Calendar comparison, not elapsed time** | `daily` is due because the day number changed, so 23:58 and 00:02 rotates twice. |
-| **`--force` does not override `notifempty`, `minsize` or `minage`** | `--force` sets the initial answer; those three run afterwards and can turn it back off. Genuinely what upstream does. |
-| **Frequency keywords are mutually exclusive, last one wins** | They all write the same field. |
-| `weekly 7` | Pure seven-day spacing, ignoring the weekday. |
-| `monthly 31` in February | Falls back to the last day of the month, or it would never fire. |
-| **`dateext` never overwrites** | Rotating twice inside one date-format period is an error, not a silent loss of the earlier archive. Numbered rotation overwrites silently, as upstream does. |
-| `delaycompress` | The newest generation stays uncompressed for one cycle, and is compressed at the start of the next run so the chain is uniformly named before anything shifts. With `rotate = 1` or `rotate = 0` that generation is also the one retention disposes of this pass, so it is deleted rather than compressed first. |
-| Numbered shift order | From the highest index downward, so a move never lands on a file that has not itself moved yet. |
-| Exit codes 0, 1, 3 | Unchanged, and 1 still writes state - a failing job must not make the healthy ones re-rotate forever. |
+Each row names the test that proves it, and a rule reads this table: a claim here cannot be made
+without one, and a test named here cannot be deleted or renamed without this page going with it.
+
+| Behaviour | Note | Proved by |
+|---|---|---|
+| **First sighting records a baseline and rotates nothing** | Delete the state file and nothing rotates that night. This catches everyone once. `--catchup` opts out. | AFirstSightingIsBaselinedNotRotated |
+| **At most one rotation per log per invocation** | A machine off for a month rotates once, not thirty times. Missed intervals are gone, not queued. | AMonthOfMissedRunsStillProducesOneRotation |
+| **Calendar comparison, not elapsed time** | `daily` is due because the day number changed, so 23:58 and 00:02 rotates twice. | DailyIsDueWhenTheCalendarDayChanges, DailyIsNotDueTwiceInOneDay |
+| **`--force` does not override `notifempty`, `minsize` or `minage`** | `--force` sets the initial answer; those three run afterwards and can turn it back off. Genuinely what upstream does. | ForceDoesNotOverrideNotIfEmpty, ForceDoesNotOverrideMinSize, ForceDoesNotOverrideMinAge |
+| **Frequency keywords are mutually exclusive, last one wins** | They all write the same field. | TheLastScheduleKeyInTheFileWins |
+| `weekly 7` | Pure seven-day spacing, ignoring the weekday. | WeeklyIsDueAfterSevenDaysWhateverTheWeekday |
+| `monthly 31` in February | Falls back to the last day of the month, or it would never fire. | MonthlyThirtyFirstFiresOnTheLastDayOfFebruary |
+| **`dateext` never overwrites** | Rotating twice inside one date-format period is an error, not a silent loss of the earlier archive. Numbered rotation overwrites silently, as upstream does. | DateExtRefusesToOverwriteAnExistingArchive |
+| `delaycompress` | The newest generation stays uncompressed for one cycle, and is compressed at the start of the next run so the chain is uniformly named before anything shifts. With `rotate = 1` or `rotate = 0` that generation is also the one retention disposes of this pass, so it is deleted rather than compressed first. | DelayCompressLeavesTheNewestGenerationUncompressed |
+| Numbered shift order | From the highest index downward, so a move never lands on a file that has not itself moved yet. | TheNumberedChainShiftsFromTheTopDown |
+| Exit codes 0, 1, 3 | Unchanged, and 1 still writes state - a failing job must not make the healthy ones re-rotate forever. | AFailedRunStillWritesItsState |
 
 ## Deliberate differences
 
