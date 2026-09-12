@@ -1,0 +1,10 @@
+diagnostics[].code : String
+diagnostics[].message : String
+diagnostics[].remedy : String
+diagnostics[].severity : String
+exitCode : Number
+ok : Boolean
+product : String
+schema : Number
+verb : String
+version : String

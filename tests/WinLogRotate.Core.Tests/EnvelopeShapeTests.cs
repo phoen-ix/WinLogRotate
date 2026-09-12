@@ -315,4 +315,375 @@ public sealed class EnvelopeShapeTests
                 SkippedLines = 0,
             }),
             "journal");
+
+    // ---- the rest of the published surface ------------------------------------------------
+    //
+    // Seven verbs were pinned and about twenty were not, and this file's own remarks say why
+    // that matters: "Nothing noticed for two milestones, because nothing asserted what the
+    // envelope looked like." CI itself parses thirteen of these envelopes.
+    //
+    // Every fixture populates every nullable and every list, deliberately. Shape() records an
+    // empty array as "(empty)" and omits a null under the CLI's WhenWritingNull policy, so a
+    // fixture that left them out would pin a shape that says nothing about what the field holds -
+    // which is the failure mode this file exists to prevent, at one remove.
+
+    [Fact]
+    public void GlobKeepsItsShape() =>
+        ShouldMatchSnapshot(
+            Envelope("glob", new GlobResult
+            {
+                Pattern = @"C:\inetpub\logs\LogFiles\W3SVC[0-9]\*.log",
+                Anchor = @"C:\inetpub\logs\LogFiles",
+                ResolvedAnchor = @"D:\iis\LogFiles",
+                Count = 2,
+                TotalBytes = 40960,
+                Files = [@"C:\inetpub\logs\LogFiles\W3SVC1\u_ex260912.log"],
+            }),
+            "glob");
+
+    [Fact]
+    public void HostKeepsItsShape() =>
+        ShouldMatchSnapshot(
+            Envelope("host status", new HostResult
+            {
+                Host = "Task",
+                ConfigRoot = @"C:\ProgramData\WinLogRotate",
+                Scope = "PerMachine",
+            }),
+            "host");
+
+    [Fact]
+    public void HostPathKeepsItsShape() =>
+        ShouldMatchSnapshot(
+            Envelope("host path", new PathResult
+            {
+                Directory = @"C:\Program Files\WinLogRotate",
+                Scope = "Machine",
+                Action = "added",
+            }),
+            "host-path");
+
+    [Fact]
+    public void HostPauseKeepsItsShape() =>
+        ShouldMatchSnapshot(
+            Envelope("host pause", new PauseResult
+            {
+                PausedUntil = "2026-09-12T21:00:00.0000000+00:00",
+                Action = "paused",
+            }),
+            "host-pause");
+
+    [Fact]
+    public void HostExportKeepsItsShape() =>
+        ShouldMatchSnapshot(
+            Envelope("host export-task", new ExportTaskResult { Xml = "<Task />" }),
+            "host-export-task");
+
+    [Fact]
+    public void ImportKeepsItsShape() =>
+        ShouldMatchSnapshot(
+            Envelope("import", new ImportResult
+            {
+                Source = "/etc/logrotate.conf",
+                OutputDirectory = @"C:\ProgramData\WinLogRotate\conf.d",
+                Jobs = 3,
+                NeedingReview = 1,
+                Files = [@"C:\ProgramData\WinLogRotate\conf.d\nginx.toml"],
+            }),
+            "import");
+
+    [Fact]
+    public void ScanKeepsItsShape() =>
+        ShouldMatchSnapshot(
+            Envelope("scan", new ScanResult
+            {
+                Findings =
+                [
+                    new ScanFinding
+                    {
+                        Producer = "IIS",
+                        Directory = @"C:\inetpub\logs\LogFiles\W3SVC1",
+                        Pattern = "u_ex*.log",
+                        SelfRotates = true,
+                        SelfDeletes = false,
+                        SuggestedKind = "manage",
+                        Note = "IIS rolls these daily and never removes them.",
+                        FileCount = 90,
+                        TotalBytes = 1073741824,
+                    },
+                ],
+            }),
+            "scan");
+
+    [Fact]
+    public void ProbeKeepsItsShape() =>
+        ShouldMatchSnapshot(
+            Envelope("probe", new ProbeResultDto
+            {
+                Path = @"C:\logs\app.log",
+                Verdict = "Locked",
+                Explanation = "The file is open by another process with no sharing.",
+                Suggested = "copytruncate",
+                BlockingError = 32,
+                BlockingErrorText = "The process cannot access the file because it is being used by another process.",
+                Unlocked = false,
+            }),
+            "probe");
+
+    [Fact]
+    public void UpdateKeepsItsShape() =>
+        ShouldMatchSnapshot(
+            Envelope("update check", new UpdateResult
+            {
+                Current = "0.12.1",
+                Latest = "0.13.0",
+                UpdateAvailable = true,
+                Detail = "https://example.invalid/releases/latest",
+            }),
+            "update");
+
+    [Fact]
+    public void SecretKeepsItsShape() =>
+        ShouldMatchSnapshot(
+            Envelope("secret set", new SecretResult
+            {
+                Verb = "set-secret",
+                Path = @"C:\ProgramData\WinLogRotate\secrets.dat",
+                Names = ["smtp-password"],
+                Length = 16,
+                EntropyRehardened = false,
+            }),
+            "secret");
+
+    [Fact]
+    public void SecretListKeepsItsShape() =>
+        ShouldMatchSnapshot(
+            Envelope("secret list", new SecretListResult
+            {
+                Path = @"C:\ProgramData\WinLogRotate\secrets.dat",
+                Protection = "Dpapi",
+                FileProtection = "Hardened",
+                Secrets =
+                [
+                    new SecretEntryDto
+                    {
+                        Name = "smtp-password",
+                        Created = new DateTimeOffset(2026, 9, 1, 3, 0, 0, TimeSpan.Zero),
+                        Updated = new DateTimeOffset(2026, 9, 11, 3, 0, 0, TimeSpan.Zero),
+                        SetBy = "CONTOSO\\dana",
+                        Status = "Readable",
+                    },
+                ],
+            }),
+            "secret-list");
+
+    [Fact]
+    public void NotifyShowKeepsItsShape() =>
+        ShouldMatchSnapshot(
+            Envelope("notify show", new NotifyShowResult
+            {
+                Enabled = true,
+                On = NotifyOn.Change,
+                Threshold = Severity.Warning,
+                RemindAfter = "1.00:00:00",
+                Budget = "00:00:30",
+                Retries = 2,
+                WouldSend = true,
+                Proxy = "machine default",
+                CertificatePin = "AA:BB:CC",
+                Targets =
+                [
+                    new NotifyTargetDto
+                    {
+                        Target = "eventlog:",
+                        Display = "eventlog:",
+                        Scheme = "eventlog",
+                        Usable = true,
+                        Problem = "needs Windows",
+                    },
+                ],
+                Providers =
+                [
+                    new NotifyProviderDto
+                    {
+                        Name = "email.relay",
+                        Kind = NotifyProviderKind.Email,
+                        Enabled = true,
+                        Target = "ops@example.invalid",
+                        Credential = "@secret:smtp-password",
+                        CredentialFree = false,
+                    },
+                ],
+            }),
+            "notify-show");
+
+    [Fact]
+    public void NotifyStatusKeepsItsShape() =>
+        ShouldMatchSnapshot(
+            Envelope("notify status", new NotifyStatusResult
+            {
+                Path = @"C:\ProgramData\WinLogRotate\notify.json",
+                Jobs =
+                [
+                    new NotifyJobStatusDto
+                    {
+                        Job = "iis",
+                        Outcome = NotifyOutcome.Failing,
+                        NotifiedAt = new DateTimeOffset(2026, 9, 11, 3, 0, 0, TimeSpan.Zero),
+                        FailingSince = new DateTimeOffset(2026, 9, 9, 3, 0, 0, TimeSpan.Zero),
+                    },
+                ],
+                Channels =
+                [
+                    new NotifyChannelStatusDto
+                    {
+                        Channel = "email.relay",
+                        State = BreakerVerdict.Open,
+                        ConsecutiveFailures = 5,
+                        SkipRunsRemaining = 3,
+                        LastError = "the relay refused the connection",
+                        LastAttempt = new DateTimeOffset(2026, 9, 11, 3, 0, 0, TimeSpan.Zero),
+                    },
+                ],
+                Reset = ["email.relay"],
+            }),
+            "notify-status");
+
+    [Fact]
+    public void NotifyTestKeepsItsShape() =>
+        ShouldMatchSnapshot(
+            Envelope("notify test", new NotifyTestResult
+            {
+                Sent = 1,
+                Failed = 1,
+                Channels =
+                [
+                    new NotifyTestChannelDto
+                    {
+                        Channel = "email.relay",
+                        Display = "email.relay (ops@example.invalid)",
+                        Ok = false,
+                        Milliseconds = 412,
+                        Status = 535,
+                        Error = "the relay refused the credential",
+                        WouldBeSkipped = true,
+                    },
+                ],
+            }),
+            "notify-test");
+
+    /// <summary>
+    /// The envelope a verb with no payload publishes, which is most of the refusals.
+    /// </summary>
+    /// <remarks>
+    /// <c>EmptyResult</c> is what <c>CommandContext.Guarded</c> falls back to and what a parse
+    /// error now answers with, so it is on more paths than any single verb.
+    /// </remarks>
+    [Fact]
+    public void AnEmptyResultKeepsItsShape() =>
+        ShouldMatchSnapshot(
+            new CliEnvelope<EmptyResult>
+            {
+                Schema = 1,
+                Product = "WinLogRotate",
+                Version = "0.0.0",
+                Verb = "run",
+                Ok = false,
+                ExitCode = ExitCode.ConfigInvalid,
+                Result = null,
+                Diagnostics =
+                [
+                    new CliDiagnostic
+                    {
+                        Severity = Severity.Error,
+                        Code = DiagnosticCode.ArgumentUnusable,
+                        Message = "Unrecognized command or argument '--dry-runn'.",
+                        Remedy = "Run 'winlogrotate run --help' for usage.",
+                    },
+                ],
+            },
+            "empty");
+
+    /// <summary>
+    /// Every result type this product can publish has its shape pinned.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// Seven verbs were pinned and about twenty were not - including <c>secret</c>, <c>probe</c>
+    /// and <c>glob</c>, all three of which CI itself parses. A snapshot that exists for some of
+    /// the surface is a snapshot that catches a change to some of the surface, and this file's
+    /// own remarks explain what that costs: "Nothing noticed for two milestones, because nothing
+    /// asserted what the envelope looked like."
+    /// </para>
+    /// <para>
+    /// Derived from <c>CliJsonContext</c> by reflection rather than from a list kept by hand,
+    /// because a list kept by hand is one more thing to forget alongside the snapshot itself.
+    /// Registering a result type there is already mandatory - <c>JsonOutputSink.Complete</c>
+    /// throws without it - so the registration is the one place a new verb cannot skip.
+    /// </para>
+    /// <para>
+    /// Coverage is checked property by property against the snapshots rather than by counting
+    /// files: a snapshot whose fixture left a field null or a list empty pins a shape that says
+    /// nothing about that field, which is the same gap one level down.
+    /// </para>
+    /// </remarks>
+    [Fact]
+    public void EveryPublishedResultTypeHasItsShapePinned()
+    {
+        var snapshots = Directory
+            .EnumerateFiles(
+                Path.Combine(RepoRoot.Find().FullName, "tests", "WinLogRotate.Core.Tests", "envelope"),
+                "*.txt")
+            .Select(File.ReadAllText)
+            .ToArray();
+
+        var missing = new List<string>();
+
+        foreach (var payload in PublishedResultTypes())
+        {
+            // camelCase, matching JsonSourceGenerationOptions on CliJsonContext.
+            var fields = payload
+                .GetProperties()
+                .Select(p => $"result.{char.ToLowerInvariant(p.Name[0])}{p.Name[1..]}")
+                .ToArray();
+
+            // A type with no properties at all publishes no `result` key under the CLI's
+            // WhenWritingNull policy. EmptyResult is the only one, and empty.txt pins exactly
+            // that absence.
+            if (fields.Length == 0)
+            {
+                continue;
+            }
+
+            // Three spellings, because Shape() records a leaf as "x : Kind", an array as "x[]",
+            // and a nested object only through its own leaves - "result.notify.enabled". Looking
+            // for the bare name alone reported DoctorResult.Notify as unpinned when it is
+            // pinned six levels down, which is the kind of false red that gets a rule deleted.
+            var covered = snapshots.Any(shape =>
+                fields.All(f => shape.Contains(f + " ", StringComparison.Ordinal)
+                                || shape.Contains(f + "[]", StringComparison.Ordinal)
+                                || shape.Contains(f + ".", StringComparison.Ordinal)));
+
+            if (!covered)
+            {
+                missing.Add(payload.Name);
+            }
+        }
+
+        missing.ShouldBeEmpty(
+            "a result type this product publishes has no pinned shape - add a fixture to "
+            + "EnvelopeShapeTests, populating every nullable and every list");
+    }
+
+    /// <summary>Every <c>T</c> for which <c>CliEnvelope&lt;T&gt;</c> is registered.</summary>
+    private static IEnumerable<Type> PublishedResultTypes() =>
+        typeof(Cli.CliJsonContext)
+            .GetProperties()
+            .Select(p => p.PropertyType)
+            .Where(t => t.IsGenericType
+                        && t.GetGenericTypeDefinition().Name.StartsWith("JsonTypeInfo", StringComparison.Ordinal))
+            .Select(t => t.GetGenericArguments()[0])
+            .Where(t => t.IsGenericType && t.GetGenericTypeDefinition() == typeof(CliEnvelope<>))
+            .Select(t => t.GetGenericArguments()[0])
+            .Distinct();
 }

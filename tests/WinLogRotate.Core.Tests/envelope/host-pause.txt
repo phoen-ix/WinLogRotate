@@ -1,0 +1,17 @@
+diagnostics[].code : String
+diagnostics[].column : Number
+diagnostics[].job : String
+diagnostics[].line : Number
+diagnostics[].message : String
+diagnostics[].nativeError : Number
+diagnostics[].path : String
+diagnostics[].remedy : String
+diagnostics[].severity : String
+exitCode : Number
+ok : Boolean
+product : String
+result.action : String
+result.pausedUntil : String
+schema : Number
+verb : String
+version : String
