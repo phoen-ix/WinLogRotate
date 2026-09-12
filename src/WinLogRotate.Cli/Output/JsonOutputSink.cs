@@ -83,7 +83,7 @@ internal sealed class JsonOutputSink(bool verbose, bool stream, TextWriter? stre
             Ok = exitCode == ExitCode.Ok,
             ExitCode = exitCode,
             Result = result,
-            Diagnostics = _diagnostics.Items,
+            Diagnostics = _diagnostics.Settled(verb, exitCode),
         };
 
         // Resolved before anything is written and before anything is closed. This throw is a

@@ -266,6 +266,18 @@ internal static class HostCommand
         var directory = System.IO.Path.GetDirectoryName(Environment.ProcessPath);
         if (directory is null)
         {
+            // Said, rather than returned in silence on every channel at once - no diagnostic, no
+            // line, not even a comment. An executable with no directory is not something an
+            // operator can have caused or can fix, which is exactly what LR1006 is for.
+            ctx.Output.Diagnostic(new CliDiagnostic
+            {
+                Severity = Severity.Error,
+                Code = DiagnosticCode.InternalError,
+                Message = $"This executable reports its own location as '{Environment.ProcessPath}', "
+                        + "which has no directory to add to PATH.",
+                Remedy = "This is a defect. Please report it, with where winlogrotate.exe is installed.",
+            });
+
             return ctx.Output.Complete<HostResult>("host path", ExitCode.Errors, null);
         }
 

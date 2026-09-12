@@ -68,6 +68,8 @@ public static class EventIds
         DiagnosticCode.NotSupportedHere => 115,
         DiagnosticCode.InternalError => 116,
         DiagnosticCode.ArgumentUnusable => 117,
+        DiagnosticCode.AlreadyRunning => 118,
+        DiagnosticCode.FailedWithoutReason => 119,
 
         // 2xxx - a job or file was skipped.
         DiagnosticCode.JobSkipped => 120,

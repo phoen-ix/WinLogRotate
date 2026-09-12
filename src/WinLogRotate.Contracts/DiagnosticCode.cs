@@ -37,6 +37,34 @@ public static class DiagnosticCode
     /// </remarks>
     public const string ArgumentUnusable = "LR1007";
 
+    /// <summary>
+    /// Another rotation holds the gate, so this one did nothing.
+    /// </summary>
+    /// <remarks>
+    /// Info, not an error. <c>ExitCode.LockHeld</c>'s own summary calls it "the expected outcome
+    /// when a manual run overlaps the scheduled one", and the registered task passes
+    /// <c>--lock-held-exit 0</c> because of it. It exists so that the envelope for such a run says
+    /// something: <c>ok</c> is false whenever the exit code is not zero, and an empty
+    /// <c>diagnostics</c> beside it leaves a caller with a bare 3.
+    /// </remarks>
+    public const string AlreadyRunning = "LR1008";
+
+    /// <summary>
+    /// A verb failed and gave no reason. The backstop, and a defect wherever it appears.
+    /// </summary>
+    /// <remarks>
+    /// <c>CliEnvelope.Diagnostics</c> promises "never empty on a failure", and under
+    /// <c>--json</c> it is the only channel there is: <c>JsonOutputSink.Line</c> is a no-op. Nine
+    /// paths broke that promise, and each of them is now fixed at the site. This is what catches
+    /// the tenth.
+    /// <para>
+    /// Its wording is written to be embarrassing rather than informative, because an operator
+    /// reading it has already been failed by something else. Seeing it in the wild is a bug
+    /// report, not a diagnosis.
+    /// </para>
+    /// </remarks>
+    public const string FailedWithoutReason = "LR1009";
+
     // 2xxx - a job or file was skipped
     public const string JobSkipped = "LR2001";
     public const string FileMissing = "LR2002";

@@ -59,7 +59,18 @@ internal static class RunCommand
 
         if (!gate.Entered)
         {
-            ctx.Output.Line("Another rotation is already running; nothing was done.");
+            // Said as a diagnostic and not only as a line, because ok is false whenever the exit
+            // code is not zero and an empty diagnostics array beside it leaves a caller with a
+            // bare 3. Info, not an error: this is the expected outcome of an overlapping manual
+            // run, which is why the registered task passes --lock-held-exit 0.
+            ctx.Output.Diagnostic(new CliDiagnostic
+            {
+                Severity = Severity.Info,
+                Code = DiagnosticCode.AlreadyRunning,
+                Message = "Another rotation is already running; nothing was done.",
+                Remedy = "This is normal when a manual run overlaps the scheduled one.",
+            });
+
             return ctx.Output.Complete<RunResult>("run", locks.HeldExitCode, null);
         }
 

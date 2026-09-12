@@ -1,3 +1,4 @@
+using System.Globalization;
 using System.Reflection;
 using System.Text.RegularExpressions;
 using Shouldly;
@@ -139,6 +140,65 @@ public sealed partial class RefusalTests
         // The half that makes it worth reading. Naming the value without saying what it should
         // have been is the same dead end as the exit code alone.
         diagnostic.Remedy.ShouldNotBeNullOrWhiteSpace();
+    }
+
+    /// <summary>
+    /// A failing envelope is never empty.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// The net, and it is a net rather than a workhorse: nine verbs broke
+    /// <c>CliEnvelope.Diagnostics</c>' own sentence and every one of them is fixed at its own
+    /// site, because a named condition with a remedy is worth incomparably more than a generic
+    /// admission. This is what catches the tenth.
+    /// </para>
+    /// <para>
+    /// Asserted on the collector rather than through a verb, deliberately. Every verb that could
+    /// reach it has been fixed, so there is no longer an input that produces an empty failing
+    /// envelope - and writing a test that needs one would mean keeping a defect alive to feed it.
+    /// </para>
+    /// </remarks>
+    [Theory]
+    [InlineData(ExitCode.Errors)]
+    [InlineData(ExitCode.ConfigInvalid)]
+    [InlineData(ExitCode.LockHeld)]
+    [InlineData(ExitCode.InternalError)]
+    public void AFailingEnvelopeIsNeverEmpty(int exitCode)
+    {
+        var settled = new Cli.Output.DiagnosticCollector().Settled("probe", exitCode);
+
+        var diagnostic = settled.ShouldHaveSingleItem();
+
+        diagnostic.Code.ShouldBe(DiagnosticCode.FailedWithoutReason);
+        diagnostic.Severity.ShouldBe(Severity.Error);
+        diagnostic.Message.ShouldContain("probe");
+        diagnostic.Message.ShouldContain(exitCode.ToString(CultureInfo.InvariantCulture));
+    }
+
+    /// <summary>A succeeding envelope is not padded, and a verb that spoke is not second-guessed.</summary>
+    /// <remarks>
+    /// The two halves a careless net loses. An empty diagnostics array on exit 0 is the ordinary
+    /// shape of a quiet run - <c>EnvelopeDetailsTests.ARunWithNoDiagnosticsHasNoDetails</c> pins
+    /// that the GUI shows nothing for it - and a verb that already explained itself must not have
+    /// "no reason given" appended underneath.
+    /// </remarks>
+    [Fact]
+    public void ASucceedingEnvelopeIsNotPaddedAndAVerbThatSpokeIsNotSecondGuessed()
+    {
+        new Cli.Output.DiagnosticCollector().Settled("probe", ExitCode.Ok)
+            .ShouldBeEmpty("a quiet success says nothing, which is not the same as failing quietly");
+
+        var spoke = new Cli.Output.DiagnosticCollector();
+        spoke.Add(new CliDiagnostic
+        {
+            Severity = Severity.Error,
+            Code = DiagnosticCode.NotSupportedHere,
+            Message = "said something",
+        });
+
+        spoke.Settled("probe", ExitCode.Errors)
+            .ShouldHaveSingleItem()
+            .Code.ShouldBe(DiagnosticCode.NotSupportedHere);
     }
 
     [GeneratedRegex(@"Output\s*\.\s*Line\s*\(\s*\$?""[^""]*needs Windows", RegexOptions.Compiled)]
