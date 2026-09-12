@@ -465,7 +465,36 @@ public sealed record ScanResult
 /// <summary>Payload of <c>winlogrotate host pause</c>.</summary>
 public sealed record PauseResult
 {
-    public required string PausedUntil { get; init; }
+    /// <summary>When rotations resume, or null when they are not paused.</summary>
+    public string? PausedUntil { get; init; }
+
+    /// <summary>
+    /// What this invocation did: <c>paused</c>, <c>resumed</c>, or <c>unchanged</c>.
+    /// </summary>
+    /// <remarks>
+    /// Resuming used to return a null payload, so "rotations resumed" and "rotations were not
+    /// paused" were the same envelope. Both are exit 0 and both are correct outcomes; only one
+    /// of them means something changed, and a script reconciling state needs to know which.
+    /// </remarks>
+    public required string Action { get; init; }
+}
+
+/// <summary>Payload of <c>host path</c>.</summary>
+/// <remarks>
+/// The verb returned a null payload for all three outcomes, so a caller could not tell "added"
+/// from "removed" from "it was already there" - and the console lines that did say so are a
+/// no-op under <c>--json</c>.
+/// </remarks>
+public sealed record PathResult
+{
+    /// <summary>The directory that was added, removed, or found already present.</summary>
+    public required string Directory { get; init; }
+
+    /// <summary><c>Machine</c> or <c>User</c> - which PATH was edited.</summary>
+    public required string Scope { get; init; }
+
+    /// <summary><c>added</c>, <c>removed</c>, or <c>unchanged</c>.</summary>
+    public required string Action { get; init; }
 }
 
 /// <summary>Payload of the <c>update</c> verbs.</summary>

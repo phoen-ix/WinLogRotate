@@ -282,7 +282,7 @@ internal static class HostCommand
                 Remedy = "This is a defect. Please report it, with where winlogrotate.exe is installed.",
             });
 
-            return ctx.Output.Complete<HostResult>("host path", ExitCode.Errors, null);
+            return ctx.Output.Complete<PathResult>("host path", ExitCode.Errors, null);
         }
 
         // Scope follows the INSTALL, not the token. Deciding from elevation alone means a
@@ -314,14 +314,28 @@ internal static class HostCommand
         else
         {
             ctx.Output.Line("Already on PATH.");
-            return ctx.Output.Complete<HostResult>("host path", ExitCode.Ok, null);
+
+            // Three outcomes, one null payload. A caller could not tell "added" from "removed"
+            // from "it was already there", and the lines that say so are a no-op under --json.
+            return ctx.Output.Complete("host path", ExitCode.Ok, new PathResult
+            {
+                Directory = directory,
+                Scope = target.ToString(),
+                Action = "unchanged",
+            });
         }
 
         Environment.SetEnvironmentVariable("PATH", string.Join(';', parts), target);
         ctx.Output.Line(add
             ? $"Added {directory} to the {target} PATH."
             : $"Removed {directory} from the {target} PATH.");
-        return ctx.Output.Complete<HostResult>("host path", ExitCode.Ok, null);
+
+        return ctx.Output.Complete("host path", ExitCode.Ok, new PathResult
+        {
+            Directory = directory,
+            Scope = target.ToString(),
+            Action = add ? "added" : "removed",
+        });
     }
 
     private static HostResult Describe(RunHostKind kind, InstallPaths paths) => new()

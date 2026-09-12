@@ -24,7 +24,12 @@ internal static class PauseCommand
 
         if (duration is null or "")
         {
-            if (File.Exists(file))
+            // Both outcomes are correct and both are exit 0, but only one of them changed
+            // anything - and a null payload said neither. The console lines that did are a no-op
+            // under --json.
+            var wasPaused = File.Exists(file);
+
+            if (wasPaused)
             {
                 File.Delete(file);
                 ctx.Output.Line("Rotations resumed.");
@@ -34,7 +39,11 @@ internal static class PauseCommand
                 ctx.Output.Line("Rotations are not paused.");
             }
 
-            return ctx.Output.Complete<PauseResult>("host pause", ExitCode.Ok, null);
+            return ctx.Output.Complete("host pause", ExitCode.Ok, new PauseResult
+            {
+                PausedUntil = null,
+                Action = wasPaused ? "resumed" : "unchanged",
+            });
         }
 
         if (!TimeSpan.TryParse(duration, CultureInfo.InvariantCulture, out var span) || span <= TimeSpan.Zero)
@@ -54,6 +63,7 @@ internal static class PauseCommand
         return ctx.Output.Complete("host pause", ExitCode.Ok, new PauseResult
         {
             PausedUntil = until.ToString("O", CultureInfo.InvariantCulture),
+            Action = "paused",
         });
     }
 
