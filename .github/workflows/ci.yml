@@ -635,6 +635,92 @@ jobs:
           if ($LASTEXITCODE -ne 0) { throw "journal exited $LASTEXITCODE after the SYSTEM run" }
           $journal | Select-Object -First 12 | Out-Host
 
+      # The one fact about this channel that nothing has ever checked: that a notification digest
+      # actually arrives, as event 155, on a machine whose source the real installer registered.
+      #
+      # Milestone 26 found that a digest could be discarded and reported as delivered - the job's
+      # state advanced, the incident recorded as reported, and nothing written anywhere. Every
+      # test that could have caught it runs on a runner with no event source registered, so
+      # anything reaching the writer returns before it decides anything. This is the only place in
+      # the pipeline where a source exists, and until now it asserted the registry key and stopped
+      # there.
+      - name: 'Leg A: a notification digest arrives as event 155'
+        shell: pwsh
+        run: |
+          . .github/scripts/installer-smoke-helpers.ps1
+          $exe = Join-Path (Get-UninstallEntry -Scope machine).InstallLocation 'winlogrotate.exe'
+
+          $config = "$env:DATA_DIR\config.toml"
+          $saved  = Get-Content $config -Raw
+
+          # on = "every" because a first sighting is otherwise recorded as a baseline and nothing
+          # is sent. That is documented behaviour and the right behaviour - a fresh install must
+          # not page anybody about problems that predate it - but it would make one run prove
+          # nothing, and a second run means time arithmetic on a runner.
+          Add-Content -Path $config -Value @(
+            '',
+            '[notify]',
+            'to = ["eventlog:"]',
+            'on = "every"'
+          )
+
+          # A job whose paths match nothing and which does not say missingok. That is LR2002 at
+          # Error, carried on the job, which is above the default warning threshold - the smallest
+          # real failure that produces a digest rather than one manufactured for the occasion.
+          #
+          # The directory is created so that the only thing missing is the log. A missing directory
+          # would still reach the same diagnostic, but through a different path, and the point is
+          # to exercise the ordinary one.
+          New-Item -ItemType Directory -Force 'C:\smoke\absent' | Out-Null
+
+          Set-Content -Path "$env:DATA_DIR\conf.d\notify-smoke.toml" -Value @(
+            'schema = 1',
+            '[job]',
+            'name  = "notify-smoke"',
+            'kind  = "rotate"',
+            'paths = ["C:/smoke/absent/*.log"]'
+          )
+
+          $digests = {
+            @(Get-WinEvent -ErrorAction SilentlyContinue -FilterHashtable @{
+              LogName = 'Application'; ProviderName = 'WinLogRotate'; Id = 155
+            })
+          }
+
+          # The floor, and it tracks a quantity that moves. Asserting "a 155 exists" would be
+          # satisfied by one written at any point in this job's life; asserting that the count
+          # went up can only be satisfied by the run below.
+          $before = (& $digests).Count
+          "  event 155 count before: $before"
+
+          # No --json, deliberately. An invocation that passes it writes nothing to the Event Log
+          # at all - the caller is reading the output itself - so a --json run would prove the
+          # opposite of what this step is for.
+          & $exe run --job notify-smoke --verbose | Out-Host
+          $code = $LASTEXITCODE
+          if ($code -ne 1) { throw "the failing job should have exited 1; it exited $code" }
+
+          # The Event Log is written asynchronously, so this polls rather than checking once.
+          Wait-Until -TimeoutSeconds 30 -Because 'the eventlog: digest to appear as event 155' -Condition {
+            (& $digests).Count -gt $before
+          }
+
+          $latest = (& $digests)[0]
+          "  event $($latest.Id) $($latest.LevelDisplayName) from $($latest.ProviderName)"
+
+          # The digest for the job that failed, not merely an event with the right number on it.
+          if ($latest.Message -notmatch 'notify-smoke') {
+            throw "event 155 arrived without naming the job that failed: $($latest.Message)"
+          }
+
+          # Put the install back the way the rest of Leg A expects to find it.
+          Remove-Item "$env:DATA_DIR\conf.d\notify-smoke.toml" -Force
+          Set-Content -Path $config -Value $saved -NoNewline
+
+          # Stated, not inferred. The run above exits 1 on purpose and a real failure throws
+          # before reaching here.
+          exit 0
+
       # The gate exists so a second rotation is refused rather than running over the first, and it
       # could not do that: the descriptor granted Everyone Synchronize and Modify while
       # MutexAcl.Create asked for full control, so the second caller was refused BY the lock
