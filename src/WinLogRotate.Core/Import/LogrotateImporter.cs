@@ -34,18 +34,53 @@ public static class LogrotateImporter
 {
     public static IReadOnlyList<ImportedJob> Import(string text, string sourceName)
     {
-        return LogrotateParser.Parse(text)
-            .Select((stanza, index) => Convert(stanza, sourceName, index))
-            .ToArray();
+        var stanzas = LogrotateParser.Parse(text);
+        var names = UniqueNames(stanzas);
+
+        return [.. stanzas.Select((stanza, index) => Convert(stanza, sourceName, names[index]))];
     }
 
-    private static ImportedJob Convert(LogrotateStanza stanza, string sourceName, int index)
+    /// <summary>One name per stanza, and no two the same.</summary>
+    /// <remarks>
+    /// <para>
+    /// <see cref="SuggestName"/> reads the name out of the first pattern, so a logrotate file with
+    /// a block for <c>/var/log/nginx/access.log</c> and another for
+    /// <c>/var/log/nginx/error.log</c> called both of them "nginx" - which cost the operator
+    /// twice.
+    /// </para>
+    /// <para>
+    /// The file name is derived from the job name, so the second import <i>overwrote the first</i>
+    /// and one of the two jobs simply was not there. And had they landed in separate files,
+    /// <c>ConfigLoader</c> raises "A job called 'nginx' is already defined in ..." - an error with
+    /// no single job to blame, so <c>run</c> would have attempted nothing on the machine.
+    /// </para>
+    /// </remarks>
+    private static string[] UniqueNames(IReadOnlyList<LogrotateStanza> stanzas)
+    {
+        var taken = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        var names = new string[stanzas.Count];
+
+        for (var i = 0; i < stanzas.Count; i++)
+        {
+            var suggested = SuggestName(stanzas[i], i);
+            var name = suggested;
+
+            for (var n = 2; !taken.Add(name); n++)
+            {
+                name = $"{suggested}-{n}";
+            }
+
+            names[i] = name;
+        }
+
+        return names;
+    }
+
+    private static ImportedJob Convert(LogrotateStanza stanza, string sourceName, string name)
     {
         var warnings = new List<string>();
         var body = new StringBuilder();
         var needsReview = false;
-
-        var name = SuggestName(stanza, index);
 
         body.AppendLine("schema = 1");
         body.AppendLine();
@@ -59,6 +94,8 @@ public static class LogrotateImporter
         body.AppendLine("kind  = \"rotate\"");
 
         body.AppendLine("paths = [");
+        var pathsWritten = 0;
+
         foreach (var pattern in stanza.Patterns)
         {
             var windows = ToWindowsPath(pattern);
@@ -72,6 +109,22 @@ public static class LogrotateImporter
             }
 
             body.AppendLine(CultureInfo.InvariantCulture, $"    \"{windows}\",");
+            pathsWritten++;
+        }
+
+        if (pathsWritten == 0)
+        {
+            // A job with no paths does not bind - "Job 'x' lists no paths" - and until two commits
+            // ago a file that did not bind stopped every rotation on the machine. That is the
+            // ordinary outcome for a POSIX-only logrotate file, which is most of them: every
+            // pattern fails to translate, the TODOs above are all that is written, and paths = []
+            // is what the loader sees.
+            //
+            // So the TODOs get a placeholder to sit beside. The file loads, stays disabled, and
+            // says what to replace; and the path matches nothing if somebody enables it without
+            // reading, which is the safe direction to be wrong in.
+            body.AppendLine("    \"C:/replace-this/with-a-real-path/*.log\",");
+            needsReview = true;
         }
 
         body.AppendLine("]");

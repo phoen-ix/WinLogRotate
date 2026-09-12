@@ -106,6 +106,93 @@ public class LogrotateImporterTests
             """).Toml.ShouldContain("enabled = false");
 
     /// <summary>
+    /// Two blocks that suggest the same name get two names, and two loadable files.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// <c>SuggestName</c> reads the name out of the first pattern and walks back past generic
+    /// container directories, so <c>C:/nginx/logs/*.log</c> and <c>C:/nginx/log/*.log</c> both
+    /// came back "nginx". <c>ImportCommand</c> already de-duplicated the <i>file</i> names, so
+    /// two files were written - and both declared a job called nginx.
+    /// </para>
+    /// <para>
+    /// <c>ConfigLoader</c> then raises "A job called 'nginx' is already defined in nginx-2.toml",
+    /// an error with no single job to blame, so <c>run</c> exits 2 having attempted nothing on the
+    /// machine. Measured on the real CLI: before, <c>config check</c> exits 2 on the importer's
+    /// own output; after, it exits 0.
+    /// </para>
+    /// </remarks>
+    [Fact]
+    public void TwoBlocksThatSuggestOneNameGetTwo()
+    {
+        var jobs = LogrotateImporter.Import("""
+            C:/nginx/logs/*.log {
+                daily
+            }
+
+            C:/nginx/log/*.log {
+                weekly
+            }
+            """, "test.conf");
+
+        jobs.Count.ShouldBe(2);
+
+        // Both halves, because the file name is derived from the job name and a collision in
+        // either one costs a job: the second file overwrites the first, or the second job name
+        // stops the machine.
+        jobs.Select(j => JobName(j.Toml)).ShouldBeUnique();
+        jobs.Select(j => j.SuggestedFileName).ShouldBeUnique();
+
+        foreach (var job in jobs)
+        {
+            var bag = new DiagnosticBag();
+            ConfigBinder.BindJob(TomlFile.Parse(job.Toml, job.SuggestedFileName), bag);
+            bag.HasErrors.ShouldBeFalse(job.SuggestedFileName);
+        }
+    }
+
+    /// <summary>
+    /// A block whose every path is POSIX still imports to a file that loads.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// This is the ordinary outcome for a logrotate configuration taken off a Linux box, which is
+    /// the only kind there is: every pattern fails to translate, so the paths list held nothing
+    /// but TODO comments and the job bound to <c>paths = []</c>. <c>ConfigBinder</c> refuses that
+    /// - "Job 'nginx' lists no paths" - with no job to blame, so the whole machine stopped
+    /// rotating on the night after the migration.
+    /// </para>
+    /// <para>
+    /// Neither the duplicate-key fix nor the file-scoping fix reaches it: the file parses
+    /// perfectly, and the error comes from the binder rather than the parser.
+    /// </para>
+    /// </remarks>
+    [Fact]
+    public void APosixOnlyBlockStillImportsToAFileThatLoads()
+    {
+        var job = Import("""
+            /var/log/nginx/*.log {
+                daily
+                rotate 14
+            }
+            """);
+
+        job.NeedsReview.ShouldBeTrue("nothing about this was translated silently");
+        job.Toml.ShouldContain("/var/log/nginx/*.log", Case.Sensitive);
+        job.Toml.ShouldContain("enabled = false");
+
+        var bag = new DiagnosticBag();
+        var bound = ConfigBinder.BindJob(TomlFile.Parse(job.Toml, "imported.toml"), bag);
+
+        bag.HasErrors.ShouldBeFalse("a file import wrote has to be one the loader accepts");
+        bound.ShouldNotBeNull().Paths.ShouldNotBeEmpty();
+    }
+
+    private static string JobName(string toml) => toml
+        .Split(Environment.NewLine)
+        .First(l => l.StartsWith("name", StringComparison.Ordinal));
+
+    /// <summary>
     /// The stock shape of a logrotate configuration imports to TOML that parses.
     /// </summary>
     /// <remarks>
