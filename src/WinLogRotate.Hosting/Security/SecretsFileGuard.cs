@@ -118,8 +118,12 @@ public static class SecretsFileGuard
             security = new FileInfo(path).GetAccessControl();
         }
         catch (Exception e) when (e is UnauthorizedAccessException or PrivilegeNotHeldException
-            or System.Security.SecurityException)
+            or System.Security.SecurityException or IOException or NotSupportedException
+            or InvalidOperationException or ArgumentException)
         {
+            // IOException for a file replaced between Exists and the read - which is what the
+            // atomic save this product does looks like from another process - and the last three
+            // for a volume with no security at all. None of them is a fault in the store.
             // Being unable to read the descriptor is what a correctly protected file looks like
             // from an unelevated account, so this is reported as unknown rather than as a fault.
             return new SecretsAclFinding

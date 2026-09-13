@@ -53,7 +53,15 @@ internal static class AclJudgement
         // wearing a disguise - and on a file it is the grant that repairing the parent cannot
         // take away, because rewriting a directory's DACL changes neither a child's explicit
         // entries nor a child's owner.
-        if (subject.OwnerSid is { } owner && !trusted.Contains(owner))
+        if (subject.OwnerSid is not { } owner)
+        {
+            // No owner is not the same as a trusted owner. A descriptor whose owner the system
+            // would not name used to fall through this check and could come out Hardened; the
+            // guard is biased toward refusing, and this is the one fact it cannot do without.
+            return (AclVerdict.Unknown, [$"owner: {subject.OwnerDescribe}"]);
+        }
+
+        if (!trusted.Contains(owner))
         {
             return (AclVerdict.LooseOwner, [$"owner: {subject.OwnerDescribe}"]);
         }

@@ -304,8 +304,14 @@ public static class ConfDirGuard
                     AccessControlSections.Access | AccessControlSections.Owner);
         }
         catch (Exception e)
-            when (e is IOException or UnauthorizedAccessException or PrivilegeNotHeldException)
+            when (e is IOException or UnauthorizedAccessException or PrivilegeNotHeldException
+                  or System.Security.SecurityException or NotSupportedException
+                  or InvalidOperationException or ArgumentException)
         {
+            // The last four are what FileSystemSecurity throws for a volume that has no security
+            // at all (FAT, exFAT - a portable copy on a stick), a path that stopped resolving
+            // mid-read, and a descriptor it cannot make sense of. Each escaped this filter as exit
+            // 4 from the top of every run.
             return null;
         }
 
@@ -359,17 +365,13 @@ public static class ConfDirGuard
                            + "and that is only safe from a directory an ordinary account cannot write.",
             };
 
-    private static string Describe(IdentityReference identity)
-    {
-        try
-        {
-            return $"{identity.Translate(typeof(NTAccount))} ({identity.Value})";
-        }
-        catch (IdentityNotMappedException)
-        {
-            // An orphaned SID from a deleted account or a departed domain. The raw value is
-            // still the useful thing to print.
-            return identity.Value;
-        }
-    }
+    /// <summary>The account name and SID, or the SID alone where the name cannot be had.</summary>
+    /// <remarks>
+    /// The lookup is a directory round trip, and the catch used to name only the failure for an
+    /// orphaned SID. <c>Translate</c> also throws its base <c>SystemException</c> when the LSA
+    /// lookup itself fails - a domain controller that cannot be reached - and that escaped the
+    /// gate, the override check and <c>doctor</c> as exit 4, every night the outage lasted.
+    /// </remarks>
+    private static string Describe(IdentityReference identity) =>
+        ConfigSurfaceGuard.NameOf(identity.Value, () => identity.Translate(typeof(NTAccount)).ToString());
 }

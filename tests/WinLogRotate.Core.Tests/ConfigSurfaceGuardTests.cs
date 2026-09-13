@@ -126,6 +126,41 @@ public sealed class ConfigSurfaceGuardTests
             "outermost first, then exactly the files that were loaded");
     }
 
+    /// <summary>A descriptor whose owner could not be read refuses, rather than passing.</summary>
+    [Fact]
+    public void AnUnreadableOwnerRefusesTheRun()
+    {
+        var subject = Clean(@"C:\pd\conf.d") with { OwnerSid = null, OwnerDescribe = "an owner the system would not name" };
+
+        var finding = Verify(Reading((@"C:\pd\conf.d", subject)), (@"C:\pd\conf.d", true));
+
+        finding.Verdict.ShouldBe(AclVerdict.Unknown);
+        finding.HooksAllowed.ShouldBeFalse();
+        finding.Explanation.ShouldNotBeNull().ShouldContain("owner");
+    }
+
+    /// <summary>
+    /// A name lookup that fails names the SID instead of failing the run.
+    /// </summary>
+    /// <remarks>
+    /// <c>IdentityReference.Translate</c> throws <c>IdentityNotMappedException</c> for an orphaned
+    /// SID and its base <c>SystemException</c> when the lookup itself fails - a domain controller
+    /// that cannot be reached. Only the first was caught, so a DC outage at 03:00 threw out of the
+    /// gate, the override check and <c>doctor</c>, every night it lasted.
+    /// </remarks>
+    [Fact]
+    public void ANameLookupThatFailsNamesTheSidInstead()
+    {
+        // SystemException is the base of both failures - the orphaned SID's IdentityNotMapped and
+        // the lookup's own - so one throw stands for both; the Windows-only subclass cannot be
+        // named on this leg.
+        ConfigSurfaceGuard.NameOf(Administrators, () => throw new SystemException("The trust relationship failed."))
+            .ShouldBe(Administrators);
+
+        ConfigSurfaceGuard.NameOf(Administrators, () => "BUILTIN\\Administrators")
+            .ShouldBe($"BUILTIN\\Administrators ({Administrators})");
+    }
+
     /// <summary>An owner who is not an administrator is a write grant wearing a disguise.</summary>
     [Fact]
     public void ANonAdministratorOwnerRefusesTheRun()

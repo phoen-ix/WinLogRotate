@@ -205,8 +205,41 @@ internal static class ConfigSurfaceGuard
                 FixCommand = FixCommand(path),
             },
 
+            AclVerdict.Unknown => new AclFinding
+            {
+                Verdict = verdict,
+                Path = path,
+                OffendingAces = offending,
+                Explanation =
+                    $"The owner of '{path}' could not be read, so whether a non-administrator " +
+                    "controls it is not established. Hooks are refused for the whole run.",
+                FixCommand = FixCommand(path),
+            },
+
             _ => new AclFinding { Verdict = verdict, Path = path, OffendingAces = offending },
         };
+    }
+
+    /// <summary>
+    /// How an identity is named to an operator: the account and the SID, or the SID alone.
+    /// </summary>
+    /// <param name="translate">
+    /// The directory lookup, which is Windows-only and can fail. <c>IdentityNotMappedException</c>
+    /// is an orphaned SID from a deleted account or a departed domain; any other
+    /// <c>SystemException</c> is the lookup itself failing, which is what a domain controller
+    /// that cannot be reached looks like. Neither is a reason not to judge the descriptor - the
+    /// SID is what the judgement reads, and the raw value is still the useful thing to print.
+    /// </param>
+    internal static string NameOf(string sid, Func<string> translate)
+    {
+        try
+        {
+            return $"{translate()} ({sid})";
+        }
+        catch (SystemException)
+        {
+            return sid;
+        }
     }
 
     private static string FixCommand(string path) =>
