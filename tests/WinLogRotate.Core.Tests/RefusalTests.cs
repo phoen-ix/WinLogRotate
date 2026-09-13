@@ -68,7 +68,7 @@ public sealed partial class RefusalTests
     [InlineData("host status")]
     [InlineData("host repair")]
     [InlineData("host use")]
-    [InlineData("host path")]
+    [InlineData("host path-add")]
     public void AVerbThatNeedsWindowsSaysSo(string verb)
     {
         Assert.SkipWhen(OperatingSystem.IsWindows(), "these verbs do not refuse on Windows.");

@@ -317,6 +317,12 @@ jobs:
           # entry when this is read back, and the last entry would look like it went missing.
           Set-Content machine-path-before.txt -Value $pathBefore -NoNewline
 
+          # And the value as the registry stores it - unexpanded, with its type. The expanded
+          # text above cannot tell a REG_EXPAND_SZ from the REG_SZ the edit used to leave behind.
+          $stored = Get-RegistryPath -Scope Machine
+          Set-Content machine-path-raw-before.txt -Value $stored.Value -NoNewline
+          Set-Content machine-path-kind-before.txt -Value $stored.Kind -NoNewline
+
           # The installer's own refusals, asserted before its successes. winlogrotate.nsi sets
           # SetErrorLevel 2 for an unusable /HOST= and quits without installing anything, and
           # nothing in this pipeline has ever read that number - every Start-Process here ran
@@ -387,7 +393,9 @@ jobs:
           }
           $entry = Get-UninstallEntry -Scope machine
           Assert-PathEntry -Scope Machine -Contains $entry.InstallLocation `
-                           -PreservedPrefix (Get-Content machine-path-before.txt -Raw)
+                           -PreservedPrefix (Get-Content machine-path-before.txt -Raw) `
+                           -PreservedRaw (Get-Content machine-path-raw-before.txt -Raw) `
+                           -PreservedKind (Get-Content machine-path-kind-before.txt -Raw)
 
       # The installer treats a failed host registration as non-fatal and reports it through
       # DetailPrint, which is invisible under /S - so a silent install can report success with
@@ -1247,7 +1255,9 @@ jobs:
           # Control, and those stay theirs to rewrite until the repair reaches them.
           Assert-JobFileAcl -DataDir $env:DATA_DIR
           Assert-TaskHardening -TaskPath $env:TASK_PATH -TaskName $env:TASK_NAME -ExpectSystem
-          Assert-PathEntry -Scope Machine -Contains $entry.InstallLocation
+          Assert-PathEntry -Scope Machine -Contains $entry.InstallLocation `
+                           -PreservedRaw (Get-Content machine-path-raw-before.txt -Raw) `
+                           -PreservedKind (Get-Content machine-path-kind-before.txt -Raw)
 
       # ---- Leg C: uninstall keeps the customer's data -------------------------------------
       - name: 'Leg C: silent uninstall keeps configuration and history'
@@ -1267,7 +1277,9 @@ jobs:
             throw 'The Event Log source survived the uninstall.'
           }
           Assert-PathEntry -Scope Machine -NotContains $install `
-                           -PreservedPrefix (Get-Content machine-path-before.txt -Raw)
+                           -PreservedPrefix (Get-Content machine-path-before.txt -Raw) `
+                           -PreservedRaw (Get-Content machine-path-raw-before.txt -Raw) `
+                           -PreservedKind (Get-Content machine-path-kind-before.txt -Raw)
 
           # The point of this leg. A silent uninstall is what an in-place upgrade runs, so
           # deleting the customer's jobs here would be catastrophic and silent.
@@ -1307,6 +1319,7 @@ jobs:
         run: |
           . .github/scripts/installer-smoke-helpers.ps1
           $machineBefore = [Environment]::GetEnvironmentVariable('PATH', 'Machine')
+          $userStoredBefore = Get-RegistryPath -Scope User
 
           $setup = Start-Process -FilePath (Resolve-Path setup.exe) -PassThru -Wait `
             -ArgumentList '/S','/CurrentUser','/HOST=none','/NORUNTIME'
@@ -1327,11 +1340,18 @@ jobs:
             throw 'A per-user install modified the machine PATH.'
           }
 
+          # The user PATH is the one it edits, and it edits it the same careful way: the entry
+          # is there once, and whatever was stored before is stored the same way after.
+          Assert-PathEntry -Scope User -Contains $entry.InstallLocation `
+                           -PreservedRaw $userStoredBefore.Value -PreservedKind $userStoredBefore.Kind
+
           Start-Process -FilePath (Join-Path $entry.InstallLocation 'uninstall.exe') -ArgumentList '/S','/PURGEDATA'
           Wait-Removed -Scope user -Directory $entry.InstallLocation
           if ([Environment]::GetEnvironmentVariable('PATH', 'Machine') -ne $machineBefore) {
             throw 'A per-user uninstall modified the machine PATH.'
           }
+          Assert-PathEntry -Scope User -NotContains $entry.InstallLocation `
+                           -PreservedRaw $userStoredBefore.Value -PreservedKind $userStoredBefore.Kind
           '  per-user install left the machine untouched'
 
   # The only check in this pipeline that runs the installer smoke job's PowerShell without a

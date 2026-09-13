@@ -252,6 +252,9 @@ internal static class HostCommand
         return ctx.Output.Complete("host repair", ExitCode.Ok, Describe(RunHostKind.None, paths));
     }
 
+    /// <summary>What decides whether this process is elevated. A seam for the tests.</summary>
+    private static readonly Func<bool> Elevated = Privilege.IsElevated;
+
     /// <summary>
     /// Adds or removes the install directory on PATH.
     /// </summary>
@@ -260,11 +263,20 @@ internal static class HostCommand
     /// with NSIS_MAX_STRLEN=1024, and its ReadRegStr silently truncates a longer PATH. Writing
     /// that truncated value back destroys the machine PATH for every program on the system.
     /// </remarks>
-    public static int Path(CommandContext ctx, bool add, bool machine)
+    public static int Path(CommandContext ctx, bool add, bool machine) =>
+        Path(ctx, add, machine, elevated: null);
+
+    /// <summary>The same, with the elevation question answerable by a test.</summary>
+    internal static int Path(CommandContext ctx, bool add, bool machine, Func<bool>? elevated)
     {
+        // Spelled as the command tree spells them. Both used to report "host path", which is not
+        // a verb: a script matching on the envelope, or an operator following a remedy that
+        // named it, found nothing by that name.
+        var verb = add ? "host path-add" : "host path-remove";
+
         if (!OperatingSystem.IsWindows())
         {
-            return NotOnWindows(ctx, "host path");
+            return NotOnWindows(ctx, verb);
         }
 
         var directory = System.IO.Path.GetDirectoryName(Environment.ProcessPath);
@@ -282,42 +294,59 @@ internal static class HostCommand
                 Remedy = "This is a defect. Please report it, with where winlogrotate.exe is installed.",
             });
 
-            return ctx.Output.Complete<PathResult>("host path", ExitCode.Errors, null);
+            return ctx.Output.Complete<PathResult>(verb, ExitCode.Errors, null);
         }
 
         // Scope follows the INSTALL, not the token. Deciding from elevation alone means a
         // per-user install performed by an administrator - which is most of them, and every one
         // on a CI runner - silently edits the machine PATH for everybody. The installer knows
         // which kind of install it is doing and says so; elevation only gates whether the
-        // machine PATH can be written at all.
-        var target = machine && Privilege.IsElevated()
-            ? EnvironmentVariableTarget.Machine
-            : EnvironmentVariableTarget.User;
-
-        var current = Environment.GetEnvironmentVariable("PATH", target) ?? string.Empty;
-        var parts = current.Split(';', StringSplitOptions.RemoveEmptyEntries).ToList();
-
-        var already = parts.Any(p =>
-            string.Equals(p.TrimEnd('\\'), directory.TrimEnd('\\'), StringComparison.OrdinalIgnoreCase));
-
-        if (add && !already)
+        // machine PATH can be written at all. An unelevated --machine is refused, not quietly
+        // redirected at this user's PATH with exit 0, which is what it used to do: the caller
+        // was told the machine PATH had been edited when it had not been touched.
+        if (machine && !(elevated ?? Elevated)())
         {
-            parts.Add(directory);
+            ctx.Output.Diagnostic(new CliDiagnostic
+            {
+                Severity = Severity.Error,
+                Code = DiagnosticCode.NeedsAdministrator,
+                Message = "Editing the machine PATH needs administrator rights.",
+                Remedy = "Run this from an elevated prompt, or leave out --machine to edit this user's PATH.",
+            });
+
+            return ctx.Output.Complete<PathResult>(verb, ExitCode.Errors, null);
         }
-        else if (!add)
+
+        var target = machine ? EnvironmentVariableTarget.Machine : EnvironmentVariableTarget.User;
+
+        // Through the registry, not Environment.GetEnvironmentVariable: that pair expands every
+        // %VAR% on the way out and writes REG_SZ on the way back, so the stock REG_EXPAND_SZ
+        // machine PATH left every default install as hard-coded text. PathEnvironment says why.
+        RegistryText current;
+        try
         {
-            // Remove every occurrence: a repeated install could otherwise leave duplicates that
-            // an uninstall only half-cleans.
-            parts.RemoveAll(p =>
-                string.Equals(p.TrimEnd('\\'), directory.TrimEnd('\\'), StringComparison.OrdinalIgnoreCase));
+            current = PathEnvironment.Read(target);
         }
-        else
+        catch (Exception e) when (IsRefusal(e))
         {
-            ctx.Output.Line("Already on PATH.");
+            return Untouched(ctx, verb, target, $"could not be read: {e.GetType().Name}: {e.Message}");
+        }
+
+        if (!current.IsText)
+        {
+            return Untouched(ctx, verb, target,
+                $"is stored as {current.Kind} rather than as text, which something else must have done");
+        }
+
+        var (edited, changed) = PathEdit.Apply(current.Value, directory, add);
+
+        if (!changed)
+        {
+            ctx.Output.Line(add ? "Already on PATH." : "Not on PATH.");
 
             // Three outcomes, one null payload. A caller could not tell "added" from "removed"
             // from "it was already there", and the lines that say so are a no-op under --json.
-            return ctx.Output.Complete("host path", ExitCode.Ok, new PathResult
+            return ctx.Output.Complete(verb, ExitCode.Ok, new PathResult
             {
                 Directory = directory,
                 Scope = target.ToString(),
@@ -325,17 +354,44 @@ internal static class HostCommand
             });
         }
 
-        Environment.SetEnvironmentVariable("PATH", string.Join(';', parts), target);
+        try
+        {
+            PathEnvironment.Write(target, current with { Value = edited });
+        }
+        catch (Exception e) when (IsRefusal(e))
+        {
+            return Untouched(ctx, verb, target, $"could not be written: {e.GetType().Name}: {e.Message}");
+        }
+
         ctx.Output.Line(add
             ? $"Added {directory} to the {target} PATH."
             : $"Removed {directory} from the {target} PATH.");
 
-        return ctx.Output.Complete("host path", ExitCode.Ok, new PathResult
+        return ctx.Output.Complete(verb, ExitCode.Ok, new PathResult
         {
             Directory = directory,
             Scope = target.ToString(),
             Action = add ? "added" : "removed",
         });
+    }
+
+    /// <summary>The ways a registry value refuses an account, none of them a defect.</summary>
+    private static bool IsRefusal(Exception e) =>
+        e is IOException or UnauthorizedAccessException or System.Security.SecurityException;
+
+    /// <summary>The PATH was not edited, and the value is exactly as it was found.</summary>
+    private static int Untouched(CommandContext ctx, string verb, EnvironmentVariableTarget target, string because)
+    {
+        ctx.Output.Diagnostic(new CliDiagnostic
+        {
+            Severity = Severity.Error,
+            Code = DiagnosticCode.PathUnwritable,
+            Message = $"The {target} PATH {because}; it was left as it was.",
+            Remedy = "Add or remove the install directory by hand under System Properties > "
+                   + "Environment Variables, or run this again once the value can be edited.",
+        });
+
+        return ctx.Output.Complete<PathResult>(verb, ExitCode.Errors, null);
     }
 
     private static HostResult Describe(RunHostKind kind, InstallPaths paths) => new()

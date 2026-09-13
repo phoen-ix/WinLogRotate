@@ -114,7 +114,7 @@ public sealed class NullPayloadTests : IDisposable
             Schema = 1,
             Product = "WinLogRotate",
             Version = "0.0.0",
-            Verb = "host path",
+            Verb = "host path-add",
             Ok = true,
             ExitCode = ExitCode.Ok,
             Result = new PathResult

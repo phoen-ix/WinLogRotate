@@ -199,6 +199,36 @@ function Assert-JobFileAcl {
     }
 }
 
+function Get-RegistryPath {
+    <#
+        .SYNOPSIS
+        The Path value as the registry holds it: the unexpanded text and its value type.
+
+        .DESCRIPTION
+        [Environment]::GetEnvironmentVariable expands every %VAR% on the way out, so it cannot
+        tell a REG_EXPAND_SZ holding %SystemRoot%\system32 from a REG_SZ holding
+        C:\Windows\system32 - and turning the first into the second is exactly the damage
+        `host path-add --machine` used to do. This reads what is actually stored.
+    #>
+    param(
+        [Parameter(Mandatory)][ValidateSet('Machine', 'User')][string] $Scope
+    )
+
+    $key = if ($Scope -eq 'Machine') {
+        'HKLM:\SYSTEM\CurrentControlSet\Control\Session Manager\Environment'
+    } else {
+        'HKCU:\Environment'
+    }
+
+    $item = Get-Item -Path $key
+    $kind = if ($item.GetValueNames() -contains 'Path') { [string] $item.GetValueKind('Path') } else { '' }
+
+    [pscustomobject]@{
+        Value = [string] $item.GetValue('Path', '', 'DoNotExpandEnvironmentNames')
+        Kind  = $kind
+    }
+}
+
 function Assert-PathEntry {
     <#
         .SYNOPSIS
@@ -214,7 +244,9 @@ function Assert-PathEntry {
         [Parameter(Mandatory)][ValidateSet('Machine', 'User')][string] $Scope,
         [string] $Contains,
         [string] $NotContains,
-        [string] $PreservedPrefix
+        [string] $PreservedPrefix,
+        [string] $PreservedRaw,
+        [string] $PreservedKind
     )
 
     $path = [Environment]::GetEnvironmentVariable('PATH', $Scope)
@@ -248,6 +280,31 @@ function Assert-PathEntry {
             if ($parts -notcontains $entry) {
                 throw "The $Scope PATH lost a pre-existing entry: '$entry'. " +
                       "That is the NSIS_MAX_STRLEN truncation bug."
+            }
+        }
+    }
+
+    if ($PreservedRaw -or $PreservedKind) {
+        # The stored value, not the expanded one. The edit used to go through
+        # [Environment]::SetEnvironmentVariable, which writes REG_SZ with every %VAR% already
+        # expanded; the expanded comparison above is blind to both, so this one reads the registry.
+        $stored = Get-RegistryPath -Scope $Scope
+
+        if ($PreservedKind) {
+            $expectedKind = $PreservedKind.TrimEnd("`r", "`n")
+            if ($stored.Kind -ne $expectedKind) {
+                throw "The $Scope PATH is stored as '$($stored.Kind)' now; it was '$expectedKind'. " +
+                      "The edit rewrote the value's type."
+            }
+        }
+
+        if ($PreservedRaw) {
+            $rawParts = @($stored.Value -split ';' | Where-Object { $_ })
+            foreach ($entry in @($PreservedRaw.TrimEnd("`r", "`n") -split ';' | Where-Object { $_ })) {
+                if ($rawParts -notcontains $entry) {
+                    throw "The $Scope PATH no longer holds '$entry' as it was stored. " +
+                          "An entry was expanded or rewritten by the edit."
+                }
             }
         }
     }

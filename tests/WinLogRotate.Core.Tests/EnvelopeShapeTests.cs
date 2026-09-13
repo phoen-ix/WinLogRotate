@@ -355,7 +355,7 @@ public sealed class EnvelopeShapeTests
     [Fact]
     public void HostPathKeepsItsShape() =>
         ShouldMatchSnapshot(
-            Envelope("host path", new PathResult
+            Envelope("host path-add", new PathResult
             {
                 Directory = @"C:\Program Files\WinLogRotate",
                 Scope = "Machine",

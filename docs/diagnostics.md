@@ -144,6 +144,7 @@ mean the same thing wherever it is read.
 | 141 | Warning | The run host this install was set up with is no longer registered | `LR4002` |
 | 142 | Error | Registering the run host failed | `LR4003` |
 | 143 | Warning | The release feed could not be reached; no update check was made | `LR4004` |
+| 144 | Error | The PATH could not be edited; it was left as it was | `LR4005` |
 | 150 | Warning | A notification target is unparseable or missing its credential | `LR5001` |
 | 151 | Warning | A notification channel could not be reached | `LR5002` |
 | 152 | Warning | A notification channel is suppressed after repeated failures | `LR5003` |

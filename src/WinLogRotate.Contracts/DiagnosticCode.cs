@@ -222,6 +222,19 @@ public static class DiagnosticCode
     /// </remarks>
     public const string UpdateCheckFailed = "LR4004";
 
+    /// <summary>
+    /// The machine or user PATH could not be edited, and was left exactly as it was found.
+    /// </summary>
+    /// <remarks>
+    /// Its own code because none of the neighbours means this. It is not a configuration file
+    /// (<see cref="ConfigUnwritable"/>), not the run host (<see cref="HostRegistrationFailed"/>),
+    /// and not a defect (<see cref="InternalError"/>): a policy that locks an account's
+    /// environment, or a value some other program has rewritten as a type that is not text, is
+    /// the machine refusing correctly. Error, because the installer relies on this verb and a
+    /// PATH it did not manage to edit is worth a line in the log it keeps.
+    /// </remarks>
+    public const string PathUnwritable = "LR4005";
+
     // 5xxx - notification delivery.
     //
     // Deliberately its own band rather than sharing 3xxx: a webhook that could not be reached is
