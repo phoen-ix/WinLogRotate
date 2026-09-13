@@ -80,6 +80,13 @@ public sealed class JournalWriter : IJournal
     }
 
     /// <summary>
+    /// A journal over a writer the caller supplies, for a test that needs the stream to fail on
+    /// demand - which no temp directory can be made to do.
+    /// </summary>
+    internal static JournalWriter Over(StreamWriter writer, TimeProvider clock, string path = "journal-test.ndjson") =>
+        new(writer, path, Journaling.RunId.New(clock), clock);
+
+    /// <summary>
     /// The first failure to write, if there was one. Latched, so the rest of the run is quiet.
     /// </summary>
     /// <remarks>
@@ -158,7 +165,19 @@ public sealed class JournalWriter : IJournal
                 _fault ??= e;
             }
 
-            _writer.Dispose();
+            try
+            {
+                _writer.Dispose();
+            }
+            catch (Exception e) when (e is IOException or ObjectDisposedException)
+            {
+                // The same failure again: StreamWriter.Dispose flushes once more before it closes
+                // the stream, and a disk that refused the flush above refuses this one. It sat
+                // outside the try, so the guard above guarded half of the exit and a full disk at
+                // the end of a run still reported itself as a defect. The stream is closed either
+                // way - StreamWriter closes it in a finally of its own.
+                _fault ??= e;
+            }
         }
     }
 }

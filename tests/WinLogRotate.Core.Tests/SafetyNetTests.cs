@@ -229,12 +229,16 @@ public sealed class SafetyNetTests : IDisposable
         var sink = new Cli.Output.JsonOutputSink(verbose: false, stream: true, written);
 
         sink.Complete("run", ExitCode.Ok, new Cli.Output.EmptyResult());
-        sink.Complete<Cli.Output.EmptyResult>("run", ExitCode.InternalError, null);
+        var second = sink.Complete<Cli.Output.EmptyResult>("run", ExitCode.InternalError, null);
 
         written.ToString()
             .Split('\n', StringSplitOptions.RemoveEmptyEntries)
             .Count(l => JsonDocument.Parse(l).RootElement.TryGetProperty("schema", out _))
             .ShouldBe(1, "the first answer stands; a second would overwrite it in the reader");
+
+        // And the process exits with the code the envelope carries. It used to return the second
+        // caller's, so the file said 0 and the process said 4.
+        second.ShouldBe(ExitCode.Ok, "the envelope is the contract, and the exit code repeats it");
     }
 
     /// <summary>

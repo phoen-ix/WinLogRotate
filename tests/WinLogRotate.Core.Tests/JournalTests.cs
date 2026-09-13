@@ -75,6 +75,33 @@ public sealed class JournalTests : IDisposable
         writer.Fault.ShouldBeSameAs(first);
     }
 
+    /// <summary>
+    /// A stream that fails on the way out is remembered, not thrown from Dispose.
+    /// </summary>
+    /// <remarks>
+    /// <c>Dispose</c> guarded its own flush and then called <c>StreamWriter.Dispose</c> outside the
+    /// guard - which flushes again, and a disk that refused the first flush refuses the second. So
+    /// a disk that filled at the very end of a run threw out of the verb's <c>using</c>, after the
+    /// envelope had said exit 0, and the guard reported a defect in the product about a full disk.
+    /// The stream here refuses every flush, the way a full disk does.
+    /// </remarks>
+    [Fact]
+    public void AStreamThatFailsOnTheWayOutIsRememberedNotThrown()
+    {
+        var writer = JournalWriter.Over(new StreamWriter(new FullDisk()), _clock);
+
+        Should.NotThrow(() => writer.Write(Deletion(@"C:\logs\a.log.gz", "reason")));
+        Should.NotThrow(writer.Dispose);
+
+        writer.Fault.ShouldNotBeNull().Message.ShouldContain("no space", Case.Insensitive);
+    }
+
+    /// <summary>A stream that accepts bytes and refuses to flush them, as a full disk does.</summary>
+    private sealed class FullDisk : MemoryStream
+    {
+        public override void Flush() => throw new IOException("There is no space left on the device.");
+    }
+
     /// <summary>Disposing twice does not throw, which is when it would do the most damage.</summary>
     /// <remarks>
     /// Dispose runs after the verb has decided its exit code and written its envelope, so a throw

@@ -46,6 +46,17 @@ internal sealed class JsonOutputSink(bool verbose, bool stream, TextWriter? stre
     /// </remarks>
     private bool _closed;
 
+    /// <summary>
+    /// The exit code the envelope carries, which is the process's answer from then on.
+    /// </summary>
+    /// <remarks>
+    /// <see cref="Complete{T}"/> used to return whatever its second caller passed, and the second
+    /// caller is the guard reporting an exception thrown while the verb's disposals unwound - so
+    /// a run whose envelope said <c>exitCode: 0</c> exited 4. The envelope is the contract
+    /// docs/automation.md publishes; the process exit code repeats it, and cannot disagree with it.
+    /// </remarks>
+    private int _exitCode;
+
     public bool Verbose { get; } = verbose;
 
     public IReadOnlyList<CliDiagnostic> Diagnostics => _diagnostics.Items;
@@ -71,7 +82,7 @@ internal sealed class JsonOutputSink(bool verbose, bool stream, TextWriter? stre
     {
         if (_closed)
         {
-            return exitCode;
+            return _exitCode;
         }
 
         var envelope = new CliEnvelope<T>
@@ -118,6 +129,7 @@ internal sealed class JsonOutputSink(bool verbose, bool stream, TextWriter? stre
             // program waiting to read it - and a half-written envelope that nobody can open is
             // strictly worse than a half-written one they can.
             _closed = true;
+            _exitCode = exitCode;
             _owned?.Dispose();
         }
 
