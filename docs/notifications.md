@@ -122,10 +122,14 @@ flat JSON object instead.
 | Key | Default | Notes |
 |---|---|---|
 | `url` | — | required; use `@secret:NAME` |
-| `method` | `POST` | |
-| `content_type` | `application/json` | decides the escaping: JSON, form, XML, or none |
+| `method` | `POST` | one word: `POST`, `PUT`, `PATCH` |
+| `content_type` | `application/json` | `type/subtype`; decides the escaping: JSON, form, XML, or none |
 | `body` | unset | unset means a flat JSON object of every field |
 | `max_message` | unlimited | see below |
+
+A `method` that is not an HTTP method, or a `content_type` that is not a media type (`json` on its
+own, say), is reported on its line with `LR5001` and the default is used in its place, so the alert
+still goes while you fix the key.
 
 **`max_message` matters for Discord and ntfy**, which discard anything longer *silently* - so an
 unset limit does not fail loudly, the message simply never arrives. Discord accepts 2000

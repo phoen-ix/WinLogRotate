@@ -41,7 +41,7 @@ internal sealed class Senders : IDisposable
     {
         var userAgent = $"{ProductInfo.Name}/{ProductInfo.Version}";
 
-        var http = new HttpNotifySender(settings, userAgent);
+        var http = new HttpNotifySender(settings, userAgent, TimeProvider.System);
         var pushover = new PushoverNotifySender(settings, userAgent);
 
         var map = new Dictionary<HookScheme, INotifySender>

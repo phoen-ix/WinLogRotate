@@ -211,6 +211,32 @@ public sealed class NotifySenderTests : IDisposable
             .RootElement.GetProperty("job").GetString().ShouldBe("configuration");
     }
 
+    // ---- retry-after ---------------------------------------------------------------------------
+
+    /// <summary>
+    /// A date-form <c>Retry-After</c> is measured against the injected clock, and never negative.
+    /// </summary>
+    /// <remarks>
+    /// It was measured against <c>DateTimeOffset.UtcNow</c> - the one clock in the notification
+    /// phase nothing could fake - and passed through as it came. A date already behind the clock
+    /// produced a negative wait, <c>Thread.Sleep</c> refuses anything below -1 ms, and the run died
+    /// with exit 4 over a header.
+    /// </remarks>
+    [Fact]
+    public void ARetryAfterDateIsMeasuredAgainstTheInjectedClockAndClampedAtZero()
+    {
+        var clock = new Microsoft.Extensions.Time.Testing.FakeTimeProvider(Start);
+
+        using var later = new System.Net.Http.HttpResponseMessage(System.Net.HttpStatusCode.TooManyRequests);
+        later.Headers.RetryAfter = new System.Net.Http.Headers.RetryConditionHeaderValue(Start.AddSeconds(30));
+
+        using var earlier = new System.Net.Http.HttpResponseMessage(System.Net.HttpStatusCode.TooManyRequests);
+        earlier.Headers.RetryAfter = new System.Net.Http.Headers.RetryConditionHeaderValue(Start.AddSeconds(-30));
+
+        HttpNotifySender.RetryAfter(later, clock).ShouldBe(TimeSpan.FromSeconds(30));
+        HttpNotifySender.RetryAfter(earlier, clock).ShouldBe(TimeSpan.Zero);
+    }
+
     // ---- TLS pinning -------------------------------------------------------------------------
 
     private static X509Certificate2 SelfSigned(string name)

@@ -275,12 +275,91 @@ public static class ConfigBinder
             _ => provider with
             {
                 Url = Secret(table, "url", file, d),
-                Method = GetString(table, "method", file, d) ?? "POST",
-                ContentType = GetString(table, "content_type", file, d) ?? "application/json",
+                Method = HttpMethodOrDefault(table, file, d),
+                ContentType = MediaTypeOrDefault(table, file, d),
                 Body = GetString(table, "body", file, d),
                 MaxMessage = GetInt(table, "max_message", file, d),
             },
         };
+    }
+
+    /// <summary>
+    /// The webhook's <c>method</c>, or POST with a warning when what was written is not one.
+    /// </summary>
+    /// <remarks>
+    /// <c>HttpMethod</c> throws <c>FormatException</c> for anything that is not an HTTP token, and
+    /// the sender constructed it before its <c>try</c> - so a stray space in the configuration was
+    /// exit 4, nightly. Judged here, where the line is known, and a warning rather than an error
+    /// because a mistyped webhook must not stop a rotation; the default stands in so the alert
+    /// still goes while the operator fixes the key.
+    /// </remarks>
+    private static string HttpMethodOrDefault(TableSyntaxBase table, string file, DiagnosticBag d)
+    {
+        var written = GetString(table, "method", file, d);
+        if (written is null)
+        {
+            return "POST";
+        }
+
+        var method = written.Trim();
+        if (method.Length > 0 && method.All(IsHttpTokenChar))
+        {
+            return method;
+        }
+
+        var at = ValueOf(table, "method");
+        d.Warn(file, DiagnosticCode.NotifyMisconfigured,
+            $"'{written}' is not an HTTP method, so method = \"POST\" is used.",
+            LineOf(at), ColumnOf(at),
+            remedy: "Write the method as a single word: POST, PUT or PATCH.");
+
+        return "POST";
+    }
+
+    /// <summary>
+    /// The webhook's <c>content_type</c>, or <c>application/json</c> with a warning when what was
+    /// written is not a media type.
+    /// </summary>
+    /// <remarks>
+    /// The same defect as <see cref="HttpMethodOrDefault"/> one line down: <c>StringContent</c>
+    /// throws on a media type without a slash, and <c>json</c> is the obvious thing to write. Only
+    /// the <c>type/subtype</c> is checked - the sender drops any parameters and sets the charset
+    /// itself, so they can neither help nor hurt.
+    /// </remarks>
+    private static string MediaTypeOrDefault(TableSyntaxBase table, string file, DiagnosticBag d)
+    {
+        var written = GetString(table, "content_type", file, d);
+        if (written is null)
+        {
+            return "application/json";
+        }
+
+        var mediaType = written.Trim();
+        var halves = mediaType.Split(';')[0].Trim().Split('/');
+
+        if (halves.Length == 2 && halves.All(half => half.Length > 0 && half.All(IsHttpTokenChar)))
+        {
+            return mediaType;
+        }
+
+        var at = ValueOf(table, "content_type");
+        d.Warn(file, DiagnosticCode.NotifyMisconfigured,
+            $"'{written}' is not a media type, so content_type = \"application/json\" is used.",
+            LineOf(at), ColumnOf(at),
+            remedy: "Write it as type/subtype: application/json, application/x-www-form-urlencoded, text/plain.");
+
+        return "application/json";
+    }
+
+    /// <summary>RFC 9110 <c>tchar</c>: what an HTTP method, or either half of a media type, is made of.</summary>
+    private static bool IsHttpTokenChar(char c) =>
+        char.IsAsciiLetterOrDigit(c) || "!#$%&'*+-.^_`|~".Contains(c, StringComparison.Ordinal);
+
+    /// <summary>The node a diagnostic about a key's value should point at: the value, or the key when it has none.</summary>
+    private static SyntaxNode ValueOf(TableSyntaxBase table, string key)
+    {
+        var kv = Find(table, key)!;
+        return (SyntaxNode?)kv.Value ?? kv;
     }
 
     /// <summary>

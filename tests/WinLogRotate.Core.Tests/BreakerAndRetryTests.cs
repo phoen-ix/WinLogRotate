@@ -79,6 +79,17 @@ public sealed class RetryScheduleTests
     }
 
     [Fact]
+    public void ARetryAfterInThePastMeansRetryNowNotAnException()
+    {
+        // A Retry-After date is a moment, and by the time it is compared with the clock it can be
+        // behind it - a skewed server, a slow response, a stale header. The negative span was
+        // handed to Thread.Sleep, which throws for anything below -1 ms, and that exception
+        // travelled out of the notification phase as exit 4.
+        RetrySchedule.Delay(1, TimeSpan.FromSeconds(-5), Budget, jitter: 0)
+            .ShouldBe(TimeSpan.Zero);
+    }
+
+    [Fact]
     public void NothingIsAttemptedWithNoBudgetLeft()
     {
         RetrySchedule.Delay(1, null, TimeSpan.Zero, jitter: 0.5).ShouldBeNull();

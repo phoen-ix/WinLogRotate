@@ -66,6 +66,15 @@ public static class RetrySchedule
 
         var wait = retryAfter ?? scaled;
 
+        // A Retry-After date is a moment, and by the time it is compared with the clock it can be
+        // behind it - a skewed server, a slow response, a stale header. The negative span used to
+        // pass straight through to Thread.Sleep, which throws for anything below -1 ms, and that
+        // exception left the notification phase as exit 4. "Already elapsed" means "now".
+        if (wait < TimeSpan.Zero)
+        {
+            wait = TimeSpan.Zero;
+        }
+
         // Enough left to wait AND to make the attempt. Waiting out the budget and then having no
         // time to send is the worst of both.
         var reserve = TimeSpan.FromSeconds(2);

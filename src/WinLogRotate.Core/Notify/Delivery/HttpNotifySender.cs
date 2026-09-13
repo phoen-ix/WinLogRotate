@@ -28,15 +28,22 @@ public sealed class HttpNotifySender : INotifySender, IDisposable
 {
     private readonly HttpClient _client;
     private readonly HttpClientHandler _handler;
+    private readonly TimeProvider _clock;
 
-    public HttpNotifySender(NotifySettings settings, string userAgent) =>
+    /// <param name="clock">
+    /// What a date-form <c>Retry-After</c> is measured against. It was <c>DateTimeOffset.UtcNow</c>,
+    /// the one clock in the notification phase that nothing could fake.
+    /// </param>
+    public HttpNotifySender(NotifySettings settings, string userAgent, TimeProvider? clock = null)
+    {
         (_client, _handler) = NotifyHttpClient.Create(settings, userAgent);
+        _clock = clock ?? TimeProvider.System;
+    }
 
     public SendResult Send(ResolvedChannel channel, NotifyMessage message, TimeSpan timeout)
     {
         var provider = channel.Provider;
         var contentType = provider?.ContentType ?? "application/json";
-        var method = new HttpMethod((provider?.Method ?? "POST").ToUpperInvariant());
 
         // The resolver drops a webhook with no url before it gets here, so this is the last line
         // rather than the first. It used to be a catch around Reveal(), which never throws - the
@@ -54,6 +61,12 @@ public sealed class HttpNotifySender : INotifySender, IDisposable
 
         try
         {
+            // Inside the try, both of them. HttpMethod and StringContent throw FormatException for
+            // a method that is not a token and a content type that is not a media type; the
+            // binder now refuses both at load time, and this is what stops a value it did not
+            // think of from leaving the phase as exit 4.
+            var method = new HttpMethod((provider?.Method ?? "POST").ToUpperInvariant());
+
             using var cancel = new CancellationTokenSource(timeout);
             using var request = new HttpRequestMessage(method, url)
             {
@@ -79,7 +92,7 @@ public sealed class HttpNotifySender : INotifySender, IDisposable
                 413 => SendResult.Refused(status, Describe(status)),
                 400 or 422 when provider?.Body is { Length: > 0 } => SendResult.Refused(status, Describe(status)),
 
-                _ => SendResult.Failed(status, Describe(status), RetryAfter(response)),
+                _ => SendResult.Failed(status, Describe(status), RetryAfter(response, _clock)),
             };
         }
         catch (OperationCanceledException)
@@ -98,22 +111,41 @@ public sealed class HttpNotifySender : INotifySender, IDisposable
                 socket is null ? "the request did not complete" : Describe(socket.SocketErrorCode),
                 socket?.ErrorCode);
         }
+        catch (FormatException)
+        {
+            return SendResult.Failed(400, "the provider's method or content_type is not usable");
+        }
         catch (Exception e) when (e is InvalidOperationException or UriFormatException or NotSupportedException)
         {
             return SendResult.Failed(400, "the target is not a usable URL");
         }
     }
 
-    private static TimeSpan? RetryAfter(HttpResponseMessage response)
+    /// <summary>
+    /// What the server asked us to wait, never less than nothing.
+    /// </summary>
+    /// <remarks>
+    /// A date-form header is a moment, and it can already be behind the clock by the time it is
+    /// read. The negative span that produced was handed on as it came, and <c>Thread.Sleep</c>
+    /// throws for anything below -1 ms - so a stale header ended the run with exit 4. Measured
+    /// against the injected clock so a test can say what "now" is.
+    /// </remarks>
+    internal static TimeSpan? RetryAfter(HttpResponseMessage response, TimeProvider clock)
     {
         var header = response.Headers.RetryAfter;
 
         if (header?.Delta is { } delta)
         {
-            return delta;
+            return delta < TimeSpan.Zero ? TimeSpan.Zero : delta;
         }
 
-        return header?.Date is { } date ? date - DateTimeOffset.UtcNow : null;
+        if (header?.Date is not { } date)
+        {
+            return null;
+        }
+
+        var wait = date - clock.GetUtcNow();
+        return wait < TimeSpan.Zero ? TimeSpan.Zero : wait;
     }
 
     private static T? Inner<T>(Exception e) where T : Exception

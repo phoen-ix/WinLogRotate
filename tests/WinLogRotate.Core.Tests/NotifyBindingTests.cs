@@ -232,6 +232,70 @@ public sealed class NotifyProviderBindingTests
         provider.Credentials().ShouldContain(c => c.Field == "url");
     }
 
+    /// <summary>
+    /// A <c>method</c> that is not an HTTP method is reported here, not thrown there.
+    /// </summary>
+    /// <remarks>
+    /// The sender built <c>new HttpMethod(provider.Method)</c> before its <c>try</c>, and
+    /// <c>HttpMethod</c> throws <c>FormatException</c> for anything that is not a token. A typo in
+    /// the configuration was therefore exit 4, nightly, with the notification state unsaved. The
+    /// value is judged where it is read, on its own line, and the default stands in for it so the
+    /// alert still goes.
+    /// </remarks>
+    [Fact]
+    public void AMethodThatIsNotAnHttpMethodIsReportedAndPostIsUsed()
+    {
+        var provider = Bind("""
+            [notify.webhook.hook]
+            url = "@secret:hook"
+            method = "P OST"
+            """).ShouldHaveSingleItem();
+
+        provider.Method.ShouldBe("POST");
+
+        var d = _bag.Items.ShouldHaveSingleItem();
+        d.Code.ShouldBe(DiagnosticCode.NotifyMisconfigured);
+        d.Severity.ShouldBe(Severity.Warning, "a notification problem must not stop a rotation");
+        d.Message.ShouldContain("method");
+        d.Line.ShouldBe(3);
+    }
+
+    [Fact]
+    public void AContentTypeThatIsNotAMediaTypeIsReportedAndJsonIsUsed()
+    {
+        // "json" is the obvious thing to write, and StringContent threw on it.
+        var provider = Bind("""
+            [notify.webhook.hook]
+            url = "@secret:hook"
+            content_type = "json"
+            """).ShouldHaveSingleItem();
+
+        provider.ContentType.ShouldBe("application/json");
+
+        var d = _bag.Items.ShouldHaveSingleItem();
+        d.Code.ShouldBe(DiagnosticCode.NotifyMisconfigured);
+        d.Message.ShouldContain("content_type");
+        d.Line.ShouldBe(3);
+    }
+
+    [Theory]
+    [InlineData("PUT", "text/plain")]
+    [InlineData("post", "application/x-www-form-urlencoded")]
+    [InlineData("PATCH", "text/plain; charset=utf-8")]
+    public void AUsableMethodAndContentTypeBindAsWritten(string method, string contentType)
+    {
+        var provider = Bind($"""
+            [notify.webhook.hook]
+            url = "@secret:hook"
+            method = "{method}"
+            content_type = "{contentType}"
+            """).ShouldHaveSingleItem();
+
+        provider.Method.ShouldBe(method);
+        provider.ContentType.ShouldBe(contentType);
+        _bag.Items.ShouldBeEmpty();
+    }
+
     [Fact]
     public void PushoverCarriesBothOfItsKeys()
     {
