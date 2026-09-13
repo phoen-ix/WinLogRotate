@@ -408,7 +408,7 @@ public static class HookDispatcher
                 return result.Error is null ? SendResult.Unreachable("the notification budget ran out") : result;
             }
 
-            result = sender.Send(channel, composed, left);
+            result = SendGuard.Send(sender, channel, composed, left);
 
             if (result.Ok || attempt >= retries || !RetrySchedule.IsRetryable(result.Status))
             {

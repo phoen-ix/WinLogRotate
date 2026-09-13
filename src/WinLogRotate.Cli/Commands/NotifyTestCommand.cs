@@ -108,7 +108,7 @@ internal static class NotifyTestCommand
                           == BreakerVerdict.Open;
 
             var clock = Stopwatch.StartNew();
-            var result = senders.Table.For(channel).Send(channel, composed, settings.Budget);
+            var result = SendGuard.Send(senders.Table.For(channel), channel, composed, settings.Budget);
             clock.Stop();
 
             if (!result.Ok)

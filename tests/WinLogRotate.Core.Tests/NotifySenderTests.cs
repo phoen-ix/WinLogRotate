@@ -15,6 +15,12 @@ namespace WinLogRotate.Core.Tests;
 /// The transports' shared machinery: the budget, request bodies, TLS pinning, the proxy, and
 /// turning a credential reference into a credential.
 /// </summary>
+/// <remarks>
+/// In the SMTP callback collection because <c>TheGlobalSmtpCallbackIsAlwaysRestoredEvenWhenTheSendFails</c>
+/// sets the process-global callback by hand, which would race the relay tests in
+/// <c>NotifySmtpTests</c> if the two classes ran side by side.
+/// </remarks>
+[Collection(SmtpCallbackCollection.Name)]
 public sealed class NotifySenderTests : IDisposable
 {
     private readonly DirectoryInfo _dir = Directory.CreateTempSubdirectory("winlogrotate-senders-");

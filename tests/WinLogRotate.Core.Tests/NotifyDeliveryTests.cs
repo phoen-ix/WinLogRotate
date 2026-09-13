@@ -559,6 +559,50 @@ public sealed class NotifyDeliveryTests : IDisposable
         stored.ConsecutiveFailures.ShouldBe(1);
         stored.LastError.ShouldBe("relay down");
     }
+
+    /// <summary>
+    /// A transport that throws is a channel that failed, not a run that crashed.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// <see cref="INotifySender.Send"/> promises never to throw, and the dispatcher took the
+    /// promise on trust. The SMTP sender broke it: .NET rethrows a certificate rejection unwrapped,
+    /// past the <c>SmtpException</c> catch, and a wrong <c>server_cert_thumbprint</c> therefore
+    /// travelled out of the phase and into the safety net - LR1006, exit 4, the notification state
+    /// never saved, for a rotation that had completed. docs/notifications.md says delivery never
+    /// changes a run's exit code.
+    /// </para>
+    /// <para>
+    /// The interface is an extension point, so the fix is not only in the one sender that broke
+    /// it. Whatever a transport throws is a failure of that transport, recorded against that
+    /// channel, and the run carries on.
+    /// </para>
+    /// </remarks>
+    [Fact]
+    public void ATransportThatThrowsIsAFailureOfThatChannelAndNothingMore()
+    {
+        var state = State();
+        var broken = new FakeSender(_clock)
+        {
+            Answer = _ => throw new System.Security.Authentication.AuthenticationException("rejected"),
+        };
+
+        var healthy = new FakeSender(_clock);
+
+        var report = Dispatch(Plan("iis"), state,
+            [(Channel("email.relay", HookScheme.Smtp), broken), (Channel("hook", HookScheme.Http), healthy)],
+            NotifySettings.Default with { Retries = 0 });
+
+        healthy.Attempts.ShouldBe(1, "the channel after the broken one must still be tried");
+
+        var outcome = report.Channels.Single(c => c.Key == "email.relay");
+        outcome.Failed.ShouldBe(1);
+        outcome.Error.ShouldNotBeNull().ShouldContain(nameof(System.Security.Authentication.AuthenticationException));
+
+        report.Diagnostics.ShouldContain(d => d.Code == DiagnosticCode.NotifyFailed);
+        report.Delivered.ShouldBeEmpty("a channel that threw did not accept the message");
+        state.ChannelOrDefault("email.relay").ConsecutiveFailures.ShouldBe(1);
+    }
     /// <summary>
     /// A message one channel will never accept stops being re-sent to the ones that will.
     /// </summary>

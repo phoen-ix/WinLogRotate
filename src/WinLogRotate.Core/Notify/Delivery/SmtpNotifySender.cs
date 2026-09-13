@@ -1,6 +1,7 @@
 using System.Globalization;
 using System.Net;
 using System.Net.Mail;
+using System.Security;
 using System.Security.Authentication;
 
 namespace WinLogRotate.Core.Notify.Delivery;
@@ -127,6 +128,18 @@ public sealed class SmtpNotifySender : INotifySender
         catch (SmtpException e)
         {
             return Classify(e);
+        }
+        catch (AuthenticationException)
+        {
+            // Rethrown by SmtpClient.Send UNWRAPPED, deliberately, alongside SecurityException -
+            // every other failure arrives inside an SmtpException. This is the pin doing its job,
+            // or the operating system refusing a certificate nobody pinned; either way it is a
+            // delivery failure, and letting it escape turned a completed rotation into exit 4.
+            return SendResult.Unreachable("the relay's certificate was rejected - check server_cert_thumbprint");
+        }
+        catch (SecurityException)
+        {
+            return SendResult.Failed(401, "the relay rejected the credential");
         }
         catch (Exception e) when (e is InvalidOperationException or FormatException or ArgumentException)
         {
