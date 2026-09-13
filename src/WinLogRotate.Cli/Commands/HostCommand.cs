@@ -38,12 +38,23 @@ internal static class HostCommand
                 Remedy = "Use 'winlogrotate host use task'. A scheduled task is the better fit for a log rotator anyway: nothing stays resident, and a run missed while the machine was off is caught up afterwards.",
             };
 
-    public static int Use(CommandContext ctx, string kind, string? configDir)
+    public static int Use(CommandContext ctx, string kind, string? configDir) =>
+        Use(ctx, kind, configDir, host: null, elevated: null, verb: "host use");
+
+    /// <summary>
+    /// The same, with the registrar, the elevation question and the reporting verb supplied.
+    /// </summary>
+    /// <param name="verb">
+    /// <c>host repair</c> reaches this too, and used to be reported as <c>host use</c> - a verb
+    /// the caller had not typed and a script matching on the envelope would not find.
+    /// </param>
+    internal static int Use(
+        CommandContext ctx, string kind, string? configDir, IRunHost? host, Func<bool>? elevated, string verb)
     {
         if (!Enum.TryParse<RunHostKind>(kind, ignoreCase: true, out var wanted))
         {
             return Refusals.CannotUse<HostResult>(
-                ctx, "host use", kind, "a run model", "Use task, service, or none.");
+                ctx, verb, kind, "a run model", "Use task or none.");
         }
 
         // Before the platform guard, before the elevation check, and - the part that matters -
@@ -58,15 +69,15 @@ internal static class HostCommand
         if (Unsupported(wanted) is { } unsupported)
         {
             ctx.Output.Diagnostic(unsupported);
-            return ctx.Output.Complete<HostResult>("host use", ExitCode.Errors, null);
+            return ctx.Output.Complete<HostResult>(verb, ExitCode.Errors, null);
         }
 
         if (!OperatingSystem.IsWindows())
         {
-            return NotOnWindows(ctx, "host use");
+            return NotOnWindows(ctx, verb);
         }
 
-        if (!Privilege.IsElevated())
+        if (!(elevated ?? Elevated)())
         {
             ctx.Output.Diagnostic(new CliDiagnostic
             {
@@ -75,30 +86,41 @@ internal static class HostCommand
                 Message = "Registering or removing a run host needs administrator rights.",
                 Remedy = "Run this from an elevated prompt, or use the Scheduling page in the GUI.",
             });
-            return ctx.Output.Complete<HostResult>("host use", ExitCode.Errors, null);
+            return ctx.Output.Complete<HostResult>(verb, ExitCode.Errors, null);
         }
 
         var paths = InstallPaths.Resolve(configDir);
-        var task = new TaskRunHost();
+        var task = host ?? new TaskRunHost();
 
-        // Remove whatever is registered first, whichever way we are switching. Doing it
-        // unconditionally is what makes this idempotent and makes task -> service -> task
-        // land in a known state rather than an accumulated one.
-        ctx.Output.Line("Removing any existing run host...");
-        task.Uninstall();
-
-        if (wanted == RunHostKind.None)
+        try
         {
-            ctx.Output.Line("Nothing will run rotations now. Trigger them with 'winlogrotate run'.");
-            return ctx.Output.Complete("host use", ExitCode.Ok, Describe(RunHostKind.None, paths));
+            if (wanted == RunHostKind.None)
+            {
+                ctx.Output.Line("Removing any existing run host...");
+                task.Uninstall();
+                task.Record(RunHostKind.None);
+
+                ctx.Output.Line("Nothing will run rotations now. Trigger them with 'winlogrotate run'.");
+                return ctx.Output.Complete(verb, ExitCode.Ok, Describe(RunHostKind.None, paths));
+            }
+
+            // Not removed first. `schtasks /create /f` replaces the registered task as a whole, so
+            // the one that works stays in place until its replacement is accepted. This used to
+            // delete it and then register, and a registration schtasks refused - a policy, a
+            // task folder with changed permissions - left the machine with nothing running
+            // rotations, reported as a defect.
+            ctx.Output.Line("Registering the scheduled task...");
+            task.Install(new HostInstallOptions
+            {
+                ExecutablePath = Environment.ProcessPath ?? "winlogrotate.exe",
+                ConfigDirectory = paths.Root,
+            });
         }
-
-        ctx.Output.Line("Registering the scheduled task...");
-        task.Install(new HostInstallOptions
+        catch (HostRegistrationException e)
         {
-            ExecutablePath = Environment.ProcessPath ?? "winlogrotate.exe",
-            ConfigDirectory = paths.Root,
-        });
+            ctx.Output.Diagnostic(RegistrationFailed(e));
+            return ctx.Output.Complete<HostResult>(verb, ExitCode.Errors, null);
+        }
 
         var status = task.Query();
         if (!status.Registered)
@@ -109,12 +131,28 @@ internal static class HostCommand
                 Code = DiagnosticCode.HostRegistrationFailed,
                 Message = "The task was created but could not be read back.",
             });
-            return ctx.Output.Complete<HostResult>("host use", ExitCode.Errors, null);
+            return ctx.Output.Complete<HostResult>(verb, ExitCode.Errors, null);
         }
 
+        task.Record(RunHostKind.Task);
+
         ctx.Output.Line($"Done. Rotations will run daily as SYSTEM. Check with 'winlogrotate host status'.");
-        return ctx.Output.Complete("host use", ExitCode.Ok, Describe(RunHostKind.Task, paths));
+        return ctx.Output.Complete(verb, ExitCode.Ok, Describe(RunHostKind.Task, paths));
     }
+
+    /// <summary>
+    /// What the registrar said, under the code that means it, with the one fact the operator
+    /// needs before anything else: nothing was taken away.
+    /// </summary>
+    internal static CliDiagnostic RegistrationFailed(HostRegistrationException e) => new()
+    {
+        Severity = Severity.Error,
+        Code = DiagnosticCode.HostRegistrationFailed,
+        Message = $"The run host could not be changed: {e.Message}",
+        Remedy = "Whatever was registered before is still registered. The text above is what "
+               + "schtasks.exe said; a policy restricting who may create tasks, or changed "
+               + "permissions on the task folder, are the usual causes.",
+    };
 
     public static int Status(CommandContext ctx, string? configDir)
     {
@@ -178,7 +216,7 @@ internal static class HostCommand
 
         if (!acl)
         {
-            return Use(ctx, "task", configDir);
+            return Use(ctx, "task", configDir, host: null, elevated: null, verb: "host repair");
         }
 
         if (!Privilege.IsElevated())

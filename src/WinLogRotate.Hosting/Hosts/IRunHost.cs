@@ -44,7 +44,32 @@ public interface IRunHost
     void Uninstall();
 
     HostStatus Query();
+
+    /// <summary>
+    /// Records what this install is now set up to use, where <see cref="HostStatus.Configured"/>
+    /// reads it from.
+    /// </summary>
+    /// <remarks>
+    /// The installer writes that fact once, at install time, and nothing else ever did: after the
+    /// operator's own <c>host use none</c> - or the GUI's Scheduling page, which shells the same
+    /// verb - <see cref="HostStatus.Drifted"/> stayed true for ever, and every <c>host status</c>
+    /// warned that "something removed" a task the operator had removed themselves. A failure to
+    /// record is swallowed: it costs a stale drift warning, not a rotation.
+    /// </remarks>
+    void Record(RunHostKind configured);
 }
+
+/// <summary>
+/// The run host could not be registered or removed, and says what the registrar said.
+/// </summary>
+/// <remarks>
+/// Its own type so a verb can tell "schtasks refused" from a defect. It used to surface as
+/// <see cref="InvalidOperationException"/>, which nothing caught, so a registration a Group
+/// Policy forbade was reported as <c>LR1006</c>, "a defect in the product", with exit 4 - after
+/// the working task had already been deleted.
+/// </remarks>
+public sealed class HostRegistrationException(string message, Exception? inner = null)
+    : Exception(message, inner);
 
 /// <summary>Everything needed to register a run host.</summary>
 public sealed record HostInstallOptions

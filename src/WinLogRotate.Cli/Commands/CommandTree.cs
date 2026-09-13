@@ -615,7 +615,7 @@ internal static class CommandTree
 
     private static Command BuildHost()
     {
-        var kind = new Argument<string>("kind") { Description = "task, service, or none." };
+        var kind = new Argument<string>("kind") { Description = "task or none. The service host is not implemented in this build." };
         var use = new Command("use", "Choose what runs rotations, switching freely from whatever is registered now.") { kind };
         GlobalOptions.AddTo(use);
         use.SetAction(parse => CommandContext.Guarded(parse, ctx => HostCommand.Use(ctx, parse.GetRequiredValue(kind), parse.GetValue(GlobalOptions.ConfigDir)?.FullName)));

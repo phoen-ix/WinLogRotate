@@ -110,5 +110,12 @@ internal sealed class RecordingSink : Cli.Output.IOutputSink
 
     public void Line(string text) => Lines.Add(text);
 
-    public int Complete<T>(string verb, int exitCode, T? result) => exitCode;
+    /// <summary>The verb the envelope was completed under, for verbs that reach one another.</summary>
+    public string? Verb { get; private set; }
+
+    public int Complete<T>(string verb, int exitCode, T? result)
+    {
+        Verb = verb;
+        return exitCode;
+    }
 }
