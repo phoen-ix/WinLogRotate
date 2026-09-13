@@ -136,6 +136,7 @@ public static class RotateJobPlanner
             {
                 File = deferred.File with { Path = archive },
                 IsCompressed = true,
+                Extension = Compressor.Extension(job.CompressType),
             };
         }
 
@@ -185,7 +186,7 @@ public static class RotateJobPlanner
                     {
                         Action = PlannedAction.Rename,
                         Source = archive.Path,
-                        Destination = ArchiveNaming.Numbered(job, live.Path, index + 1, archive.IsCompressed),
+                        Destination = ArchiveNaming.Numbered(job, live.Path, index + 1, archive.Extension),
                         Reason = $"shifting generation {index} to {index + 1}",
                         Bytes = archive.Length,
                     });

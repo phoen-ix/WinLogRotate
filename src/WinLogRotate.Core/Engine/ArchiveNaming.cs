@@ -30,12 +30,22 @@ public static class ArchiveNaming
         return WinPath.Combine(directory, name + suffix);
     }
 
-    /// <summary>The name at a given rotation index.</summary>
-    public static string Numbered(EffectiveJob job, string logPath, int index, bool compressed)
+    /// <summary>The name at a given rotation index, compressed with the job's own type or not at all.</summary>
+    public static string Numbered(EffectiveJob job, string logPath, int index, bool compressed) =>
+        Numbered(job, logPath, index, compressed ? Compressor.Extension(job.CompressType) : string.Empty);
+
+    /// <summary>
+    /// The name at a given rotation index, carrying the extension the archive actually has.
+    /// </summary>
+    /// <remarks>
+    /// The shift asks for this rather than for the job's compression type: an archive written as
+    /// <c>.gz</c> before the job switched to zip is still a gzip file, and renaming it to
+    /// <c>.zip</c> would be a lie every tool that opens it would trip over.
+    /// </remarks>
+    public static string Numbered(EffectiveJob job, string logPath, int index, string extension)
     {
         var directory = ResolveDirectory(job, logPath);
         var name = WinPath.FileName(logPath);
-        var extension = compressed ? Compressor.Extension(job.CompressType) : string.Empty;
 
         return WinPath.Combine(
             directory, $"{name}.{index.ToString(CultureInfo.InvariantCulture)}{extension}");

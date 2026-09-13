@@ -106,10 +106,26 @@ public static class LogSeries
     }
 
     /// <summary>
+    /// Every spelling a numbered archive can have: uncompressed, and each compression extension
+    /// this product has ever written.
+    /// </summary>
+    /// <remarks>
+    /// Every extension rather than the job's current one, for the reason <see cref="IsExactly"/>
+    /// gives for dated archives: an operator who switches <c>compresstype</c>, or turns
+    /// compression off, still owns the archives written the other way, and probing only the
+    /// current spelling stranded them - never shifted, never counted, never deleted.
+    /// </remarks>
+    private static readonly string[] Spellings =
+    [
+        string.Empty,
+        .. Enum.GetValues<CompressType>().Where(k => k != CompressType.None).Select(Compressor.Extension),
+    ];
+
+    /// <summary>
     /// The names this job would itself have written, probed one at a time.
     /// </summary>
     /// <remarks>
-    /// Both spellings of each index, because <c>delaycompress</c> leaves exactly one generation
+    /// Every spelling of each index, because <c>delaycompress</c> leaves exactly one generation
     /// uncompressed among compressed ones and retention has to see all of them.
     /// </remarks>
     private static List<MatchedFile> NumberedArchives(
@@ -127,19 +143,12 @@ public static class LogSeries
         {
             var before = found.Count;
 
-            var uncompressed = source.Find(ArchiveNaming.Numbered(job, log.Path, index, compressed: false));
-            var compressed = job.CompressType == CompressType.None
-                ? null
-                : source.Find(ArchiveNaming.Numbered(job, log.Path, index, compressed: true));
-
-            if (uncompressed is not null)
+            foreach (var extension in Spellings)
             {
-                found.Add(uncompressed);
-            }
-
-            if (compressed is not null)
-            {
-                found.Add(compressed);
+                if (source.Find(ArchiveNaming.Numbered(job, log.Path, index, extension)) is { } archive)
+                {
+                    found.Add(archive);
+                }
             }
 
             if (found.Count > before)

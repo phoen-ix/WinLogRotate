@@ -490,6 +490,21 @@ public class RotatePlannerTests
         after.Became("app.log.3").ShouldBe(["app.log.4"]);
     }
 
+    /// <summary>An archive keeps the extension it has when it shifts, whatever the job compresses to now.</summary>
+    /// <remarks>
+    /// A gzip file renamed to <c>.zip</c> is still a gzip file, and every tool that opens it by its
+    /// name would be lied to. The job here compresses to gzip and inherited a zip.
+    /// </remarks>
+    [Fact]
+    public void AnArchiveKeepsItsOwnExtensionWhenItShifts()
+    {
+        var files = new FakeFiles(@"C:\logs\app.log", @"C:\logs\app.log.1.zip");
+
+        var after = After(Job(rotate: 4, compress: true), files);
+
+        after.Became("app.log.1.zip").ShouldBe(["app.log.2.zip"]);
+    }
+
     /// <summary>
     /// A generation shifted past the window is disposed of once the chain has caught up with it.
     /// </summary>

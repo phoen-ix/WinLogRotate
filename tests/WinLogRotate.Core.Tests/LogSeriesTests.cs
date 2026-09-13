@@ -242,11 +242,32 @@ public sealed class LogSeriesTests
 
         LogSeries.Discover(Job(rotate: 3), [Live()], files);
 
-        // The window, then the bounded run of empty indexes that follows it - and nowhere near
-        // the cap, which is what "stops" means here.
-        files.Probed.Count.ShouldBeLessThanOrEqualTo(3 + LogSeries.MaxConsecutiveMisses);
+        // The window, then the bounded run of empty indexes that follows it, once per spelling
+        // (uncompressed plus every compression extension) - and nowhere near the cap, which is
+        // what "stops" means here.
+        var spellings = Enum.GetValues<CompressType>().Length;
+        files.Probed.Count.ShouldBeLessThanOrEqualTo((3 + LogSeries.MaxConsecutiveMisses) * spellings);
         files.Probed.Count.ShouldBeLessThan(LogSeries.MaxNumberedProbe / 4);
         files.Probed.Count.ShouldBeGreaterThan(2, "the whole retention window is still checked");
+    }
+
+    /// <summary>
+    /// An archive written under the other compression extension is still this job's.
+    /// </summary>
+    /// <remarks>
+    /// Only the job's current extension was probed, and none at all with compression off - so
+    /// switching <c>compresstype</c>, or turning it off, stranded every archive written the other
+    /// way. Dated discovery has accepted every known extension since it was written.
+    /// </remarks>
+    [Theory]
+    [InlineData(CompressType.Zip, @"C:\logs\app.log.1.gz")]
+    [InlineData(CompressType.Gzip, @"C:\logs\app.log.1.zip")]
+    [InlineData(CompressType.None, @"C:\logs\app.log.1.zip")]
+    public void AnArchiveInAnotherCompressionSpellingIsStillFound(CompressType compress, string archive)
+    {
+        var files = new FakeFiles(@"C:\logs\app.log", archive);
+
+        Found(LogSeries.Discover(Job(compress: compress), [Live()], files)).ShouldBe([archive]);
     }
 
     /// <summary>

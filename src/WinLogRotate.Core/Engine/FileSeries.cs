@@ -19,6 +19,13 @@ public sealed record ArchiveFile
 
     public bool IsCompressed { get; init; }
 
+    /// <summary>The compression extension the file carries - <c>.gz</c>, <c>.zip</c> - or empty.</summary>
+    /// <remarks>
+    /// Its own, not the job's. A job that switched from gzip to zip still owns last month's
+    /// <c>.gz</c> archives, and the shift has to move them under the name that says what they are.
+    /// </remarks>
+    public string Extension { get; init; } = string.Empty;
+
     public string Path => File.Path;
     public long Length => File.Length;
     public DateTimeOffset LastWriteUtc => File.LastWriteUtc;
@@ -97,6 +104,7 @@ public static class FileSeries
         {
             File = file,
             IsCompressed = compressed,
+            Extension = compressed ? name[name.LastIndexOf('.')..] : string.Empty,
             Index = ParseIndex(stem),
             Stamp = stamps ? ParseStamp(stem, dateFormat) : null,
         };
