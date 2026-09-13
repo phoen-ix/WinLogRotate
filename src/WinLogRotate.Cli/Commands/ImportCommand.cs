@@ -7,7 +7,15 @@ namespace WinLogRotate.Cli.Commands;
 
 internal static class ImportCommand
 {
-    public static int Run(CommandContext ctx, string source, string? outDirectory, string? configDir)
+    /// <summary>What decides whether this process is elevated. A seam for the tests.</summary>
+    private static readonly Func<bool> Elevated = Privilege.IsElevated;
+
+    public static int Run(CommandContext ctx, string source, string? outDirectory, string? configDir) =>
+        Run(ctx, source, outDirectory, InstallPaths.Resolve(configDir), elevated: null);
+
+    /// <summary>The same, for a caller that already knows where the installation lives.</summary>
+    internal static int Run(
+        CommandContext ctx, string source, string? outDirectory, InstallPaths paths, Func<bool>? elevated)
     {
         if (!File.Exists(source))
         {
@@ -17,10 +25,39 @@ internal static class ImportCommand
                 + "copied off the machine being migrated.");
         }
 
-        var paths = InstallPaths.Resolve(configDir);
         var target = outDirectory ?? paths.ConfigDirectory;
 
-        var jobs = LogrotateImporter.Import(File.ReadAllText(source), source);
+        // The shape `job add` uses, and the gap its own remarks named: an unelevated write into
+        // a per-machine conf.d escaped as an UnauthorizedAccessException that the guard reported
+        // as LR1006, "a defect in the product", about a machine refusing correctly. Only the
+        // product's own conf.d is guarded this way; an --out somewhere else is the caller's.
+        if (outDirectory is null && paths.Scope == InstallScope.PerMachine && !(elevated ?? Elevated)())
+        {
+            ctx.Output.Diagnostic(new CliDiagnostic
+            {
+                Severity = Severity.Error,
+                Code = DiagnosticCode.NeedsAdministrator,
+                Message = "Writing imported jobs into the configuration directory needs administrator rights.",
+                Remedy = "Run this from an elevated prompt, or pass --out to write the files somewhere "
+                       + "else and review them first.",
+            });
+
+            return ctx.Output.Complete<ImportResult>("import", ExitCode.Errors, null);
+        }
+
+        string text;
+        try
+        {
+            text = File.ReadAllText(source);
+        }
+        catch (Exception e) when (e is IOException or UnauthorizedAccessException)
+        {
+            return Refusals.CannotUse<ImportResult>(
+                ctx, "import", source, "a file this account can read",
+                $"{e.Message} Copy it somewhere readable, or run from an account that can open it.");
+        }
+
+        var jobs = LogrotateImporter.Import(text, source);
 
         if (jobs.Count == 0)
         {
@@ -35,10 +72,18 @@ internal static class ImportCommand
             });
         }
 
-        Directory.CreateDirectory(target);
         var written = new List<string>();
         var needingReview = 0;
         var refused = 0;
+
+        try
+        {
+            Directory.CreateDirectory(target);
+        }
+        catch (Exception e) when (e is IOException or UnauthorizedAccessException)
+        {
+            return Unwritable(ctx, source, target, target, e, written, needingReview);
+        }
 
         foreach (var job in jobs)
         {
@@ -77,7 +122,17 @@ internal static class ImportCommand
                 suffix++;
             }
 
-            ConfigWrites.Job(path, job.Toml);
+            try
+            {
+                ConfigWrites.Job(path, job.Toml);
+            }
+            catch (Exception e) when (e is IOException or UnauthorizedAccessException)
+            {
+                // What was written before this one stays written and is reported as such; an
+                // import is a set of independent files and half of them is worth having.
+                return Unwritable(ctx, source, target, path, e, written, needingReview);
+            }
+
             written.Add(path);
 
             ctx.Output.Line($"  {Path.GetFileName(path)}");
@@ -126,5 +181,30 @@ internal static class ImportCommand
                 NeedingReview = needingReview,
                 Files = written,
             });
+    }
+
+    /// <summary>A file could not be written; what was written before it is reported as written.</summary>
+    private static int Unwritable(
+        CommandContext ctx, string source, string target, string path, Exception e,
+        List<string> written, int needingReview)
+    {
+        ctx.Output.Diagnostic(new CliDiagnostic
+        {
+            Severity = Severity.Error,
+            Code = DiagnosticCode.ConfigUnwritable,
+            Message = $"'{path}' could not be written: {e.GetType().Name}: {e.Message}",
+            Path = path,
+            Remedy = "Check free space and the permissions on the output directory. Files written "
+                   + "before this one are listed in the result and were left in place.",
+        });
+
+        return ctx.Output.Complete("import", ExitCode.Errors, new ImportResult
+        {
+            Source = source,
+            OutputDirectory = target,
+            Jobs = written.Count,
+            NeedingReview = needingReview,
+            Files = written,
+        });
     }
 }
