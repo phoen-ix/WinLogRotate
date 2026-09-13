@@ -128,4 +128,29 @@ public sealed partial class GuiArchitectureTests
             "ConfigCheckProjection reads result.errors and result.warnings, which only "
             + "'config check' produces; every other verb's answer needs its own projection");
     }
+
+    /// <summary>
+    /// The job editor takes every position from the layout the tests can see.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// The form gave its advanced grid the height left over after eight rows of fields, which
+    /// was -52, and nothing could say so: the arithmetic lived beside the controls, in a project
+    /// no test on this leg can load. <c>JobEditorLayout</c> is that arithmetic as a record, and
+    /// <c>JobEditorLayoutTests</c> asserts every box positive, disjoint and inside the window.
+    /// </para>
+    /// <para>
+    /// Which is worth nothing if the form types a rectangle of its own beside it. So it may not:
+    /// a position the layout does not know is a position no rule can check.
+    /// </para>
+    /// </remarks>
+    [Fact]
+    public void TheJobEditorTakesEveryPositionFromTheLayout()
+    {
+        var editor = Code(Path.Combine(Gui, "Pages", "JobEditor.cs"));
+
+        editor.ShouldContain("JobEditorLayout.Compute(", customMessage: "the form must ask the layout");
+        editor.ShouldNotContain("new Rectangle(", customMessage: "a hand-typed position is one the layout tests cannot see");
+        editor.ShouldContain("layout.ClientHeight", customMessage: "the client size is the layout's too");
+    }
 }

@@ -43,31 +43,22 @@ public sealed class JobEditor : Form
     /// <summary>What the save wrote, in the verb's words, for the page that opened this.</summary>
     private string? _said;
 
-    private readonly TextBox _name = new() { Bounds = new Rectangle(120, 16, 260, 24) };
+    // No bounds here. Every position comes from JobEditorLayout in Build, so that the arithmetic
+    // is in one place and that place is one a test can reach.
+    private readonly TextBox _name = new();
     private readonly TextBox _paths = new()
     {
-        Bounds = new Rectangle(120, 48, 420, 64),
         Multiline = true,
         ScrollBars = ScrollBars.Vertical,
         AcceptsReturn = true,
     };
 
-    private readonly ComboBox _kind = new()
-    {
-        Bounds = new Rectangle(120, 120, 160, 24),
-        DropDownStyle = ComboBoxStyle.DropDownList,
-    };
+    private readonly ComboBox _kind = new() { DropDownStyle = ComboBoxStyle.DropDownList };
 
-    private readonly CheckBox _enabled = new()
-    {
-        Text = "Enabled",
-        Bounds = new Rectangle(300, 120, 100, 24),
-        Checked = true,
-    };
+    private readonly CheckBox _enabled = new() { Text = "Enabled", Checked = true };
 
     private readonly DataGridView _advanced = new()
     {
-        Bounds = new Rectangle(16, 176, 524, 200),
         AutoSizeColumnsMode = DataGridViewAutoSizeColumnsMode.Fill,
         AllowUserToAddRows = false,
         AllowUserToDeleteRows = false,
@@ -76,11 +67,7 @@ public sealed class JobEditor : Form
         MultiSelect = false,
     };
 
-    private readonly Label _status = new()
-    {
-        Bounds = new Rectangle(16, 384, 524, 36),
-        ForeColor = Theme.Current.Muted,
-    };
+    private readonly Label _status = new() { ForeColor = Theme.Current.Muted };
 
     private JobEditor(
         CliRunner cli, string? configDir, JobEditorView view, bool isNew, string? hookWarning)
@@ -96,7 +83,6 @@ public sealed class JobEditor : Form
         StartPosition = FormStartPosition.CenterParent;
         MinimizeBox = false;
         MaximizeBox = false;
-        ClientSize = new Size(556, 470);
         BackColor = Theme.Current.Window;
         ForeColor = Theme.Current.Text;
 
@@ -170,48 +156,60 @@ public sealed class JobEditor : Form
         return form.ShowDialog(owner) == DialogResult.OK ? form._said : null;
     }
 
+    /// <summary>
+    /// Places every control where <see cref="JobEditorLayout"/> says.
+    /// </summary>
+    /// <remarks>
+    /// The form used to lay itself out top-down from constants and give the grid whatever height
+    /// was left, which for eight common rows was -52: the grid could not be seen, and the status
+    /// line was drawn behind the last two rows. The arithmetic is the model's now, asserted by
+    /// <c>JobEditorLayoutTests</c>; what is left here is reading it.
+    /// </remarks>
     private void Build()
     {
         var colors = Theme.Current;
+        var layout = JobEditorLayout.Compute(JobEditorModel.Common.Count);
 
-        Label Caption(string text, int y) => new()
+        ClientSize = new Size(layout.ClientWidth, layout.ClientHeight);
+
+        Label Caption(string text, Box box) => new()
         {
             Text = text,
-            Bounds = new Rectangle(16, y + 4, 100, 18),
+            Bounds = box.ToRectangle(),
             ForeColor = colors.Muted,
         };
 
-        Controls.Add(Caption("Name", 16));
+        _name.Bounds = layout.Name.ToRectangle();
+        _paths.Bounds = layout.Paths.ToRectangle();
+        _kind.Bounds = layout.Kind.ToRectangle();
+        _enabled.Bounds = layout.Enabled.ToRectangle();
+
+        Controls.Add(Caption("Name", layout.NameCaption));
         Controls.Add(_name);
-        Controls.Add(Caption("Paths", 48));
+        Controls.Add(Caption("Paths", layout.PathsCaption));
         Controls.Add(_paths);
-        Controls.Add(Caption("Kind", 120));
+        Controls.Add(Caption("Kind", layout.KindCaption));
         Controls.Add(_kind);
         Controls.Add(_enabled);
 
-        // One line per pattern, said where somebody will read it rather than in the manual.
-        Controls.Add(new Label
-        {
-            Text = "One glob per line.",
-            Bounds = new Rectangle(390, 52, 150, 18),
-            ForeColor = colors.Muted,
-        });
+        // One line per pattern, said where somebody will read it rather than in the manual - and
+        // beside the box rather than over it, which is where a fixed offset had put it.
+        Controls.Add(Caption("One glob per line.", layout.PathsHint));
 
-        var y = 152;
-
-        foreach (var key in JobEditorModel.Common)
+        for (var i = 0; i < JobEditorModel.Common.Count; i++)
         {
+            var key = JobEditorModel.Common[i];
+
             if (Field(key) is not { } row)
             {
                 continue;
             }
 
-            Controls.Add(Caption(key, y));
-            Controls.Add(Editor(row, y));
-            y += 30;
+            Controls.Add(Caption(key, layout.Common[i].Caption));
+            Controls.Add(Editor(row, layout.Common[i].Editor));
         }
 
-        _advanced.Bounds = new Rectangle(16, y + 8, 524, 470 - y - 130);
+        _advanced.Bounds = layout.Advanced.ToRectangle();
         _advanced.Columns.Add("key", "Key");
         _advanced.Columns.Add("value", "Value");
 
@@ -227,27 +225,27 @@ public sealed class JobEditor : Form
         _advanced.CellEndEdit += (_, _) => Restate();
         Controls.Add(_advanced);
 
-        _status.Bounds = new Rectangle(16, _advanced.Bottom + 8, 524, 34);
+        _status.Bounds = layout.Status.ToRectangle();
         Controls.Add(_status);
 
         var check = new Button
         {
             Text = "Check",
-            Bounds = new Rectangle(280, ClientSize.Height - 42, 84, 26),
+            Bounds = layout.Check.ToRectangle(),
             FlatStyle = FlatStyle.System,
         };
 
         var save = new Button
         {
             Text = "Save",
-            Bounds = new Rectangle(372, ClientSize.Height - 42, 84, 26),
+            Bounds = layout.Save.ToRectangle(),
             FlatStyle = FlatStyle.System,
         };
 
         var cancel = new Button
         {
             Text = "Cancel",
-            Bounds = new Rectangle(464, ClientSize.Height - 42, 84, 26),
+            Bounds = layout.Cancel.ToRectangle(),
             FlatStyle = FlatStyle.System,
             DialogResult = DialogResult.Cancel,
         };
@@ -266,7 +264,7 @@ public sealed class JobEditor : Form
         CancelButton = cancel;
     }
 
-    private Control Editor(JobField row, int y)
+    private Control Editor(JobField row, Box box)
     {
         Control control;
 
@@ -274,7 +272,7 @@ public sealed class JobEditor : Form
         {
             var combo = new ComboBox
             {
-                Bounds = new Rectangle(120, y, 200, 24),
+                Bounds = box.ToRectangle(),
                 DropDownStyle = ComboBoxStyle.DropDownList,
             };
 
@@ -292,7 +290,7 @@ public sealed class JobEditor : Form
         {
             var combo = new ComboBox
             {
-                Bounds = new Rectangle(120, y, 200, 24),
+                Bounds = box.ToRectangle(),
                 DropDownStyle = ComboBoxStyle.DropDownList,
             };
 
@@ -305,7 +303,7 @@ public sealed class JobEditor : Form
         {
             control = new TextBox
             {
-                Bounds = new Rectangle(120, y, 200, 24),
+                Bounds = box.ToRectangle(),
                 PlaceholderText = row.Sample.Trim('"'),
             };
         }
