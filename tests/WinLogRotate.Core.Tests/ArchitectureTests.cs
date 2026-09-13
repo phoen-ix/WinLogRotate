@@ -1170,7 +1170,7 @@ public partial class ArchitectureTests
     private static readonly Dictionary<string, string[]> Raisers = new(StringComparer.Ordinal)
     {
         [nameof(DiagnosticCode.NeedsAdministrator)] = ["HostCommand.cs", "JobCommand.cs", "SecretCommand.cs"],
-        [nameof(DiagnosticCode.ConfigUnreadable)] = ["ConfigLoader.cs", "SecretCommand.cs"],
+        [nameof(DiagnosticCode.ConfigUnreadable)] = ["JobCommand.cs", "ConfigLoader.cs", "SecretCommand.cs"],
         [nameof(DiagnosticCode.ConfigInvalid)] = ["ConfigBinder.cs", "ConfigLoader.cs", "ConfigValidator.cs", "Diagnose.cs", "ImportCommand.cs", "LogrotateImporter.cs", "SecretCommand.cs"],
         [nameof(DiagnosticCode.NoJobsConfigured)] = ["ConfigLoader.cs"],
         [nameof(DiagnosticCode.NotSupportedHere)] = ["Refusals.cs", "SecretCommand.cs"],

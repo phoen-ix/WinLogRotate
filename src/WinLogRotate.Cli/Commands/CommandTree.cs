@@ -262,6 +262,12 @@ internal static class CommandTree
             Description = "Judge the result and report it, without writing anything.",
         };
 
+        var unset = new Option<string[]>("--unset")
+        {
+            Description = "A key to remove, so the job inherits it from [defaults] again. Repeat for more.",
+            AllowMultipleArgumentsPerToken = false,
+        };
+
         var add = new Command("add", "Create a job. This is what the GUI's Jobs page has always told you to do by hand.")
         {
             name, paths, kind, disabled, set, dryRun,
@@ -272,7 +278,7 @@ internal static class CommandTree
         {
             var edits = Edits(
                 parse.GetValue(paths), parse.GetValue(kind), parse.GetValue(disabled) ? false : null,
-                parse.GetValue(set), out var malformed);
+                parse.GetValue(set), null, out var malformed);
 
             return malformed is { } bad
                 ? Refusals.CannotUse<JobEditResult>(ctx, "job add", bad, "a KEY=VALUE pair", "Write it as --set rotate=14.")
@@ -284,7 +290,43 @@ internal static class CommandTree
                     parse.GetValue(dryRun));
         }));
 
-        return new Command("job", "Create and change jobs.") { add };
+        var enabled = new Option<bool>("--enabled") { Description = "Switch the job back on." };
+
+        var edit = new Command("set", "Change keys on a job, in the file it already lives in. Comments and every other key are left alone.")
+        {
+            name, paths, kind, disabled, enabled, set, unset, dryRun,
+        };
+
+        GlobalOptions.AddTo(edit);
+        edit.SetAction(parse => CommandContext.Guarded(parse, ctx =>
+        {
+            // --disabled and --enabled are the same key, so naming both is a contradiction
+            // rather than a precedence question to resolve quietly.
+            var off = parse.GetValue(disabled);
+            var on = parse.GetValue(enabled);
+
+            if (off && on)
+            {
+                return Refusals.CannotUse<JobEditResult>(
+                    ctx, "job set", "--disabled --enabled", "a pair of options that can both hold",
+                    "They set the same key. Name one of them.");
+            }
+
+            var edits = Edits(
+                parse.GetValue(paths), parse.GetValue(kind), off ? false : on ? true : null,
+                parse.GetValue(set), parse.GetValue(unset), out var malformed);
+
+            return malformed is { } bad
+                ? Refusals.CannotUse<JobEditResult>(ctx, "job set", bad, "a KEY=VALUE pair", "Write it as --set rotate=14.")
+                : JobCommand.Set(
+                    ctx,
+                    parse.GetRequiredValue(name),
+                    parse.GetValue(GlobalOptions.ConfigDir)?.FullName,
+                    edits,
+                    parse.GetValue(dryRun));
+        }));
+
+        return new Command("job", "Create and change jobs.") { add, edit };
     }
 
     /// <summary>
@@ -295,7 +337,8 @@ internal static class CommandTree
     /// the typed ones are shorthand rather than a second route into the file.
     /// </remarks>
     private static List<JobEdit> Edits(
-        string[]? paths, string? kind, bool? enabled, string[]? set, out string? malformed)
+        string[]? paths, string? kind, bool? enabled, string[]? set, string[]? unset,
+        out string? malformed)
     {
         malformed = null;
         var edits = new List<JobEdit>();
@@ -328,6 +371,13 @@ internal static class CommandTree
             }
 
             edits.Add(new JobEdit(pair[..at].Trim(), pair[(at + 1)..]));
+        }
+
+        foreach (var key in unset ?? [])
+        {
+            // A null value, not an empty string. "Inherit again" and "set to nothing" are
+            // different answers, and an empty string is a value the binder would read.
+            edits.Add(new JobEdit(key.Trim(), null));
         }
 
         return edits;

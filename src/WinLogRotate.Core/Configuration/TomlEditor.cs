@@ -189,9 +189,48 @@ public static class TomlEditor
             return false;
         }
 
-        source = existing.Value.ToString()!.Trim();
+        source = Rendered(existing.Value);
         line = existing.Span.Start.Line + 1;
         return true;
+    }
+
+    /// <summary>
+    /// A value's own text, without whatever follows it on the line.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// A node renders with its trailing trivia attached, so <c>rotate = 7   # two weeks</c> reads
+    /// back as <c>7   # two weeks</c> rather than as <c>7</c>. That is wrong twice over: an
+    /// editor comparing "what it says now" with "what was asked for" would never find them equal,
+    /// so setting a key to the value it already has rewrote the file - identical bytes, a new
+    /// timestamp, a new descriptor, and a change reported to whatever is watching the directory.
+    /// And <c>job show</c> would publish somebody's comment as part of the value, which is then
+    /// fed back in as one.
+    /// </para>
+    /// <para>
+    /// Stripped by length rather than by cutting at the first <c>#</c>, because a string value
+    /// may contain one and <c>dateformat = "%Y#%m"</c> is not a comment.
+    /// </para>
+    /// </remarks>
+    private static string Rendered(ValueSyntax value)
+    {
+        var text = value.ToString()!;
+
+        if (LastTokenOf(value) is { TrailingTrivia: { Count: > 0 } trivia })
+        {
+            // Text, not ToString(): a SyntaxTrivia renders as its type name, so concatenating
+            // ToString() produced "Tomlyn.Syntax.SyntaxTrivia..." - which is never a suffix of
+            // the value, so the strip below silently did nothing and every read carried the
+            // comment. Nothing about that is visible in a build.
+            var following = string.Concat(trivia.Select(t => t.Text));
+
+            if (following.Length > 0 && text.EndsWith(following, StringComparison.Ordinal))
+            {
+                text = text[..^following.Length];
+            }
+        }
+
+        return text.Trim();
     }
 
     private static string[] Split(string tablePath) =>

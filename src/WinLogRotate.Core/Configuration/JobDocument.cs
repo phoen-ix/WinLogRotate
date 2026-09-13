@@ -146,14 +146,35 @@ public static class JobDocument
         var problems = new List<JobEditProblem>();
         var planned = new List<(JobKey Row, string? Value, IReadOnlyList<string> Items)>();
 
+        var removals = new List<string>();
+
         foreach (var group in edits.GroupBy(e => e.Key, StringComparer.OrdinalIgnoreCase))
         {
+            // A removal wins over a set of the same key. Nothing in the CLI produces both, and
+            // saying so here means a caller that does gets the safer of the two rather than
+            // whichever came last.
+            var removing = group.Any(e => e.Value is null);
+
             if (JobSchema.Find(group.Key) is not { } row)
             {
+                // A key the binder does not read can still be removed, and only removed. The
+                // asymmetry is the point: writing a key the binder ignores would put something
+                // in the file that does nothing, while removing one is how the operator acts on
+                // the warning the binder already raised about it - whose remedy says "Remove it",
+                // and which until now could only be done in Notepad. It also means a file written
+                // by a newer schema can be tidied by an older build rather than being untouchable.
+                if (removing && TomlEditor.TryRead(file, Table, group.Key, out _, out _))
+                {
+                    removals.Add(group.Key);
+                    continue;
+                }
+
                 problems.Add(new JobEditProblem
                 {
                     Key = group.Key,
-                    Message = $"'{group.Key}' is not a [job] key.",
+                    Message = removing
+                        ? $"'{group.Key}' is not a [job] key, and this job does not have it either."
+                        : $"'{group.Key}' is not a [job] key.",
                     Remedy = JobSchema.Nearest(group.Key) is { } near
                         ? $"Did you mean '{near}'?"
                         : "Run 'winlogrotate job show' on an existing job, or see docs/configuration.md.",
@@ -161,10 +182,7 @@ public static class JobDocument
                 continue;
             }
 
-            // A removal wins over a set of the same key. Nothing in the CLI produces both, and
-            // saying so here means a caller that does gets the safer of the two rather than
-            // whichever came last.
-            if (group.Any(e => e.Value is null))
+            if (removing)
             {
                 planned.Add((row, null, []));
                 continue;
@@ -256,6 +274,15 @@ public static class JobDocument
             });
         }
 
+        foreach (var key in removals)
+        {
+            TomlEditor.TryRead(file, Table, key, out var was, out _);
+
+            changes.Add(TomlEditor.TryRemove(file, Table, key, out _, out var detail)
+                ? new JobChange { Key = key, Kind = JobChangeKind.Unset, Before = was }
+                : Failed(problems, key, detail));
+        }
+
         return problems.Count > 0
             ? new JobProposal { File = file, Changes = changes, Problems = problems }
             : new JobProposal
@@ -265,6 +292,13 @@ public static class JobDocument
                 Problems = [],
                 Verdict = ConfigLoader.Judge(file, path, defaults, guard, namesInUse),
             };
+    }
+
+    /// <summary>Records a failure and reports the key as untouched, so the two stay in step.</summary>
+    private static JobChange Failed(List<JobEditProblem> problems, string key, string? detail)
+    {
+        problems.Add(new JobEditProblem { Key = key, Message = detail ?? "The key could not be removed." });
+        return new JobChange { Key = key, Kind = JobChangeKind.Unchanged };
     }
 
     private static TomlValue Parsed(JobKey row, string text)

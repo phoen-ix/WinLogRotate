@@ -607,4 +607,36 @@ public sealed class TomlEditorTests
                 TomlFile.Parse("[job]\nname = \"iis\"\n", "iis.toml"),
                 ["job"], "rotate", out _, out _)
             .ShouldBeFalse();
+
+    /// <summary>
+    /// A value read back is the value, not the value and whatever follows it on the line.
+    /// </summary>
+    /// <remarks>
+    /// A node renders with its trailing trivia attached, so <c>rotate = 7   # two weeks</c> read
+    /// back as <c>7   # two weeks</c>. Two things went wrong with that. An editor comparing "what
+    /// it says now" against "what was asked for" never found them equal, so setting a key to the
+    /// value it already had rewrote the file - identical bytes, new timestamp, new descriptor,
+    /// and a change reported to whatever watches the directory. And the comment would be
+    /// published as part of the value, to be fed back in as one.
+    /// </remarks>
+    [Fact]
+    public void AValueReadBackDoesNotCarryTheCommentAfterIt()
+    {
+        var file = TomlFile.Parse(
+            "schema = 1\n\n[job]\n"
+            + "rotate = 7   # two weeks was too much\n"
+            + "paths = [\"C:/logs/*.log\"]  # just the one\n"
+            + "dateformat = \"%Y#%m\"\n",
+            "/tmp/t.toml");
+
+        TomlEditor.TryRead(file, ["job"], "rotate", out var rotate, out _).ShouldBeTrue();
+        rotate.ShouldBe("7");
+
+        TomlEditor.TryRead(file, ["job"], "paths", out var paths, out _).ShouldBeTrue();
+        paths.ShouldBe("[\"C:/logs/*.log\"]");
+
+        // Not cut at the first '#', because a string may contain one.
+        TomlEditor.TryRead(file, ["job"], "dateformat", out var format, out _).ShouldBeTrue();
+        format.ShouldBe("\"%Y#%m\"");
+    }
 }

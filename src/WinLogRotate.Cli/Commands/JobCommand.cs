@@ -77,6 +77,92 @@ internal static class JobCommand
     }
 
     /// <summary>
+    /// Changes keys on a job that already exists, in the file it already lives in.
+    /// </summary>
+    /// <remarks>
+    /// The same apply path as <see cref="Add"/> over a file somebody else wrote, which is the
+    /// case that matters: a file this product created will always round-trip, and the hazard is
+    /// the hand-written one with a comment in it, an unknown key, and an <c>allowdangerous</c>
+    /// entry somebody argued for.
+    /// </remarks>
+    public static int Set(
+        CommandContext ctx, string name, string? configDir, IReadOnlyList<JobEdit> edits,
+        bool dryRun, Func<bool>? elevated = null)
+    {
+        if (Refuse(ctx, "job set", name, edits, dryRun, elevated) is { } refused)
+        {
+            return refused;
+        }
+
+        var (_, guard, index) = Open(configDir);
+
+        if (Find(ctx, "job set", name, index) is not { } path)
+        {
+            return ExitCode.ConfigInvalid;
+        }
+
+        if (edits.Count == 0)
+        {
+            return Refusals.CannotUse<JobEditResult>(
+                ctx, "job set", name, "a job with anything to change",
+                "Name at least one key: --set rotate=14, or --unset rotate to inherit it again.");
+        }
+
+        TomlFile file;
+
+        try
+        {
+            file = TomlFile.Load(path);
+        }
+        catch (Exception e) when (e is IOException or UnauthorizedAccessException)
+        {
+            ctx.Output.Diagnostic(new CliDiagnostic
+            {
+                Severity = Severity.Error,
+                Code = DiagnosticCode.ConfigUnreadable,
+                Message = $"{path} could not be read: {e.Message}",
+                Path = path,
+                Remedy = "Check the permissions on the conf.d directory.",
+            });
+
+            return ctx.Output.Complete<JobEditResult>("job set", ExitCode.Errors, null);
+        }
+
+        // Its own file excluded, or every edit would be refused for colliding with the job
+        // being edited.
+        var proposal = JobDocument.Apply(
+            file, path, edits, index.Defaults, guard, index.NamesInUse(excludingFile: path));
+
+        return Finish(ctx, "job set", name, path, proposal, dryRun, isNew: false);
+    }
+
+    /// <summary>
+    /// The file a named job lives in, or a refusal that says which names exist.
+    /// </summary>
+    /// <remarks>
+    /// Listing them is not decoration. The name in the file is the job's name and the filename is
+    /// only where it lives, so somebody who guessed from <c>dir conf.d</c> has guessed wrong and
+    /// has no other way to find out.
+    /// </remarks>
+    private static string? Find(CommandContext ctx, string verb, string name, JobIndex index)
+    {
+        if (index.FileFor(name) is { } path)
+        {
+            return path;
+        }
+
+        var known = index.Entries.Select(e => e.Name).Order(StringComparer.OrdinalIgnoreCase).ToArray();
+
+        Refusals.CannotUse<JobEditResult>(
+            ctx, verb, name, "a job in this configuration",
+            known.Length == 0
+                ? "There are no jobs yet. Create one with 'winlogrotate job add'."
+                : $"The jobs here are: {string.Join(", ", known)}.");
+
+        return null;
+    }
+
+    /// <summary>
     /// Everything a job verb needs before it can judge anything.
     /// </summary>
     /// <remarks>

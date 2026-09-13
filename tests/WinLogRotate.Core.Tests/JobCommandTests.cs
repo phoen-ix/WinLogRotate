@@ -407,4 +407,303 @@ public sealed class JobCommandTests : IDisposable
 
         Load().Jobs.ShouldHaveSingleItem().Name.ShouldBe("IIS: W3SVC1");
     }
+
+    // ---- job set ------------------------------------------------------------------------
+
+    /// <summary>
+    /// A file a person wrote by hand, with everything in it that makes editing it risky.
+    /// </summary>
+    /// <remarks>
+    /// A file this product created will always round-trip. The hazard is this one: a comment
+    /// somebody argued for, a key the binder does not know, an <c>allowdangerous</c> entry, an
+    /// inline comment on the very key being changed, and CRLF line endings.
+    /// </remarks>
+    private const string HandWritten =
+        "# Rotates the W3SVC logs. Do NOT enable compress - the SIEM reads these live.\r\n"
+        + "schema = 1\r\n"
+        + "\r\n"
+        + "[job]\r\n"
+        + "name  = \"iis\"\r\n"
+        + "paths = [\"C:/inetpub/logs/*.log\"]\r\n"
+        + "rotate = 7   # two weeks was too much\r\n"
+        + "maxage = 90\r\n"
+        + "allowdangerous = [\"C:/inetpub/logs\"]\r\n"
+        + "ownr = \"team-web\"\r\n";
+
+    private string WriteHandWritten()
+    {
+        Directory.CreateDirectory(ConfD);
+        var path = Path.Combine(ConfD, "iis.toml");
+        File.WriteAllText(path, HandWritten);
+        return path;
+    }
+
+    /// <summary>
+    /// One key changes exactly one line, and every other byte survives.
+    /// </summary>
+    /// <remarks>
+    /// The property the whole design exists for. Asserted as a line-by-line diff rather than as
+    /// "the comment is still there", because the ways to lose a byte here are many and naming
+    /// three of them would pin three of them.
+    /// </remarks>
+    [Fact]
+    public void OneKeyChangesExactlyOneLine()
+    {
+        var path = WriteHandWritten();
+        var (sink, ctx) = Context();
+
+        JobCommand.Set(ctx, "iis", Root, Edits(("rotate", "14")), dryRun: false, Elevated)
+            .ShouldBe(ExitCode.Ok, Why(sink));
+
+        var before = HandWritten.Split("\r\n");
+        var after = File.ReadAllText(path).Split("\r\n");
+
+        after.Length.ShouldBe(before.Length, "no line was added or removed");
+
+        var differing = before.Zip(after).Index()
+            .Where(x => x.Item.First != x.Item.Second)
+            .ToArray();
+
+        differing.Length.ShouldBe(1);
+        differing[0].Item.First.ShouldBe("rotate = 7   # two weeks was too much");
+        differing[0].Item.Second.ShouldBe("rotate = 14   # two weeks was too much");
+    }
+
+    /// <summary>
+    /// The line endings are the document's, not this platform's.
+    /// </summary>
+    /// <remarks>
+    /// Separate from the diff above because it is the one difference a diff of split lines
+    /// cannot see: rewriting CRLF as LF changes every line and nothing about the meaning, which
+    /// is how a one-key edit turns into a whole-file change in somebody's version control.
+    /// </remarks>
+    [Fact]
+    public void TheLineEndingsAreTheDocumentsOwn()
+    {
+        var path = WriteHandWritten();
+        var (sink, ctx) = Context();
+
+        JobCommand.Set(ctx, "iis", Root, Edits(("rotate", "14")), dryRun: false, Elevated)
+            .ShouldBe(ExitCode.Ok, Why(sink));
+
+        var text = File.ReadAllText(path);
+        text.ShouldContain("\r\n");
+        text.Replace("\r\n", string.Empty, StringComparison.Ordinal).ShouldNotContain("\n");
+    }
+
+    /// <summary>An unset key is removed, so the job inherits it from [defaults] again.</summary>
+    /// <remarks>
+    /// The rule the <c>[defaults]</c> decision needs: a cleared field means inherit again, never
+    /// set to zero. Asserted through the loader, because the difference between the two is
+    /// invisible in the file and decisive in the run.
+    /// </remarks>
+    [Fact]
+    public void AnUnsetKeyInheritsAgainRatherThanBecomingZero()
+    {
+        File.WriteAllText(Path.Combine(Root, "config.toml"), "schema = 1\n\n[defaults]\nrotate = 4\n");
+        WriteHandWritten();
+
+        var (sink, ctx) = Context();
+
+        JobCommand.Set(ctx, "iis", Root, Edits(("rotate", null)), dryRun: false, Elevated)
+            .ShouldBe(ExitCode.Ok, Why(sink));
+
+        File.ReadAllText(Path.Combine(ConfD, "iis.toml")).ShouldNotContain("rotate =");
+        Load().Jobs.ShouldHaveSingleItem().Rotate.ShouldBe(4, "from [defaults], not 0");
+    }
+
+    /// <summary>A key that was already what was asked for is not written at all.</summary>
+    /// <remarks>
+    /// Rewriting to identical bytes would change the file's timestamp and its descriptor for
+    /// nothing, and a backup tool would report a change that is not one.
+    /// </remarks>
+    [Fact]
+    public void AKeyThatAlreadySaysThatIsNotWritten()
+    {
+        var path = WriteHandWritten();
+
+        // Stamped rather than read back: a filesystem may report the write's own timestamp with
+        // less resolution than it stores, and a test that is flaky about the thing it asserts is
+        // worse than no test.
+        var stamp = new DateTime(2020, 1, 1, 0, 0, 0, DateTimeKind.Utc);
+        File.SetLastWriteTimeUtc(path, stamp);
+
+        var (sink, ctx) = Context();
+
+        JobCommand.Set(ctx, "iis", Root, Edits(("rotate", "7")), dryRun: false, Elevated)
+            .ShouldBe(ExitCode.Ok, Why(sink));
+
+        File.ReadAllText(path).ShouldBe(HandWritten);
+        File.GetLastWriteTimeUtc(path).ShouldBe(stamp, "the file was not touched at all");
+
+        var result = sink.Result.ShouldBeOfType<JobEditResult>();
+        result.Written.ShouldBeFalse();
+        result.Changes.ShouldHaveSingleItem().Kind.ShouldBe("Unchanged");
+    }
+
+    /// <summary>Unsetting a key that is not there is not an error.</summary>
+    [Fact]
+    public void UnsettingAKeyThatIsNotThereIsNotAnError()
+    {
+        var path = WriteHandWritten();
+        var (sink, ctx) = Context();
+
+        JobCommand.Set(ctx, "iis", Root, Edits(("compress", null)), dryRun: false, Elevated)
+            .ShouldBe(ExitCode.Ok, Why(sink));
+
+        File.ReadAllText(path).ShouldBe(HandWritten);
+    }
+
+    /// <summary>
+    /// A job that is not there is refused, and the refusal says which jobs are.
+    /// </summary>
+    /// <remarks>
+    /// The name in the file is the job's name and the filename is only where it lives, so
+    /// somebody who guessed from a directory listing has guessed wrong and has no other way to
+    /// find out.
+    /// </remarks>
+    [Fact]
+    public void AJobThatIsNotThereIsRefusedAndSaysWhichAre()
+    {
+        WriteHandWritten();
+        var (sink, ctx) = Context();
+
+        JobCommand.Set(ctx, "nginx", Root, Edits(("rotate", "14")), dryRun: false, Elevated)
+            .ShouldBe(ExitCode.ConfigInvalid);
+
+        sink.Diagnostics.ShouldHaveSingleItem().Remedy.ShouldNotBeNull().ShouldContain("iis");
+    }
+
+    /// <summary>A job is not a duplicate of itself.</summary>
+    /// <remarks>
+    /// Without excluding its own file from the names in use, every edit would be refused for
+    /// colliding with the job being edited.
+    /// </remarks>
+    [Fact]
+    public void EditingAJobDoesNotReportItAsADuplicateOfItself()
+    {
+        WriteHandWritten();
+        var (sink, ctx) = Context();
+
+        JobCommand.Set(ctx, "iis", Root, Edits(("rotate", "14")), dryRun: false, Elevated)
+            .ShouldBe(ExitCode.Ok, Why(sink));
+
+        // The file's own warnings are forwarded and are not the point; nothing may claim the job
+        // collides with itself, and nothing may be an error.
+        sink.Diagnostics.ShouldAllBe(d => d.Severity < Severity.Error);
+        sink.Diagnostics.ShouldNotContain(d => d.Message.Contains("already defined", StringComparison.Ordinal));
+    }
+
+    /// <summary>An edit that names nothing is refused rather than reported as a success.</summary>
+    [Fact]
+    public void AnEditThatNamesNothingIsRefused()
+    {
+        WriteHandWritten();
+        var (sink, ctx) = Context();
+
+        JobCommand.Set(ctx, "iis", Root, [], dryRun: false, Elevated)
+            .ShouldBe(ExitCode.ConfigInvalid);
+
+        sink.Diagnostics.ShouldHaveSingleItem().Remedy.ShouldNotBeNull().ShouldContain("--unset");
+    }
+
+    /// <summary>
+    /// An edit that would make the job invalid is refused, and the file is left as it was.
+    /// </summary>
+    /// <remarks>
+    /// The one that matters most: an editor that judged after writing would leave the operator
+    /// with a broken job and a message about it.
+    /// </remarks>
+    [Fact]
+    public void AnEditThatWouldBreakTheJobLeavesTheFileAsItWas()
+    {
+        var path = WriteHandWritten();
+        var (sink, ctx) = Context();
+
+        JobCommand.Set(ctx, "iis", Root, Edits(("rotate", "-2")), dryRun: false, Elevated)
+            .ShouldBe(ExitCode.ConfigInvalid);
+
+        sink.Diagnostics.ShouldNotBeEmpty();
+        File.ReadAllText(path).ShouldBe(HandWritten);
+    }
+
+    /// <summary>An unknown key already in the file is left alone by an edit to another key.</summary>
+    /// <remarks>
+    /// The binder warns about <c>ownr</c> and ignores it; an editor that "cleaned up" what it
+    /// did not recognise would delete somebody's annotation, and the warning is what tells them
+    /// to fix it.
+    /// </remarks>
+    [Fact]
+    public void AnUnknownKeyInTheFileSurvivesAnEditToAnother()
+    {
+        var path = WriteHandWritten();
+        var (sink, ctx) = Context();
+
+        JobCommand.Set(ctx, "iis", Root, Edits(("rotate", "14")), dryRun: false, Elevated)
+            .ShouldBe(ExitCode.Ok, Why(sink));
+
+        File.ReadAllText(path).ShouldContain("ownr = \"team-web\"");
+    }
+
+    /// <summary>
+    /// A key the binder does not read can still be removed, and only removed.
+    /// </summary>
+    /// <remarks>
+    /// The binder warns "'ownr' is not a [job] setting, and is ignored" with a remedy that says
+    /// "Remove it", and until now there was no way to do that but Notepad - the product naming a
+    /// problem and offering nothing. Writing such a key stays refused, because a key the binder
+    /// ignores is a key that does nothing. It also means a file written by a newer schema can be
+    /// tidied by an older build rather than being untouchable by it.
+    /// </remarks>
+    [Fact]
+    public void AKeyTheBinderDoesNotReadCanStillBeRemoved()
+    {
+        var path = WriteHandWritten();
+        var (sink, ctx) = Context();
+
+        JobCommand.Set(ctx, "iis", Root, Edits(("ownr", null)), dryRun: false, Elevated)
+            .ShouldBe(ExitCode.Ok, Why(sink));
+
+        var after = File.ReadAllText(path);
+        after.ShouldNotContain("ownr");
+        after.ShouldContain("# Rotates the W3SVC logs", Case.Sensitive);
+        after.ShouldContain("rotate = 7   # two weeks was too much", Case.Sensitive);
+
+        sink.Result.ShouldBeOfType<JobEditResult>()
+            .Changes.ShouldHaveSingleItem().Before.ShouldBe("\"team-web\"");
+    }
+
+    /// <summary>But writing one is still refused.</summary>
+    [Fact]
+    public void AKeyTheBinderDoesNotReadStillCannotBeWritten()
+    {
+        var path = WriteHandWritten();
+        var (sink, ctx) = Context();
+
+        JobCommand.Set(ctx, "iis", Root, Edits(("ownr", "team-db")), dryRun: false, Elevated)
+            .ShouldBe(ExitCode.ConfigInvalid);
+
+        sink.Diagnostics.ShouldNotBeEmpty();
+        File.ReadAllText(path).ShouldBe(HandWritten);
+    }
+
+    /// <summary>And unsetting a key that is neither known nor present says both.</summary>
+    [Fact]
+    public void UnsettingAKeyThatIsNeitherKnownNorPresentIsRefused()
+    {
+        WriteHandWritten();
+        var (sink, ctx) = Context();
+
+        JobCommand.Set(ctx, "iis", Root, Edits(("teamm", null)), dryRun: false, Elevated)
+            .ShouldBe(ExitCode.ConfigInvalid);
+
+        sink.Diagnostics.ShouldHaveSingleItem().Message
+            .ShouldContain("does not have it either");
+    }
+
+    /// <summary>What the verb said, for an assertion that would otherwise only report a number.</summary>
+    private static string Why(Capturing sink) =>
+        sink.Diagnostics.Count == 0
+            ? "no diagnostic was raised"
+            : string.Join(" | ", sink.Diagnostics.Select(d => $"{d.Code} {d.Message}"));
 }
