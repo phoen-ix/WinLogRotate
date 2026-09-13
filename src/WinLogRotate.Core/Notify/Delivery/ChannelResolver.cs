@@ -23,6 +23,13 @@ public sealed record ResolvedChannels
 /// operator believes authentication is working right up until the relay tightens.
 /// </para>
 /// <para>
+/// So is a provider that lacks what its transport needs - a webhook with no <c>url</c>, a relay
+/// with no <c>host</c> - and an inline <c>smtp:</c> or <c>pushover:</c> target with no provider to
+/// borrow from. Each of those used to reach its sender and come back as a 4xx, which the dispatcher
+/// then recorded as the message having been reported. <see cref="NotifyProviderRules"/> holds the
+/// list, and <c>ConfigLoader</c> applies the same one at load time.
+/// </para>
+/// <para>
 /// Provider names are matched before inline schemes, exactly as <c>ConfigLoader</c> does when it
 /// validates the same list. The two must agree: a target that validates as a provider and resolves
 /// as a command line would pass <c>config check</c> and then do something else entirely.
@@ -46,8 +53,8 @@ public static class ChannelResolver
                 p => string.Equals(p.Name, target, StringComparison.OrdinalIgnoreCase));
 
             var channel = provider is null
-                ? FromInline(target, settings, senders, diagnostics)
-                : FromProvider(provider, settings, secrets, senders, diagnostics);
+                ? FromInline(target, settings, providers, secrets, senders, diagnostics)
+                : FromProvider(provider, inline: null, settings, secrets, senders, diagnostics);
 
             if (channel is null)
             {
@@ -67,8 +74,17 @@ public static class ChannelResolver
         return new ResolvedChannels { Channels = channels, Diagnostics = diagnostics };
     }
 
+    /// <summary>
+    /// A channel backed by a provider table - named in <c>to</c>, or borrowed by an inline target.
+    /// </summary>
+    /// <param name="inline">
+    /// The <c>smtp:</c> or <c>pushover:</c> target borrowing this provider, or null when the target
+    /// named the provider itself. An inline target keeps its own action, and so its own breaker key
+    /// and display: a breaker opened by <c>smtp:oncall@example.com</c> must not suppress
+    /// <c>email.relay</c> named beside it, and <c>notify status</c> has to tell them apart.
+    /// </param>
     private static ResolvedChannel? FromProvider(
-        NotifyProvider provider, NotifySettings settings, ISecretResolver secrets,
+        NotifyProvider provider, HookAction? inline, NotifySettings settings, ISecretResolver secrets,
         SenderTable senders, List<CliDiagnostic> diagnostics)
     {
         if (!provider.Enabled)
@@ -76,12 +92,34 @@ public static class ChannelResolver
             return null;
         }
 
-        var scheme = provider.Kind switch
+        var scheme = inline?.Scheme ?? provider.Kind switch
         {
             NotifyProviderKind.Email => HookScheme.Smtp,
             NotifyProviderKind.Pushover => HookScheme.Pushover,
             _ => HookScheme.Http,
         };
+
+        var display = inline is null ? provider.Name : DisplayOf(inline);
+        var userKeyFromTarget = inline?.Scheme == HookScheme.Pushover;
+
+        // Before any credential is fetched: a provider that cannot be used is not worth opening
+        // the secret store for, and the message has to name the field rather than the symptom.
+        if (NotifyProviderRules.Missing(provider, userKeyFromTarget) is { } lack)
+        {
+            diagnostics.Add(new CliDiagnostic
+            {
+                Severity = Severity.Warning,
+                Code = DiagnosticCode.NotifyMisconfigured,
+                Message = inline is null
+                    ? $"'{provider.Name}' will not be used: it {lack.Clause}."
+                    : $"'{display}' will not be used: '{provider.Name}' {lack.Clause}.",
+                Line = provider.Line == 0 ? null : provider.Line,
+                Column = provider.Column == 0 ? null : provider.Column,
+                Remedy = lack.Remedy,
+            });
+
+            return null;
+        }
 
         // Resolved in the order the transports need them, and the first failure drops the whole
         // provider - a webhook with a URL but no token is not half usable.
@@ -90,6 +128,13 @@ public static class ChannelResolver
 
         foreach (var (field, reference) in provider.Credentials())
         {
+            // An inline pushover:KEY brings its own user key; the provider's, if it has one, is
+            // for the target that names the provider.
+            if (userKeyFromTarget && field == "user_key")
+            {
+                continue;
+            }
+
             var resolution = secrets.Resolve(reference);
 
             if (!resolution.Ok)
@@ -98,8 +143,10 @@ public static class ChannelResolver
                 {
                     Severity = Severity.Warning,
                     Code = DiagnosticCode.NotifyMisconfigured,
-                    Message = $"'{provider.Name}' will not be used: its {field} could not be read "
-                            + $"({resolution.Error}).",
+                    Message = inline is null
+                        ? $"'{provider.Name}' will not be used: its {field} could not be read ({resolution.Error})."
+                        : $"'{display}' will not be used: the {field} of '{provider.Name}' could not be read "
+                          + $"({resolution.Error}).",
                     Line = reference.Line == 0 ? null : reference.Line,
                     Column = reference.Column == 0 ? null : reference.Column,
                     Remedy = reference.Source == SecretSource.Store
@@ -122,40 +169,35 @@ public static class ChannelResolver
             }
         }
 
-        if (provider.Kind == NotifyProviderKind.Email
-            && provider.Delivery == SmtpDelivery.Network
-            && provider.Auth == SmtpAuth.Login
-            && !credential.HasValue)
+        if (Refused(scheme, display, senders, diagnostics))
         {
-            diagnostics.Add(new CliDiagnostic
-            {
-                Severity = Severity.Warning,
-                Code = DiagnosticCode.NotifyMisconfigured,
-                Message = $"'{provider.Name}' uses auth = \"login\" but names no password.",
-                Line = provider.Line == 0 ? null : provider.Line,
-                Remedy = "Set password = \"@secret:NAME\", or auth = \"none\" for an IP-authorised relay.",
-            });
-
             return null;
         }
 
-        return Refused(scheme, provider.Name, senders, diagnostics)
-            ? null
-            : new ResolvedChannel
-            {
-                Action = HookAction.Create(
-                    scheme, provider.Name, provider.Name, provider: provider.Name,
-                    line: provider.Line, column: provider.Column),
-                Provider = provider,
-                Target = address,
-                Credential = credential,
-                Limit = LimitFor(scheme, provider),
-                Pin = settings.ServerCertThumbprint,
-            };
+        // An inline target's address is the target itself: the URL of an http: target, the user
+        // key of a pushover: one. An smtp: target's address is a recipient, not a secret, and the
+        // sender reads it from the action.
+        if (inline is not null && inline.Scheme is HookScheme.Http or HookScheme.Pushover)
+        {
+            address = SecretString.From(inline.Target);
+        }
+
+        return new ResolvedChannel
+        {
+            Action = inline ?? HookAction.Create(
+                scheme, provider.Name, provider.Name, provider: provider.Name,
+                line: provider.Line, column: provider.Column),
+            Provider = provider,
+            Target = address,
+            Credential = credential,
+            Limit = LimitFor(scheme, provider),
+            Pin = settings.ServerCertThumbprint,
+        };
     }
 
     private static ResolvedChannel? FromInline(
-        string target, NotifySettings settings, SenderTable senders, List<CliDiagnostic> diagnostics)
+        string target, NotifySettings settings, IReadOnlyList<NotifyProvider> providers,
+        ISecretResolver secrets, SenderTable senders, List<CliDiagnostic> diagnostics)
     {
         var parsed = HookParser.Parse(target);
 
@@ -166,11 +208,34 @@ public static class ChannelResolver
             return null;
         }
 
-        var display = action.Display is { Length: > 0 } shown ? shown : action.Raw;
+        var display = DisplayOf(action);
 
         if (Refused(action.Scheme, display, senders, diagnostics))
         {
             return null;
+        }
+
+        // smtp: and pushover: are complete only with a provider behind them - the relay, the
+        // application token. Exactly one enabled provider of the kind, or the target is dropped
+        // and the diagnostic says which of the two ways to fix it applies.
+        var pairing = NotifyProviderRules.Pair(action.Scheme, display, providers);
+
+        if (pairing.Problem is { } problem)
+        {
+            diagnostics.Add(new CliDiagnostic
+            {
+                Severity = Severity.Warning,
+                Code = DiagnosticCode.NotifyMisconfigured,
+                Message = problem,
+                Remedy = pairing.Remedy,
+            });
+
+            return null;
+        }
+
+        if (pairing.Provider is { } borrowed)
+        {
+            return FromProvider(borrowed, action, settings, secrets, senders, diagnostics);
         }
 
         // An inline http: target carries its own URL, and it is still a credential.
@@ -186,6 +251,10 @@ public static class ChannelResolver
             Pin = settings.ServerCertThumbprint,
         };
     }
+
+    /// <summary>What was written, masked - falling back to the raw text for <c>eventlog:</c>, whose remainder is empty.</summary>
+    private static string DisplayOf(HookAction action) =>
+        action.Display is { Length: > 0 } shown ? shown : action.Raw;
 
     /// <summary>Reports a scheme that parses but is not a notification target, rather than ignoring it.</summary>
     private static bool Refused(

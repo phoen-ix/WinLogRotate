@@ -216,7 +216,8 @@ public sealed class SmtpNotifySender : INotifySender
         return mail;
     }
 
-    private static IEnumerable<string> Recipients(NotifyProvider provider, ResolvedChannel channel)
+    /// <summary>The provider's standing list, then the address an <c>smtp:</c> target named, once each.</summary>
+    internal static IEnumerable<string> Recipients(NotifyProvider provider, ResolvedChannel channel)
     {
         var seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
 

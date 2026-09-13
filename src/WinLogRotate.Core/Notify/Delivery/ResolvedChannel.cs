@@ -49,10 +49,18 @@ public sealed record ResolvedChannel
 
     /// <summary>Masked, and the only safe thing to print.</summary>
     /// <remarks>
+    /// <para>
+    /// The provider's name when the target named a provider, and what was written otherwise -
+    /// including for an <c>smtp:</c> or <c>pushover:</c> target that borrows a provider, which
+    /// keeps its own name so that two targets reaching one relay do not print as one.
+    /// </para>
+    /// <para>
     /// Falls back to what was written, because <c>eventlog:</c> is a complete target with an empty
     /// remainder and <c>HookAction.Display</c> renders it as nothing at all - which reads as a
     /// defect in every message that names a channel.
+    /// </para>
     /// </remarks>
-    public string Display => Provider?.Name
-        ?? (Action.Display is { Length: > 0 } shown ? shown : Action.Raw);
+    public string Display => Action.Provider is { Length: > 0 } named
+        ? named
+        : Action.Display is { Length: > 0 } shown ? shown : Action.Raw;
 }

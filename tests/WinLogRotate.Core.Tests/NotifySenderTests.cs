@@ -591,8 +591,173 @@ public sealed class NotifySenderTests : IDisposable
         // operator believes was sent.
         var resolved = ChannelResolver.Resolve(
             NotifySettings.Default with { To = ["pushover:uQiRzpo4"] },
-            [], Resolver(), Table(HookScheme.Pushover));
+            [PushoverApp()], Resolver(), Table(HookScheme.Pushover));
 
         resolved.Channels.ShouldHaveSingleItem().Limit.ShouldBe(MessageComposer.PushoverLimit);
     }
+
+    // ---- inline targets that borrow a provider ------------------------------------------------
+
+    private static NotifyProvider EmailRelay(string name = "email.relay", bool enabled = true) => new()
+    {
+        Name = name,
+        Kind = NotifyProviderKind.Email,
+        Enabled = enabled,
+        Host = "smtp.example.test",
+        From = "winlogrotate@example.test",
+        To = ["ops@example.test"],
+    };
+
+    private static NotifyProvider PushoverApp(string name = "pushover.app") => new()
+    {
+        Name = name,
+        Kind = NotifyProviderKind.Pushover,
+        Token = SecretRef.Parse("azGDORePK8gMaC0QOYAMyEEuzJnyUi"),
+    };
+
+    /// <summary>
+    /// The documented <c>smtp:ops@example.com</c> target, next to the provider it needs.
+    /// </summary>
+    /// <remarks>
+    /// docs/notifications.md has said since milestone 10 that an <c>smtp:</c> target "needs a
+    /// <c>[notify.email.*]</c> provider for the relay", and that the provider's <c>to</c> combines
+    /// with the address in the target. The resolver never handed an inline target a provider, so the
+    /// channel reached the sender with <c>Provider = null</c>, the sender answered 400, and the
+    /// dispatcher recorded the message as reported. The documented target had never once worked.
+    /// </remarks>
+    [Fact]
+    public void AnInlineSmtpTargetPairsWithTheOnlyEmailProvider()
+    {
+        var resolved = ChannelResolver.Resolve(
+            NotifySettings.Default with { To = ["smtp:oncall@example.test"] },
+            [EmailRelay()], Resolver(), Table(HookScheme.Smtp));
+
+        var channel = resolved.Channels.ShouldHaveSingleItem();
+        channel.Provider.ShouldNotBeNull().Name.ShouldBe("email.relay");
+        channel.Action.Scheme.ShouldBe(HookScheme.Smtp);
+
+        // Its own identity, not the provider's: a breaker opened by this target must not suppress
+        // the provider named beside it, and notify status must be able to tell them apart. The
+        // display is the address, as it is for every inline target; the key carries the scheme.
+        channel.Key.ShouldBe("smtp:oncall@example.test");
+        channel.Display.ShouldBe("oncall@example.test");
+
+        // The provider's standing list, plus the address the target named.
+        SmtpNotifySender.Recipients(channel.Provider!, channel)
+            .ShouldBe(["ops@example.test", "oncall@example.test"]);
+
+        resolved.Diagnostics.ShouldBeEmpty();
+    }
+
+    [Fact]
+    public void AnInlineSmtpTargetWithNoEmailProviderIsDroppedAndSaysWhatItNeeds()
+    {
+        // Dropped rather than attempted: the sender would answer 400 with no relay to talk to, and
+        // until C3 that answer was recorded as the message having been reported.
+        var resolved = ChannelResolver.Resolve(
+            NotifySettings.Default with { To = ["smtp:oncall@example.test"] },
+            [], Resolver(), Table(HookScheme.Smtp));
+
+        resolved.Channels.ShouldBeEmpty();
+
+        var dropped = resolved.Diagnostics.ShouldHaveSingleItem();
+        dropped.Code.ShouldBe(DiagnosticCode.NotifyMisconfigured);
+        dropped.Message.ShouldContain("[notify.email");
+    }
+
+    [Fact]
+    public void AnInlineSmtpTargetWithTwoEmailProvidersIsDroppedAndNamesThem()
+    {
+        // "The relay" is unambiguous with one email provider and a guess with two. Taking the one
+        // written higher up would route mail through whichever table happened to come first, and
+        // nothing would say so.
+        var resolved = ChannelResolver.Resolve(
+            NotifySettings.Default with { To = ["smtp:oncall@example.test"] },
+            [EmailRelay("email.a"), EmailRelay("email.b")], Resolver(), Table(HookScheme.Smtp));
+
+        resolved.Channels.ShouldBeEmpty();
+
+        var dropped = resolved.Diagnostics.ShouldHaveSingleItem();
+        dropped.Code.ShouldBe(DiagnosticCode.NotifyMisconfigured);
+        dropped.Message.ShouldContain("email.a");
+        dropped.Message.ShouldContain("email.b");
+    }
+
+    [Fact]
+    public void ADisabledEmailProviderDoesNotCountTowardsThePairing()
+    {
+        var resolved = ChannelResolver.Resolve(
+            NotifySettings.Default with { To = ["smtp:oncall@example.test"] },
+            [EmailRelay("email.old", enabled: false), EmailRelay("email.new")], Resolver(), Table(HookScheme.Smtp));
+
+        resolved.Channels.ShouldHaveSingleItem().Provider.ShouldNotBeNull().Name.ShouldBe("email.new");
+    }
+
+    [Fact]
+    public void AnInlinePushoverTargetTakesItsTokenFromTheOnlyPushoverProvider()
+    {
+        // pushover:KEY carries the user key; the application token has to come from somewhere, and
+        // the docs say the provider table. It came from nowhere, so the sender answered 401.
+        var resolved = ChannelResolver.Resolve(
+            NotifySettings.Default with { To = ["pushover:uQiRzpo4DXghDmr9QzzfQu27cmVRsG"] },
+            [PushoverApp()], Resolver(), Table(HookScheme.Pushover));
+
+        var channel = resolved.Channels.ShouldHaveSingleItem();
+        channel.Provider.ShouldNotBeNull().Name.ShouldBe("pushover.app");
+        channel.Credential.HasValue.ShouldBeTrue("the application token comes from the provider");
+        channel.Target.HasValue.ShouldBeTrue("the user key is the target itself");
+        channel.Key.ShouldBe("pushover:uqirzpo4dxghdmr9qzzfqu27cmvrsg");
+    }
+
+    /// <summary>
+    /// A provider that lacks what its transport needs is dropped here, before anything is sent.
+    /// </summary>
+    /// <remarks>
+    /// A webhook table with no <c>url</c> resolved to a channel whose target was an empty string;
+    /// the sender built a request with a null URI, caught the resulting exception as a 400, and the
+    /// dispatcher recorded the message as reported. The only check the resolver made was
+    /// login-without-password. Every transport's prerequisites are now checked in one place, and
+    /// <c>ConfigLoader</c> applies the same list at load time so <c>config check</c> agrees.
+    /// </remarks>
+    [Theory]
+    [InlineData("webhook-without-url", "url")]
+    [InlineData("pushover-without-token", "token")]
+    [InlineData("pushover-without-user-key", "user_key")]
+    [InlineData("email-without-host", "host")]
+    [InlineData("pickup-without-directory", "pickup_directory")]
+    public void AProviderMissingWhatItsTransportNeedsIsDroppedBeforeAnythingIsSent(string shape, string field)
+    {
+        var provider = Incomplete(shape);
+
+        var resolved = ChannelResolver.Resolve(
+            NotifySettings.Default with { To = [provider.Name] },
+            [provider], Resolver(), Table(HookScheme.Http, HookScheme.Pushover, HookScheme.Smtp));
+
+        resolved.Channels.ShouldBeEmpty();
+
+        var dropped = resolved.Diagnostics.ShouldHaveSingleItem();
+        dropped.Code.ShouldBe(DiagnosticCode.NotifyMisconfigured);
+        dropped.Message.ShouldContain(field);
+        dropped.Message.ShouldContain(provider.Name);
+    }
+
+    private static NotifyProvider Incomplete(string shape) => shape switch
+    {
+        "webhook-without-url" => new NotifyProvider { Name = "webhook.hook", Kind = NotifyProviderKind.Webhook },
+        "pushover-without-token" => new NotifyProvider
+        {
+            Name = "pushover.app",
+            Kind = NotifyProviderKind.Pushover,
+            UserKey = SecretRef.Parse("uQiRzpo4DXghDmr9QzzfQu27cmVRsG"),
+        },
+        "pushover-without-user-key" => PushoverApp(),
+        "email-without-host" => new NotifyProvider { Name = "email.relay", Kind = NotifyProviderKind.Email },
+        "pickup-without-directory" => new NotifyProvider
+        {
+            Name = "email.pickup",
+            Kind = NotifyProviderKind.Email,
+            Delivery = SmtpDelivery.PickupDirectory,
+        },
+        _ => throw new ArgumentOutOfRangeException(nameof(shape)),
+    };
 }

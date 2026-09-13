@@ -1,7 +1,9 @@
 using Shouldly;
 using WinLogRotate.Contracts;
+using WinLogRotate.Core;
 using WinLogRotate.Core.Configuration;
 using WinLogRotate.Core.Notify;
+using WinLogRotate.Core.Safety;
 using WinLogRotate.Core.Secrets;
 using Xunit;
 
@@ -299,6 +301,112 @@ public sealed class NotifyProviderBindingTests
     {
         Bind("schema = 1\n[notify]\nto = []\n").ShouldBeEmpty();
         _bag.Items.ShouldBeEmpty();
+    }
+}
+
+/// <summary>
+/// What loading a configuration says about <c>[notify] to</c>, before anything is resolved.
+/// </summary>
+/// <remarks>
+/// The loader and the resolver apply one list of prerequisites, and these pin the loader's half:
+/// a provider a target names but that its transport could not use, and an inline target with no
+/// provider to borrow from or too many, are reported at <c>config check</c> rather than discovered
+/// on the night the message does not go.
+/// </remarks>
+public sealed class NotifyTargetValidationTests : IDisposable
+{
+    private readonly DirectoryInfo _dir = Directory.CreateTempSubdirectory("winlogrotate-targets-");
+
+    public void Dispose()
+    {
+        try { _dir.Delete(recursive: true); } catch (IOException) { }
+    }
+
+    private IReadOnlyList<ConfigDiagnostic> Load(string toml)
+    {
+        File.WriteAllText(Path.Combine(_dir.FullName, "config.toml"), toml);
+        Directory.CreateDirectory(Path.Combine(_dir.FullName, "conf.d"));
+
+        return ConfigLoader.Load(
+            InstallPaths.Resolve(_dir.FullName),
+            new PathGuard(new GuardOptions()),
+            new UnknownSecretLookup(),
+            quarantineBadFiles: false).Diagnostics;
+    }
+
+    private const string Relay = """
+        [notify.email.relay]
+        host = "smtp.example.test"
+        to = ["ops@example.test"]
+        """;
+
+    [Fact]
+    public void AnInlineSmtpTargetWithNoEmailProviderIsReportedAtLoadTime()
+    {
+        var found = Load("""
+            schema = 1
+            [notify]
+            to = ["smtp:oncall@example.test"]
+            """).Where(d => d.Code == DiagnosticCode.NotifyMisconfigured).ShouldHaveSingleItem();
+
+        found.Severity.ShouldBe(Severity.Warning, "a notification problem must not stop a rotation");
+        found.Message.ShouldContain("[notify.email");
+    }
+
+    [Fact]
+    public void AnInlineSmtpTargetWithTwoEmailProvidersIsReportedAtLoadTime()
+    {
+        var found = Load($"""
+            schema = 1
+            [notify]
+            to = ["smtp:oncall@example.test"]
+            {Relay}
+            [notify.email.other]
+            host = "smtp2.example.test"
+            """).Where(d => d.Code == DiagnosticCode.NotifyMisconfigured).ShouldHaveSingleItem();
+
+        found.Message.ShouldContain("email.relay");
+        found.Message.ShouldContain("email.other");
+    }
+
+    [Fact]
+    public void AnInlineSmtpTargetWithOneEmailProviderIsNotAProblem()
+    {
+        Load($"""
+            schema = 1
+            [notify]
+            to = ["smtp:oncall@example.test"]
+            {Relay}
+            """).ShouldNotContain(d => d.Code == DiagnosticCode.NotifyMisconfigured);
+    }
+
+    [Fact]
+    public void AWebhookProviderWithoutAUrlIsReportedAtLoadTime()
+    {
+        var found = Load("""
+            schema = 1
+            [notify]
+            to = ["webhook.slack"]
+            [notify.webhook.slack]
+            body = '{"text": "{body}"}'
+            """).Where(d => d.Code == DiagnosticCode.NotifyMisconfigured).ShouldHaveSingleItem();
+
+        found.Severity.ShouldBe(Severity.Warning);
+        found.Message.ShouldContain("url");
+        found.Line.ShouldBeGreaterThan(0, "it points at the provider table");
+    }
+
+    [Fact]
+    public void ADisabledProviderIsNotJudgedOnWhatItLacks()
+    {
+        // Switched off on purpose, so whatever it is missing is not tonight's problem.
+        Load("""
+            schema = 1
+            [notify]
+            to = ["webhook.slack"]
+            [notify.webhook.slack]
+            enabled = false
+            """).ShouldNotContain(d => d.Code == DiagnosticCode.NotifyMisconfigured);
     }
 }
 

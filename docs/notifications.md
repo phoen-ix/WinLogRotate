@@ -68,6 +68,13 @@ elsewhere in the file - or an **inline target**, written as `scheme:destination`
 | `smtp:` | `smtp:ops@example.com` | a `[notify.email.*]` provider for the relay |
 | `pushover:` | `pushover:uQiRzp6twxx` | a `[notify.pushover.*]` provider for the token |
 
+An inline `smtp:` or `pushover:` target borrows from the **single enabled provider of its kind** —
+the relay and its `from`, or the application token. With none of that kind enabled, or with two, the
+target is dropped and `LR5001` says which, both at `winlogrotate config check` and on the night; name
+the provider in `to` instead and put the address in its own `to` list. A provider a target names but
+that its transport could not use — a webhook without `url`, a relay without `host`, a pickup
+directory left unset — is dropped the same way, with the field named, rather than attempted.
+
 `command:`, `service:` and `event:` are **hooks, not notification targets**, and that is permanent.
 They run — see [hooks](hooks.md) — as a job's `prerotate` and `postrotate`, behind the
 configuration-directory gate.

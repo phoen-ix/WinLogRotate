@@ -38,15 +38,16 @@ public sealed class HttpNotifySender : INotifySender, IDisposable
         var contentType = provider?.ContentType ?? "application/json";
         var method = new HttpMethod((provider?.Method ?? "POST").ToUpperInvariant());
 
-        string url;
-        try
-        {
-            url = channel.Target.Reveal();
-        }
-        catch (InvalidOperationException)
+        // The resolver drops a webhook with no url before it gets here, so this is the last line
+        // rather than the first. It used to be a catch around Reveal(), which never throws - the
+        // empty target went on to build a request with no URI, and the exception that produced
+        // was read as a 400 about the message.
+        if (!channel.Target.HasValue)
         {
             return SendResult.Failed(400, "no URL was resolved for this target");
         }
+
+        var url = channel.Target.Reveal();
 
         var body = NotifyBody.Render(
             provider?.Body, contentType, message.Plan, message.Subject, message.Body, message.Run);

@@ -451,8 +451,19 @@ public static class ConfigLoader
             // A target is either a provider name or an inline scheme string. Provider names are
             // checked first: "email.relay" would otherwise be read as a command line, which is
             // a confusing way to learn you mistyped a provider.
-            if (providers.Any(p => string.Equals(p.Name, target, StringComparison.OrdinalIgnoreCase)))
+            if (providers.FirstOrDefault(p => string.Equals(p.Name, target, StringComparison.OrdinalIgnoreCase))
+                is { } named)
             {
+                // The same list the resolver drops on at run time, said here so config check
+                // agrees with the night's run. A disabled provider is switched off on purpose, and
+                // whatever it lacks is not tonight's problem.
+                if (named.Enabled && NotifyProviderRules.Missing(named) is { } lack)
+                {
+                    diagnostics.Warn(file, DiagnosticCode.NotifyMisconfigured,
+                        $"'{named.Name}' {lack.Clause}, so '{target}' would never be sent.",
+                        named.Line, named.Column, remedy: lack.Remedy);
+                }
+
                 continue;
             }
 
@@ -476,6 +487,25 @@ public static class ConfigLoader
                     diagnostics.Warn(file, DiagnosticCode.NotifyMisconfigured,
                         $"'{target}' names a scheme but nothing to send to.",
                         remedy: "Write the destination after the colon, e.g. service:paramchange:nginx.");
+                    continue;
+                }
+
+                // An smtp: or pushover: target borrows the single enabled provider of its kind, and
+                // the resolver drops it when there is none or more than one. Said here as well, so
+                // the operator learns it from config check rather than from a message that never
+                // arrives.
+                var pairing = NotifyProviderRules.Pair(result.Action.Scheme, target, providers);
+
+                if (pairing.Problem is { } problem)
+                {
+                    diagnostics.Warn(file, DiagnosticCode.NotifyMisconfigured, problem, remedy: pairing.Remedy);
+                }
+                else if (pairing.Provider is { } borrowed
+                         && NotifyProviderRules.Missing(borrowed, userKeyFromTarget: result.Action.Scheme == HookScheme.Pushover) is { } lack)
+                {
+                    diagnostics.Warn(file, DiagnosticCode.NotifyMisconfigured,
+                        $"'{borrowed.Name}' {lack.Clause}, so '{target}' would never be sent.",
+                        borrowed.Line, borrowed.Column, remedy: lack.Remedy);
                 }
 
                 continue;
