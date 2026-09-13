@@ -75,6 +75,29 @@ public static partial class Theme
         form.BackColor = Current.Window;
     }
 
+    /// <summary>
+    /// Themes a window that was opened after the theme was chosen.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// A dialog is built when it is opened, long after <see cref="Apply(Form, bool)"/> walked the
+    /// main window - so without this its controls keep their own defaults. That is survivable for
+    /// a form of text boxes, which draw dark-on-white and merely look out of place, and not for
+    /// one with a <c>DataGridView</c>: its headers stay light on a dark window, which is the
+    /// broken look the grid case in <see cref="Walk"/> exists to prevent.
+    /// </para>
+    /// <para>
+    /// It takes no <c>dark</c> argument on purpose. The theme has already been chosen, and a
+    /// dialog that decided again could disagree with the window it opened over.
+    /// </para>
+    /// </remarks>
+    public static void Apply(Form form)
+    {
+        ApplyDarkTitleBar(form, IsDark);
+        Walk(form, Current);
+        form.BackColor = Current.Window;
+    }
+
     private static void ApplyDarkTitleBar(Form form, bool dark)
     {
         if (!OperatingSystem.IsWindowsVersionAtLeast(10, 0, 17763))

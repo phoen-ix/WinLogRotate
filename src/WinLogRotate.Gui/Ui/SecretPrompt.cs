@@ -123,6 +123,11 @@ public static class SecretPrompt
         form.AcceptButton = ok;
         form.CancelButton = cancel;
 
+        // The same walk the main window got. It was coloured by hand here, which left the text
+        // boxes drawing their own white on a dark form - survivable, inconsistent, and one more
+        // place for the next control added to be missed.
+        Theme.Apply(form);
+
         var answered = owner is null ? form.ShowDialog() : form.ShowDialog(owner);
 
         try

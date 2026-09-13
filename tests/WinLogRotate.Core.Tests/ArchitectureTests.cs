@@ -337,6 +337,26 @@ public partial class ArchitectureTests
             .ShouldBeEmpty(
                 "Theme.Walk's default arm leaves a control's own background alone, so a control "
                 + "that paints one is unreadable in dark mode until the switch names it");
+
+        // And the walk has to actually run on every window. A dialog is built when it is opened,
+        // long after the main window was themed, so one that never asks keeps its controls'
+        // own defaults - and a rule about what the switch handles is worth nothing for a form
+        // the switch never visits.
+        Directory
+            .EnumerateFiles(gui, "*.cs", SearchOption.AllDirectories)
+            .Where(f => !f.Contains(Path.Combine("obj", ""), StringComparison.Ordinal))
+            .Where(f => !f.Contains(Path.Combine("bin", ""), StringComparison.Ordinal))
+            .Select(f => (Name: Path.GetFileName(f), Text: Code(f)))
+            .Where(f => f.Text.Contains("ShowDialog(", StringComparison.Ordinal))
+
+            // LrDialog colours by hand, and must. Its message takes the colour of what it is
+            // reporting - red for an error, amber for a warning - and Walk's job is to make
+            // everything the plain text colour, which would flatten exactly the distinction the
+            // dialog exists to draw. It is the only window here whose colours mean something.
+            .Where(f => f.Name != "LrDialog.cs")
+            .Where(f => !f.Text.Contains("Theme.Apply(", StringComparison.Ordinal))
+            .Select(f => f.Name)
+            .ShouldBeEmpty("a window that opens without Theme.Apply keeps its controls' own colours");
     }
 
     /// <summary>

@@ -109,6 +109,10 @@ public sealed class JobEditor : Form
 
         Build();
         Fill();
+
+        // After the controls exist, because a dialog is built long after the main window was
+        // themed - and an unthemed DataGridView keeps light headers on a dark window.
+        Theme.Apply(this);
     }
 
     /// <summary>
