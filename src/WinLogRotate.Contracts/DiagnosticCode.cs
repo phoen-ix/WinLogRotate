@@ -166,14 +166,22 @@ public static class DiagnosticCode
     public const string StateUnreadable = "LR3107";
 
     /// <summary>
-    /// The rotation clocks exist but cannot be used by this build, so nothing was attempted.
+    /// The rotation clocks exist but cannot be used tonight, so nothing was attempted.
     /// </summary>
     /// <remarks>
-    /// A state file from a newer build. Misreading it would mean rotating on the wrong schedule
-    /// and losing every verdict it holds, and starting over would throw those away just as
-    /// surely - so the run refuses, as it does for a broken configuration, and says which build
-    /// to install. This was an <c>InvalidOperationException</c> nothing caught: exit 4,
-    /// <see cref="InternalError"/>, "a defect in the product", every night after a downgrade.
+    /// <para>
+    /// Two conditions, one answer. A state file from a newer build cannot be read right:
+    /// misreading it would mean rotating on the wrong schedule and losing every verdict it holds.
+    /// A state file something is holding open, or an ACL denies, can be read right tomorrow -
+    /// whereas a fresh baseline written tonight, over a lock that has since cleared, replaces
+    /// every clock and every NUL-fill quarantine in it. Starting over is reserved for a file that
+    /// will not parse, which is <see cref="StateUnreadable"/>.
+    /// </para>
+    /// <para>
+    /// So the run refuses, as it does for a broken configuration. The first case was an
+    /// <c>InvalidOperationException</c> nothing caught and the second an <c>IOException</c> nothing
+    /// caught: exit 4, <see cref="InternalError"/>, "a defect in the product", every night.
+    /// </para>
     /// </remarks>
     public const string StateUnusable = "LR3108";
 

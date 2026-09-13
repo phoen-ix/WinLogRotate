@@ -138,21 +138,32 @@ internal static class RunCommand
 
         var state = StateStore.Load(stateOverride ?? paths.StateFile, out var problem);
 
-        if (problem is { Kind: StateProblemKind.Unsupported })
+        if (problem is { Kind: StateProblemKind.Unsupported or StateProblemKind.Unreadable })
         {
             // Exit 2, like a broken configuration: nothing was attempted, and the file is left
-            // exactly as it was for the build that can read it.
+            // exactly as it was. A fresh baseline would be the wrong answer for both: for a newer
+            // build's file because it cannot be read right, and for a file something is holding
+            // open because it CAN be read right, tomorrow - whereas a baseline written tonight
+            // over a lock that has since cleared replaces every clock and every NUL-fill verdict
+            // in it. Only a file that will not parse is started over from; see LR3107 below.
+            var unsupported = problem.Kind == StateProblemKind.Unsupported;
+
             ctx.Output.Diagnostic(new CliDiagnostic
             {
                 Severity = Severity.Error,
                 Code = DiagnosticCode.StateUnusable,
                 Message = $"The state file cannot be used: {problem.Message}.",
                 Path = stateOverride ?? paths.StateFile,
-                Remedy = "Upgrade WinLogRotate to the build that wrote it, or move the file aside "
-                       + "to start from a fresh baseline. Nothing was attempted.",
+                Remedy = unsupported
+                    ? "Upgrade WinLogRotate to the build that wrote it, or move the file aside to "
+                      + "start from a fresh baseline. Nothing was attempted."
+                    : "Find what holds the file open, or fix its permissions; the next run picks up "
+                      + "every clock and verdict it holds. Nothing was attempted.",
             });
 
-            ctx.Output.Line("winlogrotate: the state file was written by a newer build; nothing was attempted.");
+            ctx.Output.Line(unsupported
+                ? "winlogrotate: the state file was written by a newer build; nothing was attempted."
+                : "winlogrotate: the state file could not be read; nothing was attempted.");
             return ctx.Output.Complete<RunResult>("run", ExitCode.ConfigInvalid, null);
         }
 

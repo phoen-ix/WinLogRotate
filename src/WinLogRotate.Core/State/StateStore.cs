@@ -54,7 +54,8 @@ public sealed class StateStore
     /// <param name="problem">
     /// Set when the file was there and could not be used as it was. The store returned beside a
     /// problem is a fresh baseline; whether to run on it is the caller's decision, and for
-    /// <see cref="StateProblemKind.Unsupported"/> the answer is no.
+    /// anything but <see cref="StateProblemKind.Corrupt"/> the answer is no - a baseline saved
+    /// over a file that could have been read tomorrow replaces everything it held.
     /// </param>
     public static StateStore Load(string path, out StateProblem? problem)
     {

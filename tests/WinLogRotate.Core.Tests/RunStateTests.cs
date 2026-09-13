@@ -95,6 +95,35 @@ public sealed class RunStateTests : IDisposable
         File.ReadAllText(StatePath).ShouldContain("\"version\": 2", Case.Sensitive, "the file is for the build that wrote it");
     }
 
+    /// <summary>
+    /// A state file something else holds open refuses the run rather than starting over.
+    /// </summary>
+    /// <remarks>
+    /// The tempting answer is LR3107's fresh baseline. But a lock at 03:00 is a backup agent, and it
+    /// has let go by the time the run saves - so the baseline would replace every clock and every
+    /// NUL-fill verdict in a file that could have been read tomorrow. Refusing costs one night,
+    /// which re-baselining would have cost anyway.
+    /// </remarks>
+    [Fact]
+    public void AStateFileHeldOpenRefusesTheRunRatherThanStartingOver()
+    {
+        var conf = Directory.CreateDirectory(Path.Combine(_dir.FullName, "conf"));
+        File.WriteAllText(Path.Combine(conf.FullName, "config.toml"), "schema = 1\n");
+        Directory.CreateDirectory(Path.Combine(conf.FullName, "conf.d"));
+        File.WriteAllText(StatePath, "{\"version\": 1, \"paths\": {\"X\": {\"path\": \"X\", \"nulFill\": \"Confirmed\"}}}");
+        using var held = new FileStream(StatePath, FileMode.Open, FileAccess.Read, FileShare.None);
+
+        var sink = new Recorder();
+        var parse = Cli.Commands.CommandTree.Build().Parse(["run", "--no-notify", "--no-event-log"]);
+
+        var exit = Cli.Commands.RunCommand.Run(
+            new Cli.Commands.CommandContext(sink, parse), new RunOptions(), conf.FullName, StatePath);
+
+        exit.ShouldBe(ExitCode.ConfigInvalid);
+        sink.Diagnostics.ShouldContain(d => d.Code == DiagnosticCode.StateUnusable);
+        sink.Diagnostics.ShouldNotContain(d => d.Code == DiagnosticCode.StateUnreadable, "nothing was started over");
+    }
+
     /// <summary>A sink that keeps what it was told, for a verb driven in-process.</summary>
     private sealed class Recorder : Cli.Output.IOutputSink
     {
