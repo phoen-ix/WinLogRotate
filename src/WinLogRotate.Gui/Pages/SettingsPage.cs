@@ -89,16 +89,21 @@ public sealed class SettingsPage : UserControl
 
             // A configuration directory a non-administrator can write is the one finding worth
             // interrupting for: it means any local user could have the run host execute their
-            // command as SYSTEM.
-            if (!payload.GetProperty("hooksAllowed").GetBoolean()
-                && payload.GetProperty("aclVerdict").GetString() is { } verdict
-                && verdict is not "Hardened" and not "NotApplicable")
+            // command as SYSTEM. Whether this one is that finding is the model's decision - this
+            // page used to decide it itself, and warned every per-user installation on every
+            // visit, pointing at a Repair that would decline for the same reason the directory
+            // is loose: it is in the user's own profile, by design.
+            var warning = SettingsProjection.PermissionsWarning(
+                payload.GetProperty("hooksAllowed").GetBoolean(),
+                payload.GetProperty("aclVerdict").GetString() ?? string.Empty,
+                payload.GetProperty("scope").GetString() ?? string.Empty,
+                payload.TryGetProperty("aclFix", out var fix) && fix.ValueKind == JsonValueKind.String
+                    ? fix.GetString()
+                    : null);
+
+            if (warning is not null)
             {
-                LrDialog.Show(this, DialogKind.Warning, "Permissions",
-                    "The configuration directory can be written by an account that is not an "
-                    + "administrator, so hooks have been disabled for safety.\r\n\r\n"
-                    + "Repair permissions to fix it.",
-                    payload.TryGetProperty("aclFix", out var fix) ? fix.GetString() : null);
+                LrDialog.Show(this, DialogKind.Warning, "Permissions", warning.Message, warning.Details);
             }
         }
         catch (Exception e) when (e is JsonException or KeyNotFoundException or InvalidOperationException)
