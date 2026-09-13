@@ -3,6 +3,22 @@ using WinLogRotate.Core.Safety;
 
 namespace WinLogRotate.Core.State;
 
+/// <summary>Why a state file could not be used as it was.</summary>
+public enum StateProblemKind
+{
+    /// <summary>The file would not parse: a torn write, or something that is not this product's JSON.</summary>
+    Corrupt,
+
+    /// <summary>The file exists and could not be read: held open without sharing, or an ACL that denies this account.</summary>
+    Unreadable,
+
+    /// <summary>The file declares a version this build does not understand.</summary>
+    Unsupported,
+}
+
+/// <summary>What was wrong with a state file, for the caller to report or refuse on.</summary>
+public sealed record StateProblem(StateProblemKind Kind, string Message);
+
 /// <summary>
 /// The rotation clock, remembered between runs.
 /// </summary>
@@ -35,10 +51,14 @@ public sealed class StateStore
     public string Path => _path;
 
     /// <summary>Loads state, or starts fresh if there is none.</summary>
-    /// <param name="corrupt">Set when an existing file could not be read and was replaced.</param>
-    public static StateStore Load(string path, out string? corrupt)
+    /// <param name="problem">
+    /// Set when the file was there and could not be used as it was. The store returned beside a
+    /// problem is a fresh baseline; whether to run on it is the caller's decision, and for
+    /// <see cref="StateProblemKind.Unsupported"/> the answer is no.
+    /// </param>
+    public static StateStore Load(string path, out StateProblem? problem)
     {
-        corrupt = null;
+        problem = null;
 
         if (!File.Exists(path))
         {
@@ -52,17 +72,21 @@ public sealed class StateStore
 
             if (document is null)
             {
-                corrupt = "the state file was empty";
+                problem = new StateProblem(StateProblemKind.Corrupt, "the state file was empty");
                 return new StateStore(path, new StateDocument());
             }
 
             if (document.Version > 1)
             {
-                // Refuse rather than guess. Misreading state means rotating on the wrong
-                // schedule, which is worse than starting over from a known baseline.
-                throw new InvalidOperationException(
-                    $"The state file at {path} declares version {document.Version}, but this build understands 1. " +
-                    "Upgrade WinLogRotate, or move the file aside to start from a fresh baseline.");
+                // Refused rather than guessed at, and reported rather than thrown. Misreading
+                // state means rotating on the wrong schedule; starting over throws every verdict
+                // in the file away just as surely. This used to be an InvalidOperationException
+                // nothing caught, so a state file from a newer build ended every run at exit 4
+                // with "a defect in the product" until somebody noticed.
+                problem = new StateProblem(
+                    StateProblemKind.Unsupported,
+                    $"the state file at {path} declares version {document.Version}, but this build understands 1");
+                return new StateStore(path, new StateDocument());
             }
 
             return new StateStore(path, document);
@@ -73,7 +97,14 @@ public sealed class StateStore
             // unlikely) must not stop the tool from running. Starting from a fresh baseline
             // delays each log by one interval, which is a far better outcome than refusing to
             // rotate anything at all.
-            corrupt = e.Message;
+            problem = new StateProblem(StateProblemKind.Corrupt, e.Message);
+            return new StateStore(path, new StateDocument());
+        }
+        catch (Exception e) when (e is IOException or UnauthorizedAccessException)
+        {
+            // The file is there and this account could not read it - a backup agent holding it
+            // open, or an ACL. Unguarded, this reached CommandContext.Guarded as LR1006.
+            problem = new StateProblem(StateProblemKind.Unreadable, e.Message);
             return new StateStore(path, new StateDocument());
         }
     }

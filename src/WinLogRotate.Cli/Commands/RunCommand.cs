@@ -136,14 +136,33 @@ internal static class RunCommand
             return ctx.Output.Complete<RunResult>("run", ExitCode.ConfigInvalid, null);
         }
 
-        var state = StateStore.Load(stateOverride ?? paths.StateFile, out var corrupt);
-        if (corrupt is not null)
+        var state = StateStore.Load(stateOverride ?? paths.StateFile, out var problem);
+
+        if (problem is { Kind: StateProblemKind.Unsupported })
+        {
+            // Exit 2, like a broken configuration: nothing was attempted, and the file is left
+            // exactly as it was for the build that can read it.
+            ctx.Output.Diagnostic(new CliDiagnostic
+            {
+                Severity = Severity.Error,
+                Code = DiagnosticCode.StateUnusable,
+                Message = $"The state file cannot be used: {problem.Message}.",
+                Path = stateOverride ?? paths.StateFile,
+                Remedy = "Upgrade WinLogRotate to the build that wrote it, or move the file aside "
+                       + "to start from a fresh baseline. Nothing was attempted.",
+            });
+
+            ctx.Output.Line("winlogrotate: the state file was written by a newer build; nothing was attempted.");
+            return ctx.Output.Complete<RunResult>("run", ExitCode.ConfigInvalid, null);
+        }
+
+        if (problem is not null)
         {
             ctx.Output.Diagnostic(new CliDiagnostic
             {
                 Severity = Severity.Warning,
                 Code = DiagnosticCode.StateUnreadable,
-                Message = $"The state file could not be read ({corrupt}); starting from a fresh baseline.",
+                Message = $"The state file could not be read ({problem.Message}); starting from a fresh baseline.",
                 Path = paths.StateFile,
                 Remedy = "Every log will wait one full interval before its next rotation.",
             });

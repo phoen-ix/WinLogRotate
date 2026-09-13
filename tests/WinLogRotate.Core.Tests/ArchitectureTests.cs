@@ -1485,6 +1485,7 @@ public partial class ArchitectureTests
         [nameof(DiagnosticCode.StateNotSaved)] = ["RotationRunner.cs"],
         [nameof(DiagnosticCode.JournalUnavailable)] = ["JournalCommand.cs", "RunCommand.cs"],
         [nameof(DiagnosticCode.StateUnreadable)] = ["RunCommand.cs"],
+        [nameof(DiagnosticCode.StateUnusable)] = ["RunCommand.cs"],
         [nameof(DiagnosticCode.DuplicateGeneration)] = ["RotateJobPlanner.cs"],
         [nameof(DiagnosticCode.NoRunHost)] = ["DoctorCommand.cs", "HostCommand.cs"],
         [nameof(DiagnosticCode.HostDrift)] = ["HostCommand.cs"],

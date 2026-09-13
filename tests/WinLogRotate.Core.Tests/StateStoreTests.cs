@@ -219,10 +219,37 @@ public sealed class StateStoreTests : IDisposable
     [Fact]
     public void AFutureVersionIsRefusedRatherThanGuessedAt()
     {
-        File.WriteAllText(StatePath, "{\"version\": 99, \"paths\": {}}");
+        File.WriteAllText(StatePath, "{\"version\": 99, \"paths\": {\"X\": {\"path\": \"X\"}}}");
 
-        Should.Throw<InvalidOperationException>(() => StateStore.Load(StatePath, out _))
-            .Message.ShouldContain("version 99");
+        var store = StateStore.Load(StatePath, out var problem);
+
+        // Reported, not thrown: thrown, it reached the guard as exit 4 "a defect" every night
+        // after a downgrade. The caller decides what to do with an Unsupported file, and the
+        // store handed back beside it holds nothing the file said.
+        problem.ShouldNotBeNull().Kind.ShouldBe(StateProblemKind.Unsupported);
+        problem.Message.ShouldContain("version 99");
+        store.Paths.ShouldBeEmpty();
+        File.ReadAllText(StatePath).ShouldContain("99", Case.Sensitive, "the file is left for the build that can read it");
+    }
+
+    /// <summary>
+    /// A state file this account cannot read is a reported problem, not an exception.
+    /// </summary>
+    /// <remarks>
+    /// Only <c>JsonException</c> was caught, so a backup agent holding the file open at 03:00 -
+    /// or an ACL that denies the run account - reached the guard as exit 4, "a defect in the
+    /// product". The file is held here the way such an agent holds it: open, sharing nothing.
+    /// </remarks>
+    [Fact]
+    public void AStateFileThatCannotBeReadIsReportedNotThrown()
+    {
+        File.WriteAllText(StatePath, "{\"version\": 1, \"paths\": {}}");
+        using var held = new FileStream(StatePath, FileMode.Open, FileAccess.Read, FileShare.None);
+
+        var store = StateStore.Load(StatePath, out var problem);
+
+        problem.ShouldNotBeNull().Kind.ShouldBe(StateProblemKind.Unreadable);
+        store.Paths.ShouldBeEmpty();
     }
 
     [Fact]

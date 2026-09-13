@@ -152,6 +152,7 @@ mean the same thing wherever it is read.
 | 155 | Warning | A notification digest delivered to an `eventlog:` target | — |
 | 156 | Warning | A channel refused one message permanently; the others still went | `LR5006` |
 | 160 | Error | A configuration file could not be written; it was left as it was | `LR1010` |
+| 161 | Error | The rotation clocks exist but cannot be used by this build; nothing was attempted | `LR3108` |
 | 190 | Error | The configuration directory is writable by a non-administrator | `LR9001` |
 | 191 | Error | A dangerous path was refused | `LR9002` |
 | 192 | Error | A hook was refused | `LR9003` |

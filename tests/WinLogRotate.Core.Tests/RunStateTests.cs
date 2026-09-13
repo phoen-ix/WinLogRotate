@@ -21,6 +21,7 @@ namespace WinLogRotate.Core.Tests;
 /// healthy ones re-rotate forever." <c>RotationRunner</c> says the same in its own words. Nothing
 /// asserted it, which the rule added alongside this test is what found.
 /// </remarks>
+[Collection(RotationGateCollection.Name)]
 public sealed class RunStateTests : IDisposable
 {
     private readonly DirectoryInfo _dir = Directory.CreateTempSubdirectory("winlogrotate-runstate-");
@@ -64,6 +65,52 @@ public sealed class RunStateTests : IDisposable
 
         File.Exists(StatePath).ShouldBeTrue(
             "a failing job must not make the healthy ones re-rotate for ever");
+    }
+
+    /// <summary>
+    /// A state file from a newer build refuses the run cleanly and is left exactly as it was.
+    /// </summary>
+    /// <remarks>
+    /// <c>StateStore.Load</c> threw <c>InvalidOperationException</c> for a version it did not know,
+    /// and nothing caught it: every night after a downgrade was exit 4 and LR1006, "a defect in the
+    /// product". It is the same shape as a broken configuration - nothing was attempted - and now
+    /// answers the same way, with its own code and the file untouched for the build that wrote it.
+    /// </remarks>
+    [Fact]
+    public void AStateFileFromANewerBuildRefusesTheRunAndIsLeftAlone()
+    {
+        var conf = Directory.CreateDirectory(Path.Combine(_dir.FullName, "conf"));
+        File.WriteAllText(Path.Combine(conf.FullName, "config.toml"), "schema = 1\n");
+        Directory.CreateDirectory(Path.Combine(conf.FullName, "conf.d"));
+        File.WriteAllText(StatePath, "{\"version\": 2, \"paths\": {}}");
+
+        var sink = new Recorder();
+        var parse = Cli.Commands.CommandTree.Build().Parse(["run", "--no-notify", "--no-event-log"]);
+
+        var exit = Cli.Commands.RunCommand.Run(
+            new Cli.Commands.CommandContext(sink, parse), new RunOptions(), conf.FullName, StatePath);
+
+        exit.ShouldBe(ExitCode.ConfigInvalid);
+        sink.Diagnostics.ShouldContain(d => d.Code == DiagnosticCode.StateUnusable && d.Severity == Severity.Error);
+        File.ReadAllText(StatePath).ShouldContain("\"version\": 2", Case.Sensitive, "the file is for the build that wrote it");
+    }
+
+    /// <summary>A sink that keeps what it was told, for a verb driven in-process.</summary>
+    private sealed class Recorder : Cli.Output.IOutputSink
+    {
+        private readonly List<CliDiagnostic> _diagnostics = [];
+
+        public bool Verbose => false;
+
+        public IReadOnlyList<CliDiagnostic> Diagnostics => _diagnostics;
+
+        public void Diagnostic(CliDiagnostic d) => _diagnostics.Add(d);
+
+        public void Event(CliEvent e) { }
+
+        public void Line(string text) { }
+
+        public int Complete<T>(string verb, int exitCode, T? result) => exitCode;
     }
 
     /// <summary>A dry run writes nothing, which is the other half of the same promise.</summary>

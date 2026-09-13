@@ -102,6 +102,9 @@ public static class EventIds
         // never been emitted may be withdrawn but one that has been is spent for ever.
         DiagnosticCode.ConfigUnwritable => 160,
 
+        // The 3xxx block, 130-139, is full too; 161 continues the same overflow run.
+        DiagnosticCode.StateUnusable => 161,
+
         // 5xxx - notification delivery.
         DiagnosticCode.NotifyMisconfigured => 150,
         DiagnosticCode.NotifyFailed => 151,

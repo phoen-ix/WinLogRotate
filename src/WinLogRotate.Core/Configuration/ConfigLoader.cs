@@ -131,11 +131,35 @@ public static class ConfigLoader
         IReadOnlyList<NotifyProvider> providers = [];
         if (File.Exists(paths.ConfigFile))
         {
-            var file = TomlFile.Load(paths.ConfigFile);
-            if (file.HasErrors)
+            TomlFile? file;
+            try
             {
+                file = TomlFile.Load(paths.ConfigFile);
+            }
+            catch (Exception e) when (e is IOException or UnauthorizedAccessException)
+            {
+                // Reported as what it is - the root file could not be read, so nothing can run -
+                // rather than thrown. Unguarded, a backup agent holding config.toml at 03:00
+                // reached CommandContext.Guarded as LR1006, "a defect in the product".
+                diagnostics.Error(paths.ConfigFile, DiagnosticCode.ConfigUnreadable, e.Message);
+                file = null;
+            }
+
+            if (file is null)
+            {
+                // Nothing to bind; HasErrors is already true.
+            }
+            else if (file.HasErrors)
+            {
+                // The root file is never quarantined, whatever the caller asked for job files.
+                // Moving it aside made the NEXT run load every job against the built-in defaults
+                // with no [notify] and no [journal] table, and exit 0: a [defaults] rotate = 30
+                // became 7 and deleted generations 8 to 30, and nobody was told because the
+                // table that would have told them had gone with the file. A job file has
+                // something smaller than the machine to blame; this file does not, so it stays
+                // and keeps refusing until it is fixed.
                 defaults = HandleUnparseable(
-                    file, paths.ConfigFile, diagnostics, quarantined, quarantineBadFiles, null);
+                    file, paths.ConfigFile, diagnostics, quarantined, quarantine: false, null);
             }
             else
             {
@@ -192,9 +216,20 @@ public static class ConfigLoader
             {
                 file = TomlFile.Load(path);
             }
-            catch (IOException e)
+            catch (Exception e) when (e is IOException or UnauthorizedAccessException)
             {
-                diagnostics.Error(path, DiagnosticCode.ConfigUnreadable, e.Message);
+                // File-scoped, like a job file that will not parse: this file is out and the
+                // rest of the machine still rotates. An ACL denial escaped this as exit 4 while
+                // only IOException was named here.
+                diagnostics.Add(new ConfigDiagnostic
+                {
+                    Severity = Severity.Error,
+                    Code = DiagnosticCode.ConfigUnreadable,
+                    Message = e.Message,
+                    File = path,
+                    FileScoped = true,
+                });
+                unloadable.Add(path);
                 continue;
             }
 

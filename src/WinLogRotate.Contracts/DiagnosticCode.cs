@@ -166,6 +166,18 @@ public static class DiagnosticCode
     public const string StateUnreadable = "LR3107";
 
     /// <summary>
+    /// The rotation clocks exist but cannot be used by this build, so nothing was attempted.
+    /// </summary>
+    /// <remarks>
+    /// A state file from a newer build. Misreading it would mean rotating on the wrong schedule
+    /// and losing every verdict it holds, and starting over would throw those away just as
+    /// surely - so the run refuses, as it does for a broken configuration, and says which build
+    /// to install. This was an <c>InvalidOperationException</c> nothing caught: exit 4,
+    /// <see cref="InternalError"/>, "a defect in the product", every night after a downgrade.
+    /// </remarks>
+    public const string StateUnusable = "LR3108";
+
+    /// <summary>
     /// One rotation index is held by two files - <c>app.log.1</c> beside <c>app.log.1.gz</c>.
     /// </summary>
     /// <remarks>

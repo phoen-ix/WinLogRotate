@@ -68,6 +68,72 @@ public sealed class BrokenJobFileTests : IDisposable
         paths = ["C:/logs/{name}/*.log"]
         """;
 
+    /// <summary>
+    /// The root file is never moved aside, whatever the caller asked for job files.
+    /// </summary>
+    /// <remarks>
+    /// Quarantining config.toml made the NEXT run load every job against the built-in defaults
+    /// with no [notify] and no [journal] table, and exit 0. A [defaults] rotate = 30 became 7 and
+    /// deleted generations 8 to 30, and nobody was told because the table that would have told
+    /// them had gone with the file. This file has nothing smaller than the machine to blame, so
+    /// it stays where it is and keeps refusing until it is fixed.
+    /// </remarks>
+    [Fact]
+    public void ABrokenRootFileStaysWhereItIsAndKeepsRefusing()
+    {
+        var root = Path.Combine(_dir.FullName, "config.toml");
+        File.WriteAllText(root, "schema = 1\n[defaults\nrotate = 30\n");
+        var confd = Directory.CreateDirectory(Path.Combine(_dir.FullName, "conf.d"));
+        File.WriteAllText(Path.Combine(confd.FullName, "a.toml"), Healthy("a"));
+
+        var loaded = ConfigLoader.Load(
+            InstallPaths.Resolve(_dir.FullName), new PathGuard(new GuardOptions()),
+            new UnknownSecretLookup(), quarantineBadFiles: true);
+
+        loaded.HasErrors.ShouldBeTrue();
+        File.Exists(root).ShouldBeTrue("the root file is the one thing a quarantine must never move");
+        File.Exists(root + ".bad").ShouldBeFalse();
+        loaded.Quarantined.ShouldBeEmpty();
+    }
+
+    /// <summary>A root file this account cannot read is LR1002 and exit 2, not an escaped exception.</summary>
+    [Fact]
+    public void ARootFileThatCannotBeReadIsReportedNotThrown()
+    {
+        var root = Path.Combine(_dir.FullName, "config.toml");
+        File.WriteAllText(root, "schema = 1\n");
+        Directory.CreateDirectory(Path.Combine(_dir.FullName, "conf.d"));
+        using var held = new FileStream(root, FileMode.Open, FileAccess.Read, FileShare.None);
+
+        var loaded = ConfigLoader.Load(
+            InstallPaths.Resolve(_dir.FullName), new PathGuard(new GuardOptions()),
+            new UnknownSecretLookup(), quarantineBadFiles: false);
+
+        loaded.HasErrors.ShouldBeTrue("nothing can run without the root file");
+        loaded.Diagnostics.ShouldContain(d => d.Code == DiagnosticCode.ConfigUnreadable && d.File == root);
+    }
+
+    /// <summary>A job file this account cannot read costs that job and nothing else.</summary>
+    [Fact]
+    public void AJobFileThatCannotBeReadCostsOnlyThatJob()
+    {
+        File.WriteAllText(Path.Combine(_dir.FullName, "config.toml"), "schema = 1\n");
+        var confd = Directory.CreateDirectory(Path.Combine(_dir.FullName, "conf.d"));
+        File.WriteAllText(Path.Combine(confd.FullName, "a.toml"), Healthy("a"));
+        var locked = Path.Combine(confd.FullName, "b.toml");
+        File.WriteAllText(locked, Healthy("b"));
+        using var held = new FileStream(locked, FileMode.Open, FileAccess.Read, FileShare.None);
+
+        var loaded = ConfigLoader.Load(
+            InstallPaths.Resolve(_dir.FullName), new PathGuard(new GuardOptions()),
+            new UnknownSecretLookup(), quarantineBadFiles: false);
+
+        loaded.HasErrors.ShouldBeFalse("one unreadable job file is not a fault with the machine");
+        loaded.Jobs.ShouldHaveSingleItem().Name.ShouldBe("a");
+        loaded.Unloadable.ShouldBe([locked]);
+        loaded.Diagnostics.ShouldContain(d => d.Code == DiagnosticCode.ConfigUnreadable && d.FileScoped);
+    }
+
     /// <summary>An unparseable job file costs that file, and the healthy jobs still load.</summary>
     [Fact]
     public void AJobFileThatWillNotParseCostsThatFileAlone()
