@@ -68,8 +68,9 @@ public sealed record ExecutionResult
     /// The rotation clock advances from this and from nothing else. Advancing it because a
     /// rotation was <i>planned</i> would record a log that failed on a share violation as
     /// rotated, and it would then never be due again - a locked file rotating exactly once and
-    /// falling silent for ever. Only the executor knows which renames really happened, so the
-    /// answer is produced here rather than inferred by the caller.
+    /// falling silent for ever. Only the executor knows which moves really happened, so the
+    /// answer is produced here rather than inferred by the caller - and only from the operation
+    /// the planner marked <see cref="PlannedOp.IsLiveRotation"/>, never from a shift.
     /// </remarks>
     public IReadOnlyList<string> Rotated { get; init; } = [];
 }
@@ -178,10 +179,12 @@ public sealed class PlanExecutor(
                     freed += op.Bytes;
                 }
 
-                // Only the three that move the live log out of the way. Compressing or deleting
-                // an older generation is not what the rotation clock measures, and counting it
-                // would mark a log as rotated on a night it was not.
-                if (op.Action is PlannedAction.Rename or PlannedAction.Copy or PlannedAction.CopyTruncate)
+                // Only the operation that moves the live log out of the way. Compressing or
+                // deleting an older generation is not what the rotation clock measures - and
+                // neither is shifting one: the numbered chain moves by renames too, and counting
+                // those marked a log as rotated, and ran its postrotate hook, on a night its own
+                // rename had failed.
+                if (op.IsLiveRotation)
                 {
                     rotated.Add(op.Source);
                 }

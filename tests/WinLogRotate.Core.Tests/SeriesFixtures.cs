@@ -46,6 +46,26 @@ internal sealed class FakeFiles : IArchiveSource
         return this;
     }
 
+    /// <summary>Puts a file at <paramref name="path"/> carrying another file's size and date.</summary>
+    /// <remarks>
+    /// How a fake applier moves or copies: the file at the new name is the old file, which is what
+    /// <see cref="OutcomeFile.Origin"/> models for a plan judged without an executor.
+    /// </remarks>
+    public FakeFiles Put(string path, MatchedFile like)
+    {
+        _files[path] = like with { Path = path };
+        return this;
+    }
+
+    /// <summary>Removes a file, and does not mind one that was never there.</summary>
+    public FakeFiles Remove(string path)
+    {
+        _files.Remove(path);
+        return this;
+    }
+
+    public bool Exists(string path) => _files.ContainsKey(path);
+
     public MatchedFile? Find(string path)
     {
         Probed.Add(path);

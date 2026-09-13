@@ -517,6 +517,34 @@ public class RotatePlannerTests
         Outcome.Of(plan, files).Missing.ShouldBeEmpty();
     }
 
+    /// <summary>
+    /// The shift is made of renames too, and only the live log's own move counts as a rotation.
+    /// </summary>
+    /// <remarks>
+    /// <c>ExecutionResult.Rotated</c> and <c>JobPlan.RotatesALiveLog</c> both read this flag. Reading
+    /// the action instead counted <c>app.log.1 -> app.log.2</c> as a rotation, so a night on which
+    /// the archives shifted and the live rename failed ran the postrotate hook anyway.
+    /// </remarks>
+    [Fact]
+    public void OnlyTheLiveLogsOwnMoveIsALiveRotation()
+    {
+        var files = new FakeFiles(@"C:\logs\app.log", @"C:\logs\app.log.1", @"C:\logs\app.log.2");
+
+        var plan = PlanOver(Job(rotate: 4, compress: false), files);
+
+        plan.Operations.Count(o => o.Action == PlannedAction.Rename).ShouldBe(3, "two shifts and the live log");
+        plan.Operations.Where(o => o.IsLiveRotation).ShouldHaveSingleItem().Source.ShouldBe(@"C:\logs\app.log");
+        plan.RotatesALiveLog.ShouldBeTrue();
+
+        var shiftsOnly = plan with
+        {
+            Operations = [.. plan.Operations.Where(o => o.Action == PlannedAction.Rename && !o.IsLiveRotation)],
+        };
+
+        shiftsOnly.Operations.ShouldNotBeEmpty();
+        shiftsOnly.RotatesALiveLog.ShouldBeFalse("a shift is a rename, and not a rotation");
+    }
+
     [Fact]
     public void OldDirRedirectsArchivesButNotTheLiveLog()
     {

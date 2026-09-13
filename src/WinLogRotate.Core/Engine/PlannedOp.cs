@@ -44,6 +44,19 @@ public sealed record PlannedOp
     public long Bytes { get; init; }
     public LockStrategy? Strategy { get; init; }
 
+    /// <summary>
+    /// True for the one operation that moves a live log out of the way.
+    /// </summary>
+    /// <remarks>
+    /// Not derivable from <see cref="Action"/>: <see cref="PlannedAction.Rename"/> is also how the
+    /// numbered chain shifts <c>app.log.1</c> to <c>app.log.2</c>. The executor used to count every
+    /// completed rename as a rotation, so a night on which the archives shifted and the live
+    /// rename then failed on a share violation ran the postrotate hook for a log that never moved
+    /// - the exact case the hook rule was written to exclude - and gave every shifted archive a
+    /// rotation clock of its own in the state file.
+    /// </remarks>
+    public bool IsLiveRotation { get; init; }
+
     public override string ToString() =>
         Destination is null
             ? $"{Action} {Source} ({Reason})"
@@ -70,12 +83,10 @@ public sealed record JobPlan
     /// What decides whether the job's hooks run at all. A night on which nothing was due but a
     /// month-old archive was finally compressed is not a night to signal IIS: a reload hook that
     /// fired because of a deletion would page somebody about a rotation that never happened. The
-    /// three actions here are exactly the ones <c>ExecutionResult.Rotated</c> records, so the
-    /// prerotate question and the postrotate question are asked of the same rule.
+    /// flag read here is the one <c>ExecutionResult.Rotated</c> is filled from, so the prerotate
+    /// question and the postrotate question are asked of the same rule.
     /// </remarks>
-    public bool RotatesALiveLog =>
-        Operations.Any(o => o.Action
-            is PlannedAction.Rename or PlannedAction.Copy or PlannedAction.CopyTruncate);
+    public bool RotatesALiveLog => Operations.Any(o => o.IsLiveRotation);
 
     public long BytesFreed =>
         Operations.Where(o => o.Action == PlannedAction.Delete).Sum(o => o.Bytes);

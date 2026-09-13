@@ -425,6 +425,7 @@ public static class RotateJobPlanner
             Reason = $"due; {verdict.Explanation}",
             Bytes = live.Length,
             Strategy = strategy,
+            IsLiveRotation = true,
         });
 
         // Under copytruncate the inode never changes, so there is nothing to recreate; under a
