@@ -31,11 +31,19 @@ public static class NotifyFingerprint
     /// Names this scheme in the stored state.
     /// </summary>
     /// <remarks>
+    /// <para>
     /// When a future release changes what goes into a fingerprint, this changes with it and the
     /// stored values are adopted silently rather than compared. A version prefix <em>inside</em>
     /// the digest would instead guarantee the mass re-page it is meant to prevent.
+    /// </para>
+    /// <para>
+    /// <c>wlr-fp-2</c>: the parts are sorted before hashing. <c>wlr-fp-1</c> hashed them in the
+    /// order the planner displays them - severity, then <em>count</em>, then code - so two problem
+    /// groups swapping places by count produced a different digest although the count itself is
+    /// excluded by design. A spurious CHANGED for every such swap.
+    /// </para>
     /// </remarks>
-    public const string Algorithm = "wlr-fp-1";
+    public const string Algorithm = "wlr-fp-2";
 
     /// <summary>Between fields. A control character, because a path may contain anything else.</summary>
     private const char FieldSeparator = '\u001F';
@@ -44,20 +52,34 @@ public static class NotifyFingerprint
     private const char GroupSeparator = '\u001E';
 
     /// <summary>
-    /// Digests the ordered groups of one job.
+    /// Digests the groups of one job, in an order of its own choosing.
     /// </summary>
     /// <remarks>
+    /// <para>
     /// The separators are what make this safe. With an ordinary delimiter, ("AB", "C") and
     /// ("A", "BC") digest identically - a constructible collision, and a collision here means a
     /// real change is read as "no change", which is silence. Nobody would notice until it
     /// swallowed a live failure.
+    /// </para>
+    /// <para>
+    /// The sort is what makes it honest. The caller's order is for the reader and includes the
+    /// count, which the digest deliberately leaves out; hashing in that order let the count back
+    /// in through the side door, so 5x locked + 3x failed and 2x locked + 3x failed were two
+    /// different problems. Ordinal on every field, so two runtimes agree.
+    /// </para>
     /// </remarks>
     public static string For(IEnumerable<FingerprintPart> parts)
     {
         var builder = new StringBuilder();
         var any = false;
 
-        foreach (var part in parts)
+        var ordered = parts
+            .OrderBy(p => p.Code, StringComparer.Ordinal)
+            .ThenBy(p => p.NativeError)
+            .ThenBy(p => p.Severity, StringComparer.Ordinal)
+            .ThenBy(p => p.Where, StringComparer.Ordinal);
+
+        foreach (var part in ordered)
         {
             if (any)
             {

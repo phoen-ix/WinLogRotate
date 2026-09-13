@@ -514,6 +514,48 @@ public sealed class NotificationPlannerTests : IDisposable
             .ShouldBe(Plan(today, BaselinedState()).Messages.ShouldHaveSingleItem().Fingerprint);
     }
 
+    /// <summary>
+    /// Two problem groups swapping places by count are the same two problems.
+    /// </summary>
+    /// <remarks>
+    /// The digest lines are ordered for the reader - severity, then count, then code - and the
+    /// fingerprint hashed them in that order, although the count itself was excluded from it by
+    /// design. Five locked files and three failed rotations one night, then two and three the next,
+    /// therefore hashed differently: a spurious CHANGED message for an incident that had not changed,
+    /// and every such swap another one, so on = "change" degraded toward on = "every" on exactly
+    /// the jobs with more than one thing wrong.
+    /// </remarks>
+    [Fact]
+    public void SwappingTheCountsOfTwoProblemGroupsIsNotAChange()
+    {
+        var tonight = Enumerable.Range(0, 5).Select(i => Bad(path: $@"C:\logs\a{i}.log"))
+            .Concat(Enumerable.Range(0, 3).Select(i => Bad(code: DiagnosticCode.RotationFailed, path: $@"C:\logs\b{i}.log", native: 112)))
+            .ToArray();
+
+        var tomorrow = Enumerable.Range(0, 2).Select(i => Bad(path: $@"C:\logs\a{i}.log"))
+            .Concat(Enumerable.Range(0, 3).Select(i => Bad(code: DiagnosticCode.RotationFailed, path: $@"C:\logs\b{i}.log", native: 112)))
+            .ToArray();
+
+        Plan(tomorrow, BaselinedState()).Messages.ShouldHaveSingleItem().Fingerprint
+            .ShouldBe(Plan(tonight, BaselinedState()).Messages.ShouldHaveSingleItem().Fingerprint);
+    }
+
+    [Fact]
+    public void TheFingerprintDoesNotDependOnTheOrderItsPartsArrive()
+    {
+        // The property at the level it has to hold: whatever order a caller hands the groups in,
+        // the digest is the digest of the set.
+        FingerprintPart[] parts =
+        [
+            new(DiagnosticCode.FileLocked, 32, nameof(Severity.Error), @"c:\logs"),
+            new(DiagnosticCode.RotationFailed, 112, nameof(Severity.Error), @"c:\logs"),
+            new(DiagnosticCode.FileMissing, 2, nameof(Severity.Warning), @"c:\other"),
+        ];
+
+        NotifyFingerprint.For(parts.Reverse()).ShouldBe(NotifyFingerprint.For(parts));
+        NotifyFingerprint.For(parts).ShouldNotBeNullOrEmpty();
+    }
+
     [Fact]
     public void TomorrowsIisLogIsNotANewProblem()
     {
