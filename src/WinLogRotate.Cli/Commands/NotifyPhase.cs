@@ -159,12 +159,16 @@ internal static class NotifyPhase
         }
         catch (Exception e) when (e is IOException or UnauthorizedAccessException)
         {
+            // In this project's words: under UseSystemResourceKeys e.Message is a resource key.
             ctx.Output.Diagnostic(new CliDiagnostic
             {
                 Severity = Severity.Warning,
                 Code = DiagnosticCode.NotifyStateUnreadable,
-                Message = $"Notification history could not be saved: {e.Message}",
+                Message = e is UnauthorizedAccessException
+                    ? "Notification history could not be saved: access to the file was denied."
+                    : "Notification history could not be saved: the file could not be written.",
                 Path = statePath,
+                Remedy = "The next run repeats what this one said. Check the data directory's permissions and free space.",
             });
         }
     }

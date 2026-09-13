@@ -21,6 +21,17 @@ namespace WinLogRotate.Core.Notify;
 /// </remarks>
 public static partial class Redaction
 {
+    /// <summary>
+    /// The shortest <c>redact</c> entry that is honoured.
+    /// </summary>
+    /// <remarks>
+    /// <c>redact = ["a"]</c> replaced every letter a in every message with three asterisks; two
+    /// characters are barely better. Nothing worth hiding is that short, and a message nobody can
+    /// read is the redaction defeating the notification. The binder refuses shorter entries with a
+    /// warning; <see cref="MaskText"/> skips them too, for a list built any other way.
+    /// </remarks>
+    public const int MinLength = 3;
+
     /// <summary>Query-string keys whose values are credentials rather than parameters.</summary>
     [GeneratedRegex(@"(?i)\b(token|key|secret|pass(word)?|sig|signature|auth|api[-_]?key)\b")]
     private static partial Regex SensitiveParameter();
@@ -69,7 +80,7 @@ public static partial class Redaction
         // name in a path, an internal hostname.
         foreach (var word in extra)
         {
-            if (!string.IsNullOrWhiteSpace(word))
+            if (!string.IsNullOrWhiteSpace(word) && word.Trim().Length >= MinLength)
             {
                 masked = masked.Replace(word, "***", StringComparison.OrdinalIgnoreCase);
             }

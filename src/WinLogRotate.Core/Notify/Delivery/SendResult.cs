@@ -102,6 +102,16 @@ public sealed record NotifyMessage
     public required PlannedNotification Plan { get; init; }
 
     public required RunSummary Run { get; init; }
+
+    /// <summary>
+    /// The operator's <c>redact</c> list, for the fields a transport composes itself.
+    /// </summary>
+    /// <remarks>
+    /// The subject and body are masked before they get here. A webhook template also substitutes
+    /// <c>{machine}</c> and <c>{job}</c>, and the default payload carries both as fields - which
+    /// were not masked, so a hostname listed in <c>redact</c> left the machine in every payload.
+    /// </remarks>
+    public IReadOnlyList<string> Redact { get; init; } = [];
 }
 
 /// <summary>One transport.</summary>

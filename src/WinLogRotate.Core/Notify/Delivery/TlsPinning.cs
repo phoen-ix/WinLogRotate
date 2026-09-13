@@ -41,10 +41,16 @@ public static class TlsPinning
         return Normalise(Convert.ToHexString(hash)) == Normalise(thumbprint);
     }
 
+    /// <summary>A SHA-256 is this many hex digits, and a pin that is not one matches nothing.</summary>
+    public const int Digits = 64;
+
     /// <summary>Accepts colons, spaces and any casing, so a thumbprint can be pasted from anywhere.</summary>
     public static string Normalise(string thumbprint)
     {
-        Span<char> buffer = stackalloc char[thumbprint.Length];
+        // Sized by the input, so not the stack for an input the configuration controls: a pasted
+        // certificate instead of its thumbprint is a few thousand characters, and the stack is
+        // not where those belong.
+        Span<char> buffer = thumbprint.Length <= 256 ? stackalloc char[256] : new char[thumbprint.Length];
         var length = 0;
 
         foreach (var c in thumbprint)
@@ -57,6 +63,16 @@ public static class TlsPinning
 
         return new string(buffer[..length]);
     }
+
+    /// <summary>
+    /// Whether this could be a SHA-256 thumbprint at all: exactly <see cref="Digits"/> hex digits
+    /// once the punctuation is gone.
+    /// </summary>
+    /// <remarks>
+    /// A SHA-1 pasted from an older tool, or a digit lost in transit, matches no certificate that
+    /// exists - so an unchecked pin refused every peer, for ever, with a diagnostic about the relay.
+    /// </remarks>
+    public static bool IsWellFormed(string thumbprint) => Normalise(thumbprint).Length == Digits;
 
     /// <summary>A validation callback for the pin, or null to leave the default alone.</summary>
     public static RemoteCertificateValidationCallback? CallbackFor(string? thumbprint) =>

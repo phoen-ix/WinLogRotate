@@ -259,11 +259,14 @@ internal static class NotifyCommand
         }
         catch (Exception e) when (e is IOException or UnauthorizedAccessException)
         {
+            // In this project's words: under UseSystemResourceKeys e.Message is a resource key.
             ctx.Output.Diagnostic(new CliDiagnostic
             {
                 Severity = Severity.Error,
                 Code = DiagnosticCode.NotifyStateUnreadable,
-                Message = $"Could not save: {e.Message}",
+                Message = e is UnauthorizedAccessException
+                    ? "Could not save: access to the notification state file was denied."
+                    : "Could not save: the notification state file could not be written.",
                 Path = path,
             });
             return ctx.Output.Complete<NotifyStatusResult>("notify reset", ExitCode.Errors, null);

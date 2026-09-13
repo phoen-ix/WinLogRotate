@@ -96,10 +96,21 @@ public sealed class NotifyStateStore
         }
         catch (Exception e) when (e is JsonException or IOException or UnauthorizedAccessException)
         {
-            return new NotifyStateStore(path, Fresh(),
-                $"the notification state file could not be read ({e.Message})");
+            return new NotifyStateStore(path, Fresh(), $"the notification state file {Describe(e)}");
         }
     }
+
+    /// <summary>
+    /// In this project's words. Under <c>UseSystemResourceKeys</c> an exception's Message is a
+    /// resource key rather than a sentence, and this string is printed and written to a file that
+    /// goes into support bundles.
+    /// </summary>
+    private static string Describe(Exception e) => e switch
+    {
+        JsonException => "is not valid JSON",
+        UnauthorizedAccessException => "could not be read - access was denied",
+        _ => "could not be read",
+    };
 
     private static NotifyStateDocument Fresh() => new()
     {
@@ -144,9 +155,11 @@ public sealed class NotifyStateStore
         // it never mattered; now a target that is renamed, retired or typo'd once leaves a row
         // behind for ever, and notify status would grow a permanent list of destinations that no
         // longer exist. Keyed on the last attempt rather than on the configuration, so a channel
-        // dropped for a fortnight and put back keeps its breaker history.
+        // dropped for a fortnight and put back keeps its breaker history. A row with no attempt
+        // at all is what notify reset leaves behind: it records nothing, so it goes at once -
+        // kept by age, it would have been kept for ever.
         var forgotten = _document.Channels
-            .Where(kv => kv.Value.LastAttempt is { } attempt && now - attempt > keepFor)
+            .Where(kv => kv.Value.LastAttempt is not { } attempt || now - attempt > keepFor)
             .Select(kv => kv.Key)
             .ToArray();
 

@@ -134,7 +134,9 @@ still goes while you fix the key.
 **`max_message` matters for Discord and ntfy**, which discard anything longer *silently* - so an
 unset limit does not fail loudly, the message simply never arrives. Discord accepts 2000
 characters, ntfy 4096. Truncation drops whole lines from the end and always keeps the head and the
-"go and look" footer.
+"go and look" footer. The limit is applied to what the destination receives, so a template such as
+`{subject}\n\n{body}` leaves room for the subject and the template's own text rather than fitting
+the body alone and overflowing by the difference.
 
 ## Email
 
@@ -267,9 +269,11 @@ server_cert_thumbprint = "9F:86:D0:81:88:4C:7D:65..."
 `no_proxy` match the host and its subdomains. Single-label hosts and hosts in this machine's own
 domain bypass the proxy without being listed, as they do everywhere else.
 
-`server_cert_thumbprint` is a SHA-256 of the certificate you expect, in any punctuation. When set,
-**only** that certificate is accepted - which is what lets an internal CA or a self-signed relay
-work without disabling verification. It applies to HTTPS, Pushover and SMTP alike.
+`server_cert_thumbprint` is a SHA-256 of the certificate you expect - 64 hex digits, in any
+punctuation. When set, **only** that certificate is accepted - which is what lets an internal CA or a
+self-signed relay work without disabling verification. It applies to HTTPS, Pushover and SMTP alike.
+A value that is not 64 hex digits (a SHA-1 pasted from an older tool, say) could match no
+certificate at all, so it is reported with `LR5001` and left unset rather than refusing every peer.
 
 **There is deliberately no `insecure` option**, and there will not be one. Such a flag is set once
 during an incident and never unset. Pinning is the supported answer to "my relay's certificate does
@@ -317,7 +321,7 @@ night with a diagnostic saying the channel was working.
 | `retries` | `2` | per channel, spent out of that same budget |
 | `breaker_after` | `5` | failed runs before a channel is suppressed |
 | `breaker_cooldown` | `5` | runs suppressed, doubling each time |
-| `redact` | `[]` | strings masked out of every message |
+| `redact` | `[]` | strings masked out of every message and every webhook field; at least 3 characters each |
 
 The budget is shared evenly between channels, so one unreachable relay cannot spend it all and
 leave the working channels unattempted. It is also clamped by the run's own deadline: the scheduled

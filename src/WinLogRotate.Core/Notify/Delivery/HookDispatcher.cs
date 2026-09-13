@@ -448,13 +448,21 @@ public static class HookDispatcher
         // Redacted here rather than in the planner. The subject is composed from the machine and
         // job names, which are local facts, and stays unmasked in the journal and on stdout; this
         // is the boundary where it leaves the machine.
+        var subject = Redaction.MaskText(message.Subject, settings.Redact);
+
+        // And fitted to what is left of the destination's limit once the destination has put the
+        // subject beside the body - which the documented Discord template and the Event Log sender
+        // both do. Fitting the body alone overflowed by exactly that much.
         var composed = new NotifyMessage
         {
-            Subject = Redaction.MaskText(message.Subject, settings.Redact),
+            Subject = subject,
             Body = MessageComposer.Render(
-                message, run, channel.Limit, options.Clock.GetUtcNow(), settings.Redact),
+                message, run,
+                MessageComposer.BodyLimit(channel.Limit, channel.Action.Scheme, channel.Provider?.Body, subject),
+                options.Clock.GetUtcNow(), settings.Redact),
             Plan = message,
             Run = run,
+            Redact = settings.Redact,
         };
 
         SendResult result = default;

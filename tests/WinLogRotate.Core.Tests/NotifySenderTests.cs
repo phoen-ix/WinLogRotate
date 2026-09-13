@@ -211,6 +211,105 @@ public sealed class NotifySenderTests : IDisposable
             .RootElement.GetProperty("job").GetString().ShouldBe("configuration");
     }
 
+    /// <summary>
+    /// The operator's redact list reaches the payload fields, not only the prose.
+    /// </summary>
+    /// <remarks>
+    /// The subject and body were masked before they reached the transport; <c>{machine}</c>,
+    /// <c>{job}</c> and the default flat object's fields were not. An internal hostname the operator
+    /// listed in <c>redact</c> therefore left the machine in every webhook payload, in the one
+    /// field a template is most likely to put in a heading.
+    /// </remarks>
+    [Fact]
+    public void TheRedactListReachesThePayloadFieldsToo()
+    {
+        var flat = NotifyBody.Render(
+            null, "application/json", Message("iis", "x"), "s", "b", Run(), redact: ["TESTBOX"]);
+
+        System.Text.Json.JsonDocument.Parse(flat)
+            .RootElement.GetProperty("machine").GetString().ShouldBe("***");
+
+        var templated = NotifyBody.Render(
+            """{"host": "{machine}", "job": "{job}"}""", "application/json",
+            Message("iis", "x"), "s", "b", Run(), redact: ["iis"]);
+
+        System.Text.Json.JsonDocument.Parse(templated)
+            .RootElement.GetProperty("job").GetString().ShouldBe("***");
+    }
+
+    [Fact]
+    public void AnXmlTemplateEscapesTheApostropheToo()
+    {
+        // The XML escaper covered four of the five reserved characters. An attribute delimited
+        // with single quotes - legal XML, and what some templates use - was breakable by a path
+        // containing one.
+        NotifyBody.Render("<m a='{body}'/>", "application/xml", Message("j", "x"), "s", "it's <b>", Run())
+            .ShouldBe("<m a='it&apos;s &lt;b&gt;'/>");
+    }
+
+    // ---- redaction ----------------------------------------------------------------------------
+
+    [Fact]
+    public void AnEntryShorterThanThreeCharactersMasksNothing()
+    {
+        // redact = ["a"] replaced every letter a in every message. The binder refuses such entries
+        // now; this is the belt to that brace, for a list built any other way.
+        Redaction.MaskText("banana split", ["a"]).ShouldBe("banana split");
+        Redaction.MaskText("banana split", ["ban"]).ShouldBe("***ana split");
+    }
+
+    // ---- fitting the body to what the destination adds to it -------------------------------------
+
+    /// <summary>
+    /// The body's limit leaves room for whatever the destination puts beside it.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// The dispatcher fitted <c>{body}</c> alone to <c>max_message</c>. The documented Discord
+    /// template is <c>{subject}\n\n{body}</c>, so the delivered content overflowed 2000 by the
+    /// subject's length, Discord answered 400, and the message was recorded as refused - for ever,
+    /// since it would overflow again tomorrow. The Event Log sender prepends the subject too, and
+    /// its limit was above the writer's hard cut besides, so the footer-preserving truncation was
+    /// undone by a plain cut a few hundred characters later.
+    /// </para>
+    /// <para>
+    /// Only the destinations that add something reserve anything: Pushover's title is a separate
+    /// field, and a channel with no limit has nothing to reserve against.
+    /// </para>
+    /// </remarks>
+    [Fact]
+    public void TheBodyLimitLeavesRoomForWhatTheDestinationAddsToTheBody()
+    {
+        const string discord = """{"content": "{subject}\n\n{body}"}""";
+        const string plain = """{"content": "{body}"}""";
+        const string subject = "[WinLogRotate] FAILED on TESTBOX - iis - 3 problems";
+
+        MessageComposer.BodyLimit(2000, HookScheme.Http, discord, subject)
+            .ShouldBe(2000 - discord.Length - subject.Length);
+
+        MessageComposer.BodyLimit(2000, HookScheme.Http, plain, subject)
+            .ShouldBe(2000 - plain.Length);
+
+        // Subject, a blank line, body: the sender's own concatenation, on any newline convention.
+        MessageComposer.BodyLimit(MessageComposer.EventLogLimit, HookScheme.EventLog, null, subject)
+            .ShouldBe(MessageComposer.EventLogLimit - subject.Length - 4);
+
+        MessageComposer.BodyLimit(MessageComposer.PushoverLimit, HookScheme.Pushover, null, subject)
+            .ShouldBe(MessageComposer.PushoverLimit);
+
+        MessageComposer.BodyLimit(MessageComposer.NoLimit, HookScheme.Http, discord, subject)
+            .ShouldBe(MessageComposer.NoLimit);
+    }
+
+    [Fact]
+    public void TheEventLogLimitIsTheWritersHardCutNotTheApisCeiling()
+    {
+        // 31,839 is what ReportEventW accepts; 31,000 is where EventLogWriter cuts, deterministically,
+        // to stay clear of it. A composer limit above the writer's cut meant the composer's careful
+        // truncation - whole lines, footer kept - was followed by the writer's blunt one.
+        MessageComposer.EventLogLimit.ShouldBe(31_000);
+    }
+
     // ---- retry-after ---------------------------------------------------------------------------
 
     /// <summary>
@@ -272,6 +371,28 @@ public sealed class NotifySenderTests : IDisposable
         // Every tool that prints one formats it differently, and an operator will paste whichever
         // they were given. Refusing on punctuation would send them looking for a bug.
         TlsPinning.Normalise(written).ShouldBe("AABBCC");
+    }
+
+    [Fact]
+    public void AThumbprintIsWellFormedOnlyAsSixtyFourHexDigits()
+    {
+        // A SHA-256, in whatever punctuation. A SHA-1 pasted from an older tool, or a digit lost
+        // in transit, matches no certificate that exists and would refuse every peer for ever.
+        TlsPinning.IsWellFormed("9F:86:D0:81:88:4C:7D:65:9A:2F:EA:A0:C5:5A:D0:15:A3:BF:4F:1B:2B:0B:82:2C:D1:5D:6C:15:B0:F0:0A:08")
+            .ShouldBeTrue();
+        TlsPinning.IsWellFormed(new string('A', 63)).ShouldBeFalse();
+        TlsPinning.IsWellFormed(new string('A', 65)).ShouldBeFalse();
+        TlsPinning.IsWellFormed(string.Empty).ShouldBeFalse();
+    }
+
+    [Fact]
+    public void NormaliseDoesNotSizeItsStackFromTheConfiguration()
+    {
+        // The scratch buffer was stackalloc'd at the length of whatever was written. A value this
+        // long belongs on the heap, and the result has to be right either way.
+        var absurd = string.Join(':', Enumerable.Repeat("ab", 25_000));
+
+        TlsPinning.Normalise(absurd).Length.ShouldBe(50_000);
     }
 
     [Fact]
@@ -343,6 +464,36 @@ public sealed class NotifySenderTests : IDisposable
         {
             SmtpCertificatePin.Current = before;
         }
+    }
+
+    // ---- what an http failure is called ---------------------------------------------------------
+
+    /// <summary>
+    /// A rejected certificate is named as one, however deep the runtime buries it.
+    /// </summary>
+    /// <remarks>
+    /// Both HTTP senders read "the request did not complete" for anything that was not a
+    /// <c>SocketException</c>, and the Pushover sender looked one inner exception deep for that.
+    /// A pin that did not match - the case pinning exists for - was therefore indistinguishable from
+    /// a cable pulled out, and the operator went looking at the network.
+    /// </remarks>
+    [Fact]
+    public void ACertificateRejectionIsNamedRatherThanCalledIncomplete()
+    {
+        var rejected = NotifyHttpClient.Describe(new System.Net.Http.HttpRequestException(
+            "handshake", new System.Security.Authentication.AuthenticationException("rejected")));
+
+        rejected.Error.ShouldContain("server_cert_thumbprint");
+
+        var refused = NotifyHttpClient.Describe(new System.Net.Http.HttpRequestException(
+            "connect", new IOException("io", new System.Net.Sockets.SocketException(
+                (int)System.Net.Sockets.SocketError.ConnectionRefused))));
+
+        refused.Error.ShouldContain("refused");
+        refused.NativeError.ShouldNotBeNull("the socket error travels with it, two levels down");
+
+        NotifyHttpClient.Describe(new System.Net.Http.HttpRequestException("opaque"))
+            .Error.ShouldBe("the request did not complete");
     }
 
     // ---- the proxy ---------------------------------------------------------------------------

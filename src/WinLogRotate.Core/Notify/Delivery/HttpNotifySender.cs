@@ -1,6 +1,5 @@
 using System.Globalization;
 using System.Net.Http;
-using System.Net.Sockets;
 using System.Text;
 
 namespace WinLogRotate.Core.Notify.Delivery;
@@ -57,7 +56,7 @@ public sealed class HttpNotifySender : INotifySender, IDisposable
         var url = channel.Target.Reveal();
 
         var body = NotifyBody.Render(
-            provider?.Body, contentType, message.Plan, message.Subject, message.Body, message.Run);
+            provider?.Body, contentType, message.Plan, message.Subject, message.Body, message.Run, message.Redact);
 
         try
         {
@@ -103,13 +102,8 @@ public sealed class HttpNotifySender : INotifySender, IDisposable
         }
         catch (HttpRequestException e)
         {
-            // Composed from what this project owns. The published binary sets
-            // UseSystemResourceKeys, so e.Message is a bare resource key rather than a sentence.
-            var socket = Inner<SocketException>(e);
-
-            return SendResult.Unreachable(
-                socket is null ? "the request did not complete" : Describe(socket.SocketErrorCode),
-                socket?.ErrorCode);
+            var failure = NotifyHttpClient.Describe(e);
+            return SendResult.Unreachable(failure.Error, failure.NativeError);
         }
         catch (FormatException)
         {
@@ -148,19 +142,6 @@ public sealed class HttpNotifySender : INotifySender, IDisposable
         return wait < TimeSpan.Zero ? TimeSpan.Zero : wait;
     }
 
-    private static T? Inner<T>(Exception e) where T : Exception
-    {
-        for (var current = e; current is not null; current = current.InnerException)
-        {
-            if (current is T match)
-            {
-                return match;
-            }
-        }
-
-        return null;
-    }
-
     private static string Describe(int status) => status switch
     {
         400 => "the endpoint rejected the request (400)",
@@ -172,15 +153,6 @@ public sealed class HttpNotifySender : INotifySender, IDisposable
         422 => "the endpoint could not use the request body (422)",
         429 => "rate limited (429)",
         _ => $"the endpoint answered {status.ToString(CultureInfo.InvariantCulture)}",
-    };
-
-    private static string Describe(SocketError error) => error switch
-    {
-        SocketError.HostNotFound or SocketError.NoData => "the host name did not resolve",
-        SocketError.ConnectionRefused => "the connection was refused",
-        SocketError.TimedOut => "the connection timed out",
-        SocketError.NetworkUnreachable or SocketError.HostUnreachable => "the host is unreachable",
-        _ => "the connection failed",
     };
 
     public void Dispose()

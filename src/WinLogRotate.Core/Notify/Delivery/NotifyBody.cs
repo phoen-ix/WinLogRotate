@@ -27,22 +27,30 @@ public static class NotifyBody
     public static readonly string[] Placeholders =
         ["subject", "body", "severity", "job", "machine", "reason", "run", "fingerprint"];
 
+    /// <param name="redact">
+    /// The operator's <c>redact</c> list, applied to every field. The subject and body arrive
+    /// already masked; <c>{machine}</c> and <c>{job}</c> did not, so an internal hostname listed
+    /// in <c>redact</c> left the machine in every webhook payload, in the one field a template is
+    /// most likely to put in a heading.
+    /// </param>
     public static string Render(
         string? template, string contentType, PlannedNotification message,
-        string subject, string body, RunSummary run)
+        string subject, string body, RunSummary run, IReadOnlyList<string>? redact = null)
     {
-        var job = message.Job == State.NotifyStateDocument.RunScope ? "configuration" : message.Job;
+        var job = Redaction.MaskText(
+            message.Job == State.NotifyStateDocument.RunScope ? "configuration" : message.Job, redact);
+        var machine = Redaction.MaskText(run.Machine, redact);
 
         if (string.IsNullOrWhiteSpace(template))
         {
             return JsonSerializer.Serialize(
                 new NotifyPayload
                 {
-                    Subject = subject,
-                    Body = body,
+                    Subject = Redaction.MaskText(subject, redact),
+                    Body = Redaction.MaskText(body, redact),
                     Severity = message.Severity.ToString().ToLowerInvariant(),
                     Job = job,
-                    Machine = run.Machine,
+                    Machine = machine,
                     Reason = message.Reason.ToString().ToLowerInvariant(),
                     Run = run.RunId,
                     Fingerprint = message.Fingerprint,
@@ -52,11 +60,11 @@ public static class NotifyBody
 
         var values = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
         {
-            ["subject"] = subject,
-            ["body"] = body,
+            ["subject"] = Redaction.MaskText(subject, redact),
+            ["body"] = Redaction.MaskText(body, redact),
             ["severity"] = message.Severity.ToString().ToLowerInvariant(),
             ["job"] = job,
-            ["machine"] = run.Machine,
+            ["machine"] = machine,
             ["reason"] = message.Reason.ToString().ToLowerInvariant(),
             ["run"] = run.RunId,
             ["fingerprint"] = message.Fingerprint,
@@ -97,11 +105,13 @@ public static class NotifyBody
         return quoted[1..^1];
     }
 
+    /// <summary>All five reserved characters - the apostrophe too, for an attribute delimited with single quotes.</summary>
     private static string Xml(string value) => value
         .Replace("&", "&amp;", StringComparison.Ordinal)
         .Replace("<", "&lt;", StringComparison.Ordinal)
         .Replace(">", "&gt;", StringComparison.Ordinal)
-        .Replace("\"", "&quot;", StringComparison.Ordinal);
+        .Replace("\"", "&quot;", StringComparison.Ordinal)
+        .Replace("'", "&apos;", StringComparison.Ordinal);
 
     /// <summary>
     /// Replaces <c>{name}</c>, leaving anything else exactly as written.

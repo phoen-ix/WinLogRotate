@@ -183,13 +183,77 @@ public static class ConfigBinder
             BreakerAfter = Clamp(GetInt(table, "breaker_after", file.Path, diagnostics) ?? defaults.BreakerAfter, 1, 1000),
             BreakerCooldown = Clamp(GetInt(table, "breaker_cooldown", file.Path, diagnostics) ?? defaults.BreakerCooldown, 1, 1000),
             To = GetStringListOrNull(table, "to", file.Path, diagnostics) ?? defaults.To,
-            Redact = GetStringListOrNull(table, "redact", file.Path, diagnostics) ?? defaults.Redact,
+            Redact = RedactableOnly(table, file.Path, diagnostics) ?? defaults.Redact,
             Proxy = GetString(table, "proxy", file.Path, diagnostics) ?? defaults.Proxy,
             NoProxy = GetStringListOrNull(table, "no_proxy", file.Path, diagnostics) ?? defaults.NoProxy,
-            ServerCertThumbprint =
-                GetString(table, "server_cert_thumbprint", file.Path, diagnostics)
-                ?? defaults.ServerCertThumbprint,
+            ServerCertThumbprint = WellFormedThumbprint(table, file.Path, diagnostics),
         };
+    }
+
+    /// <summary>
+    /// The <c>redact</c> list, less any entry too short to be a secret.
+    /// </summary>
+    /// <remarks>
+    /// <c>redact = ["a"]</c> turned every letter a in every message into three asterisks. Nothing
+    /// worth hiding is under <see cref="Redaction.MinLength"/> characters, and a message nobody can
+    /// read is the redaction defeating the notification - so the entry is dropped, on its line, and
+    /// the rest of the list stands.
+    /// </remarks>
+    private static IReadOnlyList<string>? RedactableOnly(TableSyntaxBase table, string file, DiagnosticBag d)
+    {
+        var written = GetStringListOrNull(table, "redact", file, d);
+        if (written is null)
+        {
+            return null;
+        }
+
+        var kept = new List<string>(written.Count);
+
+        foreach (var word in written)
+        {
+            if (word.Trim().Length >= Redaction.MinLength)
+            {
+                kept.Add(word);
+                continue;
+            }
+
+            var at = ValueOf(table, "redact");
+            d.Warn(file, DiagnosticCode.NotifyMisconfigured,
+                $"'{word}' is too short to redact safely, and is ignored.",
+                LineOf(at), ColumnOf(at),
+                remedy: $"A redact entry needs at least {Redaction.MinLength} characters - a whole "
+                      + "hostname or customer name, not a fragment of one.");
+        }
+
+        return kept;
+    }
+
+    /// <summary>
+    /// <c>server_cert_thumbprint</c>, or null with a warning when it cannot match any certificate.
+    /// </summary>
+    /// <remarks>
+    /// A SHA-256 is sixty-four hex digits; anything else - a SHA-1 pasted from an older tool, a
+    /// digit dropped in transit - matches no certificate that exists, so every peer is refused and
+    /// every send fails with a diagnostic about the relay rather than about the pin. Left unset, the
+    /// machine's certificate store decides, exactly as with no pin at all; nothing is weakened, and
+    /// the warning names the key.
+    /// </remarks>
+    private static string? WellFormedThumbprint(TableSyntaxBase table, string file, DiagnosticBag d)
+    {
+        var written = GetString(table, "server_cert_thumbprint", file, d);
+        if (written is null || Notify.Delivery.TlsPinning.IsWellFormed(written))
+        {
+            return written;
+        }
+
+        var at = ValueOf(table, "server_cert_thumbprint");
+        d.Warn(file, DiagnosticCode.NotifyMisconfigured,
+            "server_cert_thumbprint is not a SHA-256 thumbprint, so no certificate is pinned.",
+            LineOf(at), ColumnOf(at),
+            remedy: "Paste the certificate's SHA-256 - 64 hex digits, in any punctuation. Until then "
+                  + "the machine's certificate store decides, as it does with no pin.");
+
+        return null;
     }
 
     /// <summary>

@@ -24,7 +24,17 @@ public static class MessageComposer
     public const int PushoverLimit = 1024;
     public const int DiscordLimit = 2000;
     public const int NtfyLimit = 4096;
-    public const int EventLogLimit = 31_839;
+
+    /// <summary>
+    /// Where <c>EventLogWriter</c> cuts, not where <c>ReportEventW</c> stops accepting.
+    /// </summary>
+    /// <remarks>
+    /// The API's ceiling on one insertion string is 31,839 characters; the writer truncates at
+    /// 31,000 to stay clear of it, and this was the ceiling - so the composer's careful
+    /// truncation, whole lines with the footer kept, was followed by the writer's blunt one a few
+    /// hundred characters later. The two numbers have to be the same number.
+    /// </remarks>
+    public const int EventLogLimit = 31_000;
 
     /// <summary>For destinations that impose no limit worth enforcing: SMTP, a plain webhook.</summary>
     /// <remarks>
@@ -32,6 +42,49 @@ public static class MessageComposer
     /// destination would otherwise discard the whole message.
     /// </remarks>
     public const int NoLimit = int.MaxValue;
+
+    /// <summary>
+    /// How much of <paramref name="limit"/> is left for the body once the destination has added
+    /// what it adds.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// The limit is the destination's, and the destination does not see the body alone. A webhook
+    /// template wraps it - the documented Discord one puts the subject and a blank line in front,
+    /// and Discord's 2000 applies to the whole content field - and the Event Log sender prepends the
+    /// subject itself. Fitting the body alone to the limit therefore overflowed by exactly the part
+    /// the destination added, Discord answered 400, and the message was recorded as refused:
+    /// silently, and again tomorrow.
+    /// </para>
+    /// <para>
+    /// Pushover's title is a separate field, so nothing is reserved for it; a destination with no
+    /// limit has nothing to reserve against. A template's text is counted in full, placeholders
+    /// included, which over-reserves by a few characters per placeholder - the safe side of a limit
+    /// that discards the whole message.
+    /// </para>
+    /// </remarks>
+    public static int BodyLimit(int limit, HookScheme scheme, string? template, string subject)
+    {
+        if (limit == NoLimit)
+        {
+            return NoLimit;
+        }
+
+        var reserve = scheme switch
+        {
+            // Subject, a blank line, body - the sender's own concatenation, with room for two
+            // CRLFs whatever Environment.NewLine is where it runs.
+            HookScheme.EventLog => subject.Length + 4,
+
+            HookScheme.Http when template is { Length: > 0 } =>
+                template.Length
+                + (template.Contains("{subject}", StringComparison.OrdinalIgnoreCase) ? subject.Length : 0),
+
+            _ => 0,
+        };
+
+        return Math.Max(0, limit - reserve);
+    }
 
     public static string Subject(NotifyReason reason, string job, IReadOnlyList<DigestLine> lines, RunSummary run)
     {

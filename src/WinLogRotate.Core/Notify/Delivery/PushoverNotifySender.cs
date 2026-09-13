@@ -1,6 +1,5 @@
 using System.Globalization;
 using System.Net.Http;
-using System.Net.Sockets;
 
 namespace WinLogRotate.Core.Notify.Delivery;
 
@@ -80,10 +79,8 @@ public sealed class PushoverNotifySender : INotifySender, IDisposable
         }
         catch (HttpRequestException e)
         {
-            var socket = e.InnerException as SocketException;
-            return SendResult.Unreachable(
-                socket is null ? "the request did not complete" : "the connection failed",
-                socket?.ErrorCode);
+            var failure = NotifyHttpClient.Describe(e);
+            return SendResult.Unreachable(failure.Error, failure.NativeError);
         }
     }
 

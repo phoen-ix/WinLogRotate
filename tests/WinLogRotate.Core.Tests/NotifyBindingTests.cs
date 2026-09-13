@@ -61,7 +61,7 @@ public sealed class NotifyBindingTests
             redact = ["BigCustomer"]
             proxy = "http://proxy.corp:3128"
             no_proxy = [".corp.example.com"]
-            server_cert_thumbprint = "9AF1"
+            server_cert_thumbprint = "9F:86:D0:81:88:4C:7D:65:9A:2F:EA:A0:C5:5A:D0:15:A3:BF:4F:1B:2B:0B:82:2C:D1:5D:6C:15:B0:F0:0A:08"
             """);
 
         settings.On.ShouldBe(NotifyOn.Every);
@@ -74,9 +74,54 @@ public sealed class NotifyBindingTests
         settings.Redact.ShouldBe(["BigCustomer"]);
         settings.Proxy.ShouldBe("http://proxy.corp:3128");
         settings.NoProxy.ShouldBe([".corp.example.com"]);
-        settings.ServerCertThumbprint.ShouldBe("9AF1");
+        settings.ServerCertThumbprint.ShouldBe(
+            "9F:86:D0:81:88:4C:7D:65:9A:2F:EA:A0:C5:5A:D0:15:A3:BF:4F:1B:2B:0B:82:2C:D1:5D:6C:15:B0:F0:0A:08");
 
         Diagnostics.ShouldBeEmpty();
+    }
+
+    /// <summary>
+    /// A pin that cannot match any certificate is reported, not installed.
+    /// </summary>
+    /// <remarks>
+    /// A SHA-256 is sixty-four hex digits. Anything else - a SHA-1 pasted from an older tool, a
+    /// digit dropped in transit - matches no certificate that exists, so every peer is refused and
+    /// every send fails, nightly, with a diagnostic about the relay rather than about the pin.
+    /// Reported on its line and left unset, which means the machine's certificate store decides,
+    /// exactly as it does with no pin at all.
+    /// </remarks>
+    [Fact]
+    public void AThumbprintThatIsNotSixtyFourHexDigitsIsReportedAndNotUsed()
+    {
+        var settings = Bind("[notify]\nserver_cert_thumbprint = \"9AF1\"\n");
+
+        settings.ServerCertThumbprint.ShouldBeNull();
+
+        var d = Diagnostics.ShouldHaveSingleItem();
+        d.Code.ShouldBe(DiagnosticCode.NotifyMisconfigured);
+        d.Severity.ShouldBe(Severity.Warning);
+        d.Message.ShouldContain("server_cert_thumbprint");
+        d.Line.ShouldBe(2);
+    }
+
+    /// <summary>
+    /// A redact entry too short to be a secret is dropped, because it would shred every message.
+    /// </summary>
+    /// <remarks>
+    /// <c>redact = ["a"]</c> replaced every letter a in every message with three asterisks. Two
+    /// characters are barely better. Nothing worth hiding is that short, and a message nobody can
+    /// read is the redaction defeating the notification.
+    /// </remarks>
+    [Fact]
+    public void ARedactEntryTooShortToBeSafeIsReportedAndDropped()
+    {
+        var settings = Bind("[notify]\nredact = [\"a\", \"BigCustomer\", \" x \"]\n");
+
+        settings.Redact.ShouldBe(["BigCustomer"]);
+
+        Diagnostics.Count.ShouldBe(2);
+        Diagnostics.ShouldAllBe(d => d.Code == DiagnosticCode.NotifyMisconfigured && d.Severity == Severity.Warning);
+        Diagnostics.ShouldContain(d => d.Message.Contains("'a'", StringComparison.Ordinal));
     }
 
     [Fact]

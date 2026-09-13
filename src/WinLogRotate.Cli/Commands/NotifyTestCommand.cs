@@ -96,12 +96,19 @@ internal static class NotifyTestCommand
 
         foreach (var channel in channels)
         {
+            // Composed exactly as the dispatcher composes it - the same redaction, the same fit to
+            // the destination's limit - or the test would show a message the run never sends.
+            var subject = Redaction.MaskText(message.Subject, settings.Redact);
             var composed = new NotifyMessage
             {
-                Subject = Redaction.MaskText(message.Subject, settings.Redact),
-                Body = MessageComposer.Render(message, run, channel.Limit, now, settings.Redact),
+                Subject = subject,
+                Body = MessageComposer.Render(
+                    message, run,
+                    MessageComposer.BodyLimit(channel.Limit, channel.Action.Scheme, channel.Provider?.Body, subject),
+                    now, settings.Redact),
                 Plan = message,
                 Run = run,
+                Redact = settings.Redact,
             };
 
             var suppressed = BreakerPolicy.Verdict(state.ChannelOrDefault(channel.Key), settings)

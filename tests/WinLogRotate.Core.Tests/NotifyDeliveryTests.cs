@@ -39,6 +39,9 @@ public sealed class NotifyDeliveryTests : IDisposable
 
         public List<string> Subjects { get; } = [];
 
+        /// <summary>Every message as the transport received it, for asserting what was composed.</summary>
+        public List<NotifyMessage> Messages { get; } = [];
+
         public int Attempts { get; private set; }
 
         /// <summary>Whether an attempt that outlasts its timeout is reported as one.</summary>
@@ -56,6 +59,7 @@ public sealed class NotifyDeliveryTests : IDisposable
         {
             Attempts++;
             Subjects.Add(message.Subject);
+            Messages.Add(message);
 
             if (Cost > TimeSpan.Zero)
             {
@@ -624,7 +628,107 @@ public sealed class NotifyDeliveryTests : IDisposable
         }.Result.ShouldBe(expected);
     }
 
+    // ---- fitting the message to the destination -----------------------------------------------
+
+    /// <summary>
+    /// The documented Discord template stays inside Discord's limit, subject included.
+    /// </summary>
+    /// <remarks>
+    /// The dispatcher fitted the body alone to <c>max_message</c>. Discord's 2000 applies to the
+    /// decoded <c>content</c> field, which the documented template builds from the subject, a blank
+    /// line and the body - so a long digest overflowed by the subject's length, Discord answered
+    /// 400, and the message was recorded as refused: silently, and again tomorrow.
+    /// </remarks>
+    [Fact]
+    public void ADiscordTemplateThatCarriesTheSubjectStaysInsideTheLimit()
+    {
+        const string template = """{"content": "{subject}\n\n{body}"}""";
+        const int limit = 300;
+
+        var provider = new NotifyProvider
+        {
+            Name = "webhook.discord",
+            Kind = NotifyProviderKind.Webhook,
+            Body = template,
+            MaxMessage = limit,
+        };
+
+        var channel = new ResolvedChannel
+        {
+            Action = HookAction.Create(HookScheme.Http, provider.Name, provider.Name, provider: provider.Name),
+            Provider = provider,
+            Limit = limit,
+        };
+
+        var discord = new FakeSender(_clock);
+
+        var plan = new NotificationPlan
+        {
+            Messages = [Long("iis", lines: 40)],
+            Suppressed = [],
+            Baseline = [],
+        };
+
+        Dispatch(plan, State(), [(channel, discord)]);
+
+        var sent = discord.Messages.ShouldHaveSingleItem();
+        var payload = NotifyBody.Render(template, "application/json", sent.Plan, sent.Subject, sent.Body, Run());
+
+        var content = System.Text.Json.JsonDocument.Parse(payload).RootElement.GetProperty("content").GetString()!;
+        content.Length.ShouldBeLessThanOrEqualTo(limit);
+
+        // Fitted, not cut: the footer that says where the rest is survives.
+        sent.Body.ShouldContain("winlogrotate journal");
+    }
+
+    /// <summary>A message with enough lines to overflow any small limit.</summary>
+    private static PlannedNotification Long(string job, int lines)
+    {
+        var digest = Enumerable.Range(0, lines).Select(i => new DigestLine
+        {
+            Severity = Severity.Error,
+            Code = DiagnosticCode.FileLocked,
+            Job = job,
+            Text = $"another process has file number {i} open",
+            Where = $@"C:\logs\app-{i}.log",
+            DirectoryKey = @"c:\logs",
+            Count = 1,
+        }).ToArray();
+
+        return Message(job) with { Lines = digest, Context = digest };
+    }
+
     // ---- state ------------------------------------------------------------------------------
+
+    /// <summary>A channel row left by <c>notify reset</c> is forgotten like any other, not kept for ever.</summary>
+    [Fact]
+    public void AResetChannelRowIsPrunedRatherThanKeptForEver()
+    {
+        // Reset() writes a row with no LastAttempt, and Prune kept rows by the age of their last
+        // attempt - so a channel that was reset and then removed from the configuration sat in
+        // notify.json, and in notify status, indefinitely.
+        var state = State();
+        state.SetChannel("gone", BreakerPolicy.Reset());
+        state.SetChannel("live", new ChannelNotifyState { LastAttempt = _clock.GetUtcNow() });
+
+        state.Prune(_clock.GetUtcNow(), TimeSpan.FromDays(30));
+
+        state.Channels.Keys.ShouldBe(["live"]);
+    }
+
+    [Fact]
+    public void ACorruptStateFileIsDescribedInThisProjectsWords()
+    {
+        // The warning interpolated the exception's Message, which under UseSystemResourceKeys is a
+        // resource key rather than a sentence. This file goes into support bundles.
+        var path = Path.Combine(_dir.FullName, "corrupt.json");
+        File.WriteAllText(path, "{ this is not json");
+
+        var state = NotifyStateStore.Load(path);
+
+        state.Warning.ShouldNotBeNull().ShouldContain("not valid JSON");
+        state.Jobs.ShouldBeEmpty("a fresh baseline, as documented");
+    }
 
     [Fact]
     public void AFullySuccessfulRunAdvancesTheJobState()
