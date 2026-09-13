@@ -43,10 +43,17 @@ public sealed record ArchiveFile
 public static class FileSeries
 {
     /// <summary>Classifies matched files and returns them newest first.</summary>
+    /// <param name="stamps">
+    /// Whether to look for a date in the name at all. False for a numbered chain, whose archives
+    /// are named by an index and dated by their modification time: the only date in
+    /// <c>myapp_20240101.log.3</c> is the live log's own, and reading it as the archive's made
+    /// every generation of such a log a month old on the day the name was, so <c>maxage</c>
+    /// deleted yesterday's archive every night.
+    /// </param>
     public static IReadOnlyList<ArchiveFile> Order(
-        IEnumerable<MatchedFile> files, string? dateFormat = null)
+        IEnumerable<MatchedFile> files, string? dateFormat = null, bool stamps = true)
     {
-        var archives = files.Select(f => Classify(f, dateFormat)).ToList();
+        var archives = files.Select(f => Classify(f, dateFormat, stamps)).ToList();
 
         archives.Sort((a, b) =>
         {
@@ -73,7 +80,7 @@ public static class FileSeries
         return archives;
     }
 
-    internal static ArchiveFile Classify(MatchedFile file, string? dateFormat)
+    internal static ArchiveFile Classify(MatchedFile file, string? dateFormat, bool stamps = true)
     {
         var name = WinPath.FileName(file.Path);
 
@@ -91,7 +98,7 @@ public static class FileSeries
             File = file,
             IsCompressed = compressed,
             Index = ParseIndex(stem),
-            Stamp = ParseStamp(stem, dateFormat),
+            Stamp = stamps ? ParseStamp(stem, dateFormat) : null,
         };
     }
 

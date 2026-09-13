@@ -518,6 +518,40 @@ public class RotatePlannerTests
     }
 
     /// <summary>
+    /// An archive's age is its modification time, never a date read out of the live log's name.
+    /// </summary>
+    /// <remarks>
+    /// <c>FileSeries.ParseStamp</c> scans the whole name with fallback formats, so every archive of
+    /// <c>myapp_20240101.log</c> parsed to 2024-01-01 and <c>maxage = 30</c> condemned yesterday's
+    /// archive every night, leaving the job with no history at all while reporting each deletion
+    /// as a month-old file. Every other planner test rotates <c>app.log</c>, so nothing saw it.
+    /// </remarks>
+    [Fact]
+    public void AnArchivesAgeIsNotReadFromTheLiveLogsOwnName()
+    {
+        var live = new MatchedFile { Path = @"C:\logs\myapp_20240101.log", Length = 5000, LastWriteUtc = Now };
+        var files = new FakeFiles()
+            .Add(live.Path)
+            .Add(@"C:\logs\myapp_20240101.log.1", Now.AddDays(-1))
+            .Add(@"C:\logs\myapp_20240101.log.2.gz", Now.AddDays(-2));
+
+        var job = Job(rotate: 4, maxAge: 30);
+        var generations = LogSeries.Discover(job, [live], files);
+
+        generations.ShouldHaveSingleItem().Archives.ShouldAllBe(a => a.Stamp == null);
+
+        var verdicts = new Dictionary<string, DueVerdict>
+        {
+            [live.Path] = new() { Due = true, Reason = DueReason.Scheduled, Explanation = "a new day has begun" },
+        };
+
+        var plan = RotateJobPlanner.Plan(job, generations, verdicts, Now);
+
+        plan.Operations.ShouldNotContain(o => o.Action == PlannedAction.Delete, "nothing here is older than maxage");
+        plan.Operations.Count(o => o.Action == PlannedAction.Rename).ShouldBe(3, "two shifts and the live log");
+    }
+
+    /// <summary>
     /// The shift is made of renames too, and only the live log's own move counts as a rotation.
     /// </summary>
     /// <remarks>

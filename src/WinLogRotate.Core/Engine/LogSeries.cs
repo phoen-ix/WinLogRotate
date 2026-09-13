@@ -69,10 +69,14 @@ public static class LogSeries
         {
             var archives = job.DateExt ? DatedArchives(job, log, source) : NumberedArchives(job, log, source);
 
+            // A numbered archive carries no date of its own, so none is looked for: the digits
+            // in app-20240101.log.2 belong to the live log, and FileSeries would otherwise hand
+            // the planner a stamp that says every generation is as old as the name.
             generations.Add(new LogGeneration
             {
                 Live = log,
-                Archives = FileSeries.Order(archives, job.DateExt ? job.DateFormat : null),
+                Archives = FileSeries.Order(
+                    archives, job.DateExt ? job.DateFormat : null, stamps: job.DateExt),
             });
         }
 
