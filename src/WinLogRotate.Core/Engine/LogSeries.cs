@@ -60,6 +60,28 @@ public static class LogSeries
     /// </remarks>
     public const int MaxNumberedProbe = 1000;
 
+    /// <summary>
+    /// How many consecutive empty indexes past the retention window are crossed before the chain
+    /// is presumed to have ended.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// Stopping at the first empty index past the window lost archives. <c>RotateJobPlanner</c>
+    /// shifts a sparse chain's top archive upward rather than deleting it - <c>rotate = 3</c> with
+    /// only <c>app.log.3</c> on disk moves it to <c>.4</c>, on the argument that it is the
+    /// operator's only archive - and the next run probed 1, 2, 3, found nothing at 3, and stopped.
+    /// <c>app.log.4</c> was never shifted, never counted and never aged out, for ever; the same
+    /// applied to every generation above a hand-made gap in a <c>rotate = -1</c> chain, where
+    /// <c>maxage</c> is the only rule there is.
+    /// </para>
+    /// <para>
+    /// Sixteen is a cost, not a semantic: a chain that is genuinely over costs that many extra
+    /// existence checks per spelling per log per run, and a straggler further than that above the
+    /// last archive found is one somebody has to have put there by hand.
+    /// </para>
+    /// </remarks>
+    public const int MaxConsecutiveMisses = 16;
+
     public static IReadOnlyList<LogGeneration> Discover(
         EffectiveJob job, IReadOnlyList<MatchedFile> live, IArchiveSource source)
     {
@@ -99,9 +121,12 @@ public static class LogSeries
         // chain is ordinary - somebody deleted one - and stopping at the first miss would hide
         // every generation above it from both the shift and retention.
         var window = job.Rotate < 0 ? 0 : job.Rotate + job.Start - 1;
+        var misses = 0;
 
         for (var index = job.Start; index < job.Start + MaxNumberedProbe; index++)
         {
+            var before = found.Count;
+
             var uncompressed = source.Find(ArchiveNaming.Numbered(job, log.Path, index, compressed: false));
             var compressed = job.CompressType == CompressType.None
                 ? null
@@ -117,9 +142,16 @@ public static class LogSeries
                 found.Add(compressed);
             }
 
-            // Past the retention window, the chain is followed only while it continues. Inside
-            // it, every index is checked.
-            if (uncompressed is null && compressed is null && index >= window)
+            if (found.Count > before)
+            {
+                misses = 0;
+                continue;
+            }
+
+            // Inside the window every index is checked. Past it, the chain is followed across a
+            // bounded run of empty indexes rather than ending at the first one - see
+            // MaxConsecutiveMisses for the archive that was lost when it did.
+            if (index >= window && ++misses >= MaxConsecutiveMisses)
             {
                 break;
             }

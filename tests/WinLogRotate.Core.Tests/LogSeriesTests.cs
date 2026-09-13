@@ -242,8 +242,46 @@ public sealed class LogSeriesTests
 
         LogSeries.Discover(Job(rotate: 3), [Live()], files);
 
-        files.Probed.Count.ShouldBeLessThan(10);
+        // The window, then the bounded run of empty indexes that follows it - and nowhere near
+        // the cap, which is what "stops" means here.
+        files.Probed.Count.ShouldBeLessThanOrEqualTo(3 + LogSeries.MaxConsecutiveMisses);
+        files.Probed.Count.ShouldBeLessThan(LogSeries.MaxNumberedProbe / 4);
         files.Probed.Count.ShouldBeGreaterThan(2, "the whole retention window is still checked");
+    }
+
+    /// <summary>
+    /// A generation shifted past the window is still found on the next run.
+    /// </summary>
+    /// <remarks>
+    /// <c>RotateJobPlanner</c> moves a sparse chain's top archive up rather than deleting it, so
+    /// <c>rotate = 3</c> with only <c>.3</c> on disk leaves <c>.1</c> and <c>.4</c>. Stopping at the
+    /// first empty index past the window - index 3 - never saw <c>.4</c> again: not shifted, not
+    /// counted, not aged out, for ever.
+    /// </remarks>
+    [Fact]
+    public void AGenerationShiftedPastTheWindowIsStillFound()
+    {
+        var files = new FakeFiles(@"C:\logs\app.log", @"C:\logs\app.log.1", @"C:\logs\app.log.4");
+
+        Found(LogSeries.Discover(Job(rotate: 3), [Live()], files))
+            .ShouldBe([@"C:\logs\app.log.1", @"C:\logs\app.log.4"]);
+    }
+
+    /// <summary>
+    /// With <c>rotate = -1</c> a gap does not hide the generations above it from <c>maxage</c>.
+    /// </summary>
+    /// <remarks>
+    /// Keep-everything has no window at all, so the old rule stopped at the very first empty
+    /// index - and maxage, the only rule such a job has, never saw anything above a hand-made
+    /// hole in the chain.
+    /// </remarks>
+    [Fact]
+    public void WithRotateMinusOneAGapDoesNotHideTheGenerationsAboveIt()
+    {
+        var files = new FakeFiles(@"C:\logs\app.log", @"C:\logs\app.log.1", @"C:\logs\app.log.3");
+
+        Found(LogSeries.Discover(Job(rotate: -1), [Live()], files))
+            .ShouldBe([@"C:\logs\app.log.1", @"C:\logs\app.log.3"]);
     }
 
     [Fact]

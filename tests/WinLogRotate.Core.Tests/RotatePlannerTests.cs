@@ -491,6 +491,32 @@ public class RotatePlannerTests
     }
 
     /// <summary>
+    /// A generation shifted past the window is disposed of once the chain has caught up with it.
+    /// </summary>
+    /// <remarks>
+    /// The other half of <see cref="ASparseChainKeepsItsTopmostArchive"/>, which says the top
+    /// archive of a sparse chain shifts up "and is disposed of on a later run rather than
+    /// stranded". That sentence was false: discovery stopped at the first empty index past the
+    /// window and never saw the shifted file again. Three nights, each planned over the directory
+    /// the one before it left.
+    /// </remarks>
+    [Fact]
+    public void AGenerationShiftedPastTheWindowIsDisposedOfOnceTheChainCatchesUp()
+    {
+        var job = Job(rotate: 3, compress: false);
+
+        var night1 = After(job, new FakeFiles(@"C:\logs\app.log", @"C:\logs\app.log.3"));
+        night1.Names.ShouldBe(["app.log", "app.log.1", "app.log.4"]);
+
+        var night2 = After(job, night1.AsFiles());
+        night2.Names.ShouldBe(["app.log", "app.log.1", "app.log.2", "app.log.5"], "still fewer than rotate, so it shifts again");
+
+        var night3 = After(job, night2.AsFiles());
+        night3.Names.ShouldBe(["app.log", "app.log.1", "app.log.2", "app.log.3"], "three generations exist, so the straggler falls off");
+        night3.Missing.ShouldBeEmpty();
+    }
+
+    /// <summary>
     /// A file both rules condemn is deleted once, and says which rule took it.
     /// </summary>
     /// <remarks>

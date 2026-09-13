@@ -141,6 +141,26 @@ internal sealed record Outcome
     public bool Lost(string seededName) => Became(seededName).Count == 0;
 
     /// <summary>
+    /// The directory this plan left, as the next run's discovery finds it.
+    /// </summary>
+    /// <remarks>
+    /// What lets a test run a job over consecutive nights: one plan's outcome is the next plan's
+    /// seed. A defect that shows only on the second run - a generation shifted somewhere discovery
+    /// no longer looks - is invisible to a single-plan assertion however thorough.
+    /// </remarks>
+    public FakeFiles AsFiles()
+    {
+        var files = new FakeFiles();
+
+        foreach (var file in Files)
+        {
+            files.Add(file.Path, file.LastWriteUtc == default ? null : file.LastWriteUtc, file.Length);
+        }
+
+        return files;
+    }
+
+    /// <summary>
     /// Runs a plan over a seeded directory, in the order the executor would.
     /// </summary>
     /// <remarks>
