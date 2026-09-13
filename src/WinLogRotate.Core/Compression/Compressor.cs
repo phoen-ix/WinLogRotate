@@ -105,7 +105,7 @@ public static class Compressor
                 {
                     using var archive = new ZipArchive(output, ZipArchiveMode.Create, leaveOpen: true);
                     var entry = archive.CreateEntry(Path.GetFileName(source), level);
-                    entry.LastWriteTime = modified;
+                    entry.LastWriteTime = DosClamped(modified);
                     using var entryStream = entry.Open();
                     input.CopyTo(entryStream);
                 }
@@ -143,6 +143,25 @@ public static class Compressor
             BytesBefore = before,
             BytesAfter = after,
         };
+    }
+
+    /// <summary>
+    /// A timestamp the zip container can hold.
+    /// </summary>
+    /// <remarks>
+    /// Zip stores MS-DOS dates, 1980-01-01 to 2107-12-31, and <see cref="ZipArchiveEntry.LastWriteTime"/>
+    /// throws <see cref="ArgumentOutOfRangeException"/> for anything outside them. A log dated 1970,
+    /// or 1601, exists: restored from a backup that kept no timestamps, or written before a machine's
+    /// clock was set. That exception is not an <see cref="IOException"/>, so nothing caught it and the
+    /// run ended at exit 4 over a container's limitation. The archive file's own modification time,
+    /// set from the unclamped value, is what retention reads.
+    /// </remarks>
+    private static DateTimeOffset DosClamped(DateTimeOffset modified)
+    {
+        var earliest = new DateTimeOffset(1980, 1, 1, 0, 0, 0, TimeSpan.Zero);
+        var latest = new DateTimeOffset(2107, 12, 31, 23, 59, 58, TimeSpan.Zero);
+
+        return modified < earliest ? earliest : modified > latest ? latest : modified;
     }
 
     /// <summary>

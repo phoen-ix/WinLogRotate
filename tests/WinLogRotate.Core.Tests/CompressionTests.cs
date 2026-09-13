@@ -44,6 +44,30 @@ public sealed class CompressionTests : IDisposable
         result.BytesAfter.ShouldBeLessThan(result.BytesBefore);
     }
 
+    /// <summary>
+    /// A log dated before 1980 is still compressed to zip, and keeps its own date on the archive.
+    /// </summary>
+    /// <remarks>
+    /// Zip stores MS-DOS dates and <c>ZipArchiveEntry.LastWriteTime</c> throws outside 1980-2107.
+    /// That is not an <c>IOException</c>, so nothing caught it and a file restored with a 1970
+    /// timestamp took the whole run down at exit 4. The entry is clamped; the archive file's own
+    /// modification time - the one retention reads - is not.
+    /// </remarks>
+    [Fact]
+    public void AFileDatedBeforeTheZipEpochIsStillCompressed()
+    {
+        var source = Seed("old.log.1", "ancient");
+        var epoch = new DateTime(1970, 1, 1, 0, 0, 0, DateTimeKind.Utc);
+        File.SetLastWriteTimeUtc(source, epoch);
+
+        var result = Compressor.Compress(source, CompressType.Zip);
+
+        File.GetLastWriteTimeUtc(result.Destination).ShouldBe(epoch, "the archive carries the log's own date");
+
+        using var archive = ZipFile.OpenRead(result.Destination);
+        archive.Entries.ShouldHaveSingleItem().LastWriteTime.Year.ShouldBe(1980, "the container can say no earlier");
+    }
+
     [Fact]
     public void GzipOutputIsReadableByAStandardDecompressor()
     {

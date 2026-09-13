@@ -87,6 +87,25 @@ public static class Diagnose
                + "picks up where it stopped on the next run.",
     };
 
+    /// <summary>
+    /// A job that ended in an exception nothing expected.
+    /// </summary>
+    /// <remarks>
+    /// Not <see cref="DiagnosticCode.InternalError"/>, deliberately. That code says nothing about
+    /// what was or was not done can be relied on, and here it can: the journal holds every
+    /// operation up to the one that threw, the other jobs ran, and the clocks were written. It
+    /// is a rotation that failed, with a cause worth a bug report, and the remedy says both.
+    /// </remarks>
+    public static CliDiagnostic Unexpected(string job, Exception e) => new()
+    {
+        Severity = Severity.Error,
+        Code = DiagnosticCode.RotationFailed,
+        Message = $"[{job}] did not complete: {e.GetType().Name}: {e.Message}",
+        Job = job,
+        Remedy = "The other jobs were not affected and the journal records what this one did "
+               + "before it stopped. A job should not be able to end this way; please report it.",
+    };
+
     /// <summary>A file operation that threw.</summary>
     /// <param name="destination">
     /// Where it was writing, when it was writing somewhere. Named in the message because the

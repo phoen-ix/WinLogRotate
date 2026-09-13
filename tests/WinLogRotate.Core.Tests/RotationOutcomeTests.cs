@@ -1,5 +1,6 @@
 using Microsoft.Extensions.Time.Testing;
 using Shouldly;
+using WinLogRotate.Contracts;
 using WinLogRotate.Core.Configuration;
 using WinLogRotate.Core.Engine;
 using WinLogRotate.Core.Hooks;
@@ -86,6 +87,10 @@ public sealed class RotationOutcomeTests : IDisposable
 
     private RunReport Run(
         EffectiveJob job, FakeFiles files, FakeApplier applier, StateStore state, IHookHost? host = null) =>
+        Run([job], files, applier, state, host);
+
+    private RunReport Run(
+        EffectiveJob[] jobs, FakeFiles files, FakeApplier applier, StateStore state, IHookHost? host = null) =>
         new RotationRunner(
                 new NullJournal(), new PathGuard(new GuardOptions()), state, _clock,
                 archiveSource: files, hookHost: host, hookGate: HookGate.Open,
@@ -93,12 +98,49 @@ public sealed class RotationOutcomeTests : IDisposable
             .Run(
                 new LoadedConfig
                 {
-                    Jobs = [job],
+                    Jobs = jobs,
                     Diagnostics = [],
                     Paths = InstallPaths.Resolve(_dir.FullName),
                     Quarantined = [],
                 },
                 new RunOptions());
+
+    /// <summary>
+    /// An exception nothing expected costs the job it happened in, and nothing else.
+    /// </summary>
+    /// <remarks>
+    /// The executor's catch filter names the exceptions a file operation is expected to throw.
+    /// Anything else - a zip container refusing a 1979 timestamp, a retry count of zero meeting
+    /// RetryPolicy's argument check - left the runner's loop: the remaining jobs were never
+    /// looked at, state was never saved so every log already rotated was due again tomorrow, and
+    /// the process exited 4. Job A here throws on its first operation; job B must still rotate,
+    /// and the clocks must still be written.
+    /// </remarks>
+    [Fact]
+    public void AnUnexpectedExceptionCostsOneJobAndNotTheRun()
+    {
+        const string liveB = @"C:\logs\b\app.log";
+        var files = new FakeFiles().Add(Live, bytes: 100).Add(liveB, bytes: 100);
+        var applier = new FakeApplier(files)
+            .Surprise(op => op.Source.StartsWith(@"C:\logs\app", StringComparison.Ordinal),
+                _ => new InvalidOperationException("the container refused"));
+        var state = State();
+        state.Set(liveB, new PathState { Path = liveB, LastRotated = Now.AddDays(-2) });
+
+        var jobA = Job();
+        var jobB = Job() with { Name = "b", Paths = [@"C:\logs\b\*.log"] };
+
+        var report = Run([jobA, jobB], files, applier, state);
+
+        files.Exists(@"C:\logs\b\app.log.1").ShouldBeTrue("the second job still ran");
+        state.Get(liveB).ShouldNotBeNull().LastRotated.ShouldBe(Now, "and its clock was written");
+        File.Exists(Path.Combine(_dir.FullName, "state.json")).ShouldBeTrue("state was saved");
+
+        report.Failed.ShouldBeGreaterThan(0);
+        report.Diagnostics.ShouldContain(d =>
+            d.Code == DiagnosticCode.RotationFailed && d.Job == "app"
+            && d.Message.Contains("InvalidOperationException", StringComparison.Ordinal));
+    }
 
     /// <summary>
     /// A shift that succeeded is not a rotation when the live log's own rename failed.

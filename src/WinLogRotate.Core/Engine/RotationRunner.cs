@@ -456,11 +456,23 @@ public sealed class RotationRunner(
                 {
                     Verify(job, path, outcome, now, Report);
                 }
-
-                truncated.Clear();
+            }
+            catch (Exception e)
+            {
+                // One job's unforeseen exception costs that job and nothing else. Uncaught, it left
+                // the loop, skipped state.Save - so every log already rotated tonight was due
+                // again tomorrow - and reached the guard as exit 4 with the remaining jobs untouched.
+                // A zip container refusing a 1979 timestamp did that; so did a retry count of zero.
+                // The executor's own filter names the exceptions a file operation is expected to
+                // throw; this is for the ones nobody named, and it says so.
+                Report(Diagnose.Unexpected(job.Name, e));
             }
             finally
             {
+                // Whatever this job truncated is judged by this job or not at all; carrying it
+                // into the next job's loop would judge it under the wrong name.
+                truncated.Clear();
+
                 journal.Write(new CliEvent
                 {
                     Ts = string.Empty,

@@ -32,10 +32,22 @@ internal sealed class FakeApplier(FakeFiles files) : IPlanApplier
     /// <summary>Destinations that already held a file when an operation wrote over them.</summary>
     public List<string> Clobbered { get; } = [];
 
+    private readonly List<(Func<PlannedOp, bool> When, Func<PlannedOp, Exception> Make)> _surprises = [];
+
     /// <summary>Makes every operation matching <paramref name="when"/> throw, as a locked file would.</summary>
     public FakeApplier Fail(Func<PlannedOp, bool> when, string because = "held by another process")
     {
         _failures.Add((when, because));
+        return this;
+    }
+
+    /// <summary>
+    /// Makes every operation matching <paramref name="when"/> throw something the executor does not
+    /// expect - anything but the IO exceptions its filter names.
+    /// </summary>
+    public FakeApplier Surprise(Func<PlannedOp, bool> when, Func<PlannedOp, Exception> make)
+    {
+        _surprises.Add((when, make));
         return this;
     }
 
@@ -48,6 +60,14 @@ internal sealed class FakeApplier(FakeFiles files) : IPlanApplier
             if (when(op))
             {
                 throw new IOException($"{op.Action} {op.Source}: {because}");
+            }
+        }
+
+        foreach (var (when, make) in _surprises)
+        {
+            if (when(op))
+            {
+                throw make(op);
             }
         }
 
