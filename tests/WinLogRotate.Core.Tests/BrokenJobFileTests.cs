@@ -96,6 +96,28 @@ public sealed class BrokenJobFileTests : IDisposable
         loaded.Quarantined.ShouldBeEmpty();
     }
 
+    /// <summary>
+    /// The files a configuration came from are named, and a file that contributed nothing is not.
+    /// </summary>
+    /// <remarks>
+    /// This list is what the hook gate judges instead of re-enumerating the directory an hour
+    /// later. An unparseable file gave the run nothing, so it is not a place the run took its
+    /// configuration from.
+    /// </remarks>
+    [Fact]
+    public void TheFilesAConfigurationCameFromAreNamed()
+    {
+        var root = Path.Combine(_dir.FullName, "config.toml");
+        var loaded = Load(("a.toml", Healthy("a")), ("broken.toml", "schema = 1\n[job\n"), ("b.toml", Healthy("b")));
+
+        loaded.SourceFiles.ShouldBe(
+        [
+            root,
+            Path.Combine(_dir.FullName, "conf.d", "a.toml"),
+            Path.Combine(_dir.FullName, "conf.d", "b.toml"),
+        ]);
+    }
+
     /// <summary>A root file this account cannot read is LR1002 and exit 2, not an escaped exception.</summary>
     [Fact]
     public void ARootFileThatCannotBeReadIsReportedNotThrown()

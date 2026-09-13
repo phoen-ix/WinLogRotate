@@ -261,7 +261,7 @@ internal static class RunCommand
         // Taken here, immediately before rotation, and not at configuration load. A run reads its
         // configuration and then works for an hour; a directory's permissions can be changed in
         // between, by exactly the person the check exists to stop.
-        var hooks = HookSupport.ForThisMachine(paths);
+        var hooks = HookSupport.ForThisMachine(paths, config.SourceFiles);
 
         // Once per run, and only where it costs somebody something. A machine with no hooks
         // configured has nothing refused, and telling it nightly that its conf.d could be tighter

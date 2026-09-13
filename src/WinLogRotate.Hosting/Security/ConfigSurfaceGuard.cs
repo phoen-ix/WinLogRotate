@@ -95,6 +95,39 @@ internal static class ConfigSurfaceGuard
     }
 
     /// <summary>
+    /// The surface for a run: the two directories, then the files the run actually loaded.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// Not what is in <c>conf.d</c> now. <see cref="SurfaceOf(InstallPaths)"/> enumerates the
+    /// directory, and a run took its gate an hour after its load - so a job file that had been
+    /// loaded and then deleted was judged by nobody, while the hooks it defined were still in the
+    /// plan. The owner of a legacy file can delete it, and the gate was the only thing standing
+    /// between that file's <c>postrotate</c> and SYSTEM. docs/hooks.md has always said "every path
+    /// the run took its configuration from"; this is that list, and a loaded file that is now
+    /// missing reads as no descriptor at all, which is <see cref="AclVerdict.Unknown"/> and
+    /// refuses.
+    /// </para>
+    /// <para>
+    /// The enumerating overload stays for <c>doctor</c> and <c>host repair</c>, which load nothing
+    /// and are asking about the directory as it stands.
+    /// </para>
+    /// </remarks>
+    internal static IReadOnlyList<(string Path, bool IsDirectory)> SurfaceOf(
+        InstallPaths paths, IReadOnlyList<string> sourceFiles)
+    {
+        List<(string Path, bool IsDirectory)> surface =
+        [
+            (paths.Root, true),
+            (paths.ConfigDirectory, true),
+        ];
+
+        surface.AddRange(sourceFiles.Select(f => (f, false)));
+
+        return surface;
+    }
+
+    /// <summary>
     /// The first path in <paramref name="surface"/> that is not safe, or Hardened if none is.
     /// </summary>
     internal static AclFinding Verify(

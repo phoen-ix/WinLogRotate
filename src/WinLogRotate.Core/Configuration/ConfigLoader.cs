@@ -41,6 +41,19 @@ public sealed record LoadedConfig
     public IReadOnlyList<NotifyProvider> NotifyProviders { get; init; } = [];
 
     /// <summary>
+    /// Every file this configuration was actually read from, in the order it was read: the
+    /// root file if it parsed, then each job file that bound.
+    /// </summary>
+    /// <remarks>
+    /// What the hook gate judges. It used to enumerate <c>conf.d</c> again at gate time, an hour
+    /// after the load, and judge whatever was there then - so a job file that had been loaded and
+    /// deleted in between was judged by nobody, while the hooks it defined were still in
+    /// <see cref="Jobs"/>. A file whose contents were never used - unparseable, unreadable - is
+    /// not here, because nothing in this run came from it.
+    /// </remarks>
+    public IReadOnlyList<string> SourceFiles { get; init; } = [];
+
+    /// <summary>
     /// The <c>[journal]</c> table.
     /// </summary>
     /// <remarks>
@@ -124,6 +137,7 @@ public static class ConfigLoader
         var diagnostics = new DiagnosticBag();
         var quarantined = new List<string>();
         var unloadable = new List<string>();
+        var sources = new List<string>();
 
         JobSettings? defaults = null;
         var notify = NotifySettings.Default;
@@ -163,6 +177,7 @@ public static class ConfigLoader
             }
             else
             {
+                sources.Add(paths.ConfigFile);
                 defaults = ConfigBinder.BindDefaults(file, diagnostics);
                 notify = ConfigBinder.BindNotify(file, diagnostics);
                 journal = ConfigBinder.BindJournal(file, diagnostics);
@@ -197,6 +212,7 @@ public static class ConfigLoader
                 Paths = paths,
                 Quarantined = quarantined,
                 Unloadable = unloadable,
+                SourceFiles = sources,
                 Notify = notify,
                 NotifyProviders = providers,
                 Journal = journal,
@@ -241,6 +257,13 @@ public static class ConfigLoader
             }
 
             var verdict = Judge(file, path, defaults, guard, seenNames);
+
+            // Bound, whatever the verdict: a file that parsed was read, and a file that was read
+            // is one the hook gate has to judge.
+            if (verdict.Job is not null)
+            {
+                sources.Add(path);
+            }
 
             foreach (var item in verdict.Diagnostics)
             {
@@ -287,6 +310,7 @@ public static class ConfigLoader
             Paths = paths,
             Quarantined = quarantined,
             Unloadable = unloadable,
+            SourceFiles = sources,
             Notify = notify,
             NotifyProviders = providers,
             Journal = journal,

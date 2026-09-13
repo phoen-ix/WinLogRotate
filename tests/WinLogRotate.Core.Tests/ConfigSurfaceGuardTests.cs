@@ -93,6 +93,39 @@ public sealed class ConfigSurfaceGuardTests
         finding.FixCommand.ShouldNotBeNull();
     }
 
+    /// <summary>
+    /// A run's surface is the files it loaded, not the files that are there when it asks.
+    /// </summary>
+    /// <remarks>
+    /// The gate is taken an hour after the load, and it enumerated <c>conf.d</c> again - so a job
+    /// file loaded and then deleted was judged by nobody while the hooks it defined were still in
+    /// the plan. The owner of a legacy file can delete it. Here the loaded list names a file the
+    /// reader no longer finds, and one the reader would find is not in the list at all.
+    /// </remarks>
+    [Fact]
+    public void ARunIsJudgedByTheFilesItLoadedNotTheFilesThatAreThere()
+    {
+        var paths = new InstallPaths { Scope = InstallScope.PerMachine, Root = @"C:\pd" };
+        var asked = new List<string>();
+
+        ConfigSurfaceGuard.Descriptor reading = (path, isDirectory) =>
+        {
+            asked.Add(path);
+            return path == @"C:\pd\conf.d\vanished.toml" ? null : Clean(path, isDirectory);
+        };
+
+        var surface = ConfigSurfaceGuard.SurfaceOf(paths, [@"C:\pd\config.toml", @"C:\pd\conf.d\vanished.toml"]);
+        var finding = ConfigSurfaceGuard.Verify(surface, ConfigSurfaceGuard.Trusted(null), reading);
+
+        finding.Verdict.ShouldBe(AclVerdict.Unknown, "a loaded file that cannot be read now refuses");
+        finding.Path.ShouldBe(@"C:\pd\conf.d\vanished.toml");
+
+        // The directories come from InstallPaths, which combines with the running platform's
+        // separator; the files come from the list as given.
+        asked.ShouldBe([paths.Root, paths.ConfigDirectory, @"C:\pd\config.toml", @"C:\pd\conf.d\vanished.toml"],
+            "outermost first, then exactly the files that were loaded");
+    }
+
     /// <summary>An owner who is not an administrator is a write grant wearing a disguise.</summary>
     [Fact]
     public void ANonAdministratorOwnerRefusesTheRun()

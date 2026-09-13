@@ -30,14 +30,20 @@ internal sealed record HookSupport
     /// <summary>
     /// Decides, once, whether this run may execute what its configuration names.
     /// </summary>
+    /// <param name="sourceFiles">
+    /// The files the configuration was read from, as <c>LoadedConfig.SourceFiles</c> lists them.
+    /// Judged by name rather than re-enumerated: a file loaded and then deleted is one this run
+    /// still holds hooks from, and re-enumerating the directory handed the gate a list it was not
+    /// on.
+    /// </param>
     /// <remarks>
     /// Called immediately before rotation, not at configuration load. A run reads its
     /// configuration and then rotates for an hour, and a directory's permissions can be changed in
     /// between - by exactly the person this check exists to stop.
     /// </remarks>
-    public static HookSupport ForThisMachine(InstallPaths paths) =>
+    public static HookSupport ForThisMachine(InstallPaths paths, IReadOnlyList<string> sourceFiles) =>
         OperatingSystem.IsWindows()
-            ? OnWindows(paths)
+            ? OnWindows(paths, sourceFiles)
             : new HookSupport
             {
                 // Said as a platform fact, the way SenderTable words a missing eventlog:
@@ -46,9 +52,9 @@ internal sealed record HookSupport
             };
 
     [SupportedOSPlatform("windows")]
-    private static HookSupport OnWindows(InstallPaths paths)
+    private static HookSupport OnWindows(InstallPaths paths, IReadOnlyList<string> sourceFiles)
     {
-        var finding = ConfDirGuard.Verify(paths);
+        var finding = ConfDirGuard.Verify(paths, sourceFiles);
 
         if (finding.HooksAllowed)
         {

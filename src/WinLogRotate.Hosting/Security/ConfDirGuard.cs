@@ -123,6 +123,36 @@ public static class ConfDirGuard
             : finding;
     }
 
+    /// <summary>
+    /// Judges the paths a run actually took its configuration from, outermost first.
+    /// </summary>
+    /// <remarks>
+    /// For the run, and only the run. The enumerating overload judges the directory as it stands
+    /// at the moment of asking, which is right for <c>doctor</c> and wrong for a gate taken an
+    /// hour after the configuration was read - see <see cref="ConfigSurfaceGuard.SurfaceOf(InstallPaths, IReadOnlyList{string})"/>.
+    /// </remarks>
+    public static AclFinding Verify(InstallPaths paths, IReadOnlyList<string> sourceFiles, string? runAccountSid = null)
+    {
+        if (!Directory.Exists(paths.ConfigDirectory))
+        {
+            return new AclFinding
+            {
+                Verdict = AclVerdict.Unknown,
+                Path = paths.ConfigDirectory,
+                Explanation = "The configuration directory does not exist yet.",
+            };
+        }
+
+        var finding = ConfigSurfaceGuard.Verify(
+            ConfigSurfaceGuard.SurfaceOf(paths, sourceFiles),
+            ConfigSurfaceGuard.Trusted(runAccountSid),
+            ReadDescriptor);
+
+        return finding.Verdict is AclVerdict.LooseOwner or AclVerdict.LooseWritable
+            ? Scoped(finding, paths.Scope)
+            : finding;
+    }
+
     /// <param name="scope">
     /// How this copy was installed. Only <see cref="InstallScope.PerUser"/> softens the
     /// wording. <see cref="InstallScope.Portable"/> stays strict on purpose: it is what an
