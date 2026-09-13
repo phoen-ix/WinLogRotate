@@ -264,6 +264,76 @@ public sealed class NotificationPlannerTests : IDisposable
         message.Reason.ShouldBe(NotifyReason.Recovered);
     }
 
+    // ---- what is observed even when nothing is delivered ----------------------------------------
+
+    /// <summary>
+    /// A job the planner decides to report on is observed, whether or not the report gets through.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// The plan carried job state in two lists - Baseline for the silent cases, NextState on each
+    /// message for the delivered ones - and a job with a pending message was in neither until
+    /// delivery succeeded. During a channel outage its row was therefore never touched: FailingSince
+    /// was recomputed as "now" every night, so the mail that eventually went said "failing since"
+    /// the night the relay came back; and after thirty nights Prune removed the row for a stale
+    /// LastSeen, the job was re-baselined as a first sighting, and the FAILED message never went at
+    /// all. Silence compounding into permanent silence, from an outage of the reporting channel.
+    /// </para>
+    /// <para>
+    /// Observed is the observation side - FailingSince and LastSeen, exactly the fields
+    /// JobNotifyState documents as "seen" rather than "told" - and the phase applies it before
+    /// anything is delivered. The reported side still moves only on delivery.
+    /// </para>
+    /// </remarks>
+    [Fact]
+    public void ASentFailureIsObservedBeforeAnythingDeliversIt()
+    {
+        var plan = Plan([Bad()], BaselinedState());
+
+        plan.Messages.ShouldHaveSingleItem().Reason.ShouldBe(NotifyReason.NewFailure);
+
+        var (job, seen) = plan.Observed.ShouldHaveSingleItem();
+        job.ShouldBe("iis");
+        seen.FailingSince.ShouldBe(_now);
+        seen.LastSeen.ShouldBe(_now);
+
+        // The reported side is untouched: nobody has been told anything yet.
+        seen.Outcome.ShouldBe(NotifyOutcome.Healthy);
+        seen.NotifiedAt.ShouldBe(_now.AddDays(-1));
+        seen.Fingerprint.ShouldBe(string.Empty);
+    }
+
+    [Fact]
+    public void AFailureNobodyCouldBeToldAboutKeepsItsFirstSightingForTheNextRun()
+    {
+        var state = BaselinedState();
+
+        // Night one: the message is planned, and every channel is down, so only the observation
+        // is recorded.
+        foreach (var (job, seen) in Plan([Bad()], state).Observed)
+        {
+            state.SetJob(job, seen);
+        }
+
+        // Night two: still failing, still news - and it has been failing since night one.
+        var message = Plan([Bad()], state, at: _now.AddDays(1)).Messages.ShouldHaveSingleItem();
+
+        message.Reason.ShouldBe(NotifyReason.NewFailure, "nobody was told, so it is still new");
+        message.FailingSince.ShouldBe(_now);
+        message.NextState.FailingSince.ShouldBe(_now);
+    }
+
+    [Fact]
+    public void ASilentJobIsNotObservedTwice()
+    {
+        // Baseline already carries the silent and first-run cases, and one row per job is the
+        // whole point of a keyed store: a job is in exactly one of the two lists.
+        var plan = Plan([], BaselinedState());
+
+        plan.Observed.ShouldBeEmpty();
+        plan.Baseline.ShouldContain(b => b.Job == "iis");
+    }
+
     // ---- the reminder ------------------------------------------------------------------------
 
     [Fact]

@@ -133,6 +133,15 @@ internal static class NotifyPhase
             return;
         }
 
+        // The observation side first, for every job with a message pending: when it was first seen
+        // failing, and that it was seen tonight. Written before delivery so a channel outage cannot
+        // lose it - a delivered message overrides this row with the reported side, a failed one
+        // leaves it standing, and either way Prune sees a live row rather than a stale one.
+        foreach (var (job, observation) in plan.Observed)
+        {
+            state.SetJob(job, observation);
+        }
+
         Deliver(ctx, paths, config, summary, plan, settings, state, options, started, now);
 
         // Job state to record even though nothing was sent - the first run, where outcomes are

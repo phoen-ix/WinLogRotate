@@ -123,6 +123,27 @@ public sealed record NotificationPlan
     /// </remarks>
     public required IReadOnlyList<(string Job, JobNotifyState State)> Baseline { get; init; }
 
+    /// <summary>
+    /// The observation side of state for every job with a message pending, to record whether or
+    /// not the message gets through.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// A job with a pending message was in neither <see cref="Baseline"/> nor, until delivery
+    /// succeeded, anywhere else - so during a channel outage its row was never touched.
+    /// <c>FailingSince</c> was recomputed as "now" every night, so the mail that finally went said
+    /// "failing since" the night the relay came back; and after thirty nights <c>Prune</c> removed
+    /// the row for a stale <c>LastSeen</c>, the job was re-baselined as a first sighting, and the
+    /// FAILED message never went at all. An outage of the reporting channel had silenced the report.
+    /// </para>
+    /// <para>
+    /// Exactly the fields <see cref="JobNotifyState"/> documents as "seen" rather than "told":
+    /// <c>FailingSince</c> and <c>LastSeen</c>. The reported side still moves only through
+    /// <see cref="PlannedNotification.NextState"/>, on delivery, which overrides this row.
+    /// </para>
+    /// </remarks>
+    public IReadOnlyList<(string Job, JobNotifyState State)> Observed { get; init; } = [];
+
     public bool IsEmpty => Messages.Count == 0;
 
     public static NotificationPlan Nothing(params string[] why) => new()

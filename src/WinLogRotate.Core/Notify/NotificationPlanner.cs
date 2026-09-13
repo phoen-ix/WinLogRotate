@@ -83,6 +83,7 @@ public static class NotificationPlanner
         var messages = new List<PlannedNotification>();
         var suppressed = new List<string>();
         var baseline = new List<(string, JobNotifyState)>();
+        var observed = new List<(string, JobNotifyState)>();
 
         foreach (var job in jobs.OrderBy(j => j, StringComparer.Ordinal))
         {
@@ -132,6 +133,11 @@ public static class NotificationPlanner
             {
                 case Decision.Send:
                     messages.Add(Compose(job, decision.Reason, above, lines, fingerprint, failingSince, next, run));
+
+                    // What was seen, kept apart from what will be told. If no channel takes the
+                    // message, this is all that is recorded - and it is what stops a long outage
+                    // from re-baselining the job and losing the first sighting.
+                    observed.Add((job, prior with { FailingSince = failingSince, LastSeen = now }));
                     break;
 
                 case Decision.Baseline:
@@ -159,6 +165,7 @@ public static class NotificationPlanner
             Messages = messages,
             Suppressed = suppressed,
             Baseline = baseline,
+            Observed = observed,
         };
     }
 

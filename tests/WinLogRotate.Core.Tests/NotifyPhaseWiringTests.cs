@@ -169,6 +169,38 @@ public sealed class NotifyPhaseWiringTests : IDisposable
         state.JobOrDefault(NotifyStateDocument.RunScope).NotifiedAt.ShouldBeNull();
     }
 
+    /// <summary>
+    /// A failed delivery still records when the failure was first seen, so the row survives the outage.
+    /// </summary>
+    /// <remarks>
+    /// The observation side of state - FailingSince, LastSeen - is written by the phase whether or
+    /// not any channel took the message. Without that, a channel outage longer than the prune window
+    /// deleted the job's row, re-baselined it as a first sighting, and the FAILED message never went.
+    /// </remarks>
+    [Fact]
+    public void AFailedDeliveryStillRecordsWhenTheFailureWasFirstSeen()
+    {
+        var paths = Write($"""
+            schema = 1
+            [notify]
+            to = ["{Unreachable}"]
+            retries = 0
+            """);
+
+        Baseline(paths);
+
+        var (_, ctx) = Failing();
+
+        Cli.Commands.NotifyPhase.Run(
+            ctx, paths, Load(paths), report: null, new RunOptions(), DateTimeOffset.UtcNow);
+
+        var scope = NotifyStateStore.Load(paths.NotifyStateFile).JobOrDefault(NotifyStateDocument.RunScope);
+
+        scope.FailingSince.ShouldNotBeNull("the sighting is a fact about the run, not about delivery");
+        scope.LastSeen.ShouldNotBeNull();
+        scope.NotifiedAt.ShouldBeNull("and nobody was told, so nothing on the reported side moves");
+    }
+
     /// <summary>A channel that failed has to be remembered, or the breaker can never count.</summary>
     [Fact]
     public void AFailedChannelIsRecordedSoTheBreakerCanEventuallyOpen()
