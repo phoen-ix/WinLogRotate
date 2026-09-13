@@ -241,8 +241,12 @@ public static class JobDocument
 
             // Re-parsed rather than carried from the loop above, because a list key's value is
             // every item at once and the loop above checked them one at a time.
+            // A list key's items come from every piece of text the caller gave, each of which
+            // may itself be an array - which is what `job show` prints, and what has to go back
+            // in unchanged. Through JobSchema, so this and TryParse cannot come apart about what
+            // a piece of text names.
             var written = row.Kind == JobKeyKind.TextList
-                ? TomlValue.List(items)
+                ? TomlValue.List([.. items.SelectMany(JobSchema.ListItems)])
                 : Parsed(row, value);
 
             var after = written.ToString();

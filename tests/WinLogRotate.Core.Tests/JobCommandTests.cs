@@ -935,6 +935,129 @@ public sealed class JobCommandTests : IDisposable
         File.Exists(path).ShouldBeTrue();
     }
 
+    // ---- job show --------------------------------------------------------------------------
+
+    /// <summary>
+    /// What <c>show</c> prints, fed back through <c>set</c>, changes nothing.
+    /// </summary>
+    /// <remarks>
+    /// The contract the verb exists for. If <c>show</c> normalised anything - a size to bytes, a
+    /// duration to a TimeSpan, a default materialised - this round trip would rewrite the file,
+    /// and a GUI built on it would rewrite the file every time somebody opened a job and pressed
+    /// Save without typing.
+    /// </remarks>
+    [Fact]
+    public void WhatShowPrintsFedBackThroughSetChangesNothing()
+    {
+        var path = WriteHandWritten();
+        var (sink, ctx) = Context();
+
+        JobCommand.Show(ctx, "iis", Root).ShouldBe(ExitCode.Ok, Why(sink));
+
+        var shown = sink.Result.ShouldBeOfType<JobShowResult>();
+
+        // Every key, including the one the binder does not read, and including the name.
+        shown.Keys.Select(k => k.Key)
+            .ShouldBe(["name", "paths", "rotate", "maxage", "allowdangerous", "ownr"]);
+
+        // Each key says whether this product reads it, which is what tells an editor what it may
+        // feed back: a key the binder ignores can be removed but not written.
+        shown.Keys.Single(k => k.Key == "ownr").Known.ShouldBeFalse();
+        shown.Keys.Where(k => k.Key != "ownr").ShouldAllBe(k => k.Known);
+
+        var (back, again) = Context();
+
+        // The name is refused from --set, which is itself part of the contract: an editor feeds
+        // back what it may change, and identity is not among it.
+        JobCommand.Set(again, "iis", Root,
+            [.. shown.Keys.Where(k => k.Known && k.Key != "name")
+                .Select(k => new JobEdit(k.Key, Unquoted(k.Source)))],
+            dryRun: false, Elevated)
+            .ShouldBe(ExitCode.Ok, Why(back));
+
+        File.ReadAllText(path).ShouldBe(HandWritten, "not one byte");
+
+        back.Result.ShouldBeOfType<JobEditResult>()
+            .Changes.ShouldAllBe(c => c.Kind == "Unchanged");
+    }
+
+    /// <summary>Show carries no resolved value, even when [defaults] has one.</summary>
+    /// <remarks>
+    /// The hazard in one assertion. <c>config show</c> would report <c>rotate = 4</c> for a job
+    /// whose file says nothing about it; an editor that wrote that back would sever the job from
+    /// <c>[defaults]</c> permanently.
+    /// </remarks>
+    [Fact]
+    public void ShowCarriesNoResolvedValue()
+    {
+        Directory.CreateDirectory(ConfD);
+        File.WriteAllText(Path.Combine(Root, "config.toml"), "schema = 1\n\n[defaults]\nrotate = 4\ncompress = true\n");
+        File.WriteAllText(Path.Combine(ConfD, "iis.toml"),
+            "schema = 1\n\n[job]\nname = \"iis\"\npaths = [\"C:/logs/*.log\"]\n");
+
+        var (sink, ctx) = Context();
+
+        JobCommand.Show(ctx, "iis", Root).ShouldBe(ExitCode.Ok, Why(sink));
+
+        var shown = sink.Result.ShouldBeOfType<JobShowResult>();
+        shown.Keys.Select(k => k.Key).ShouldBe(["name", "paths"]);
+        shown.Keys.ShouldNotContain(k => k.Key == "rotate");
+        shown.Keys.ShouldNotContain(k => k.Key == "compress");
+    }
+
+    /// <summary>
+    /// Show finds a job that will not load, which is the one somebody opened an editor to fix.
+    /// </summary>
+    /// <remarks>
+    /// <c>ConfigLoader</c> drops a job with a validation error from <c>LoadedConfig.Jobs</c>, so
+    /// <c>config show --json</c> does not list it. This reads the file directly, and reports the
+    /// verdict as well - which is the reason they opened it.
+    /// </remarks>
+    [Fact]
+    public void ShowFindsAJobThatWillNotLoad()
+    {
+        Directory.CreateDirectory(ConfD);
+        File.WriteAllText(Path.Combine(ConfD, "iis.toml"),
+            "schema = 1\n\n[job]\nname = \"iis\"\npaths = [\"C:/logs/*.log\"]\nrotate = -2\n");
+
+        Load().Jobs.ShouldBeEmpty("the loader will not run it");
+
+        var (sink, ctx) = Context();
+
+        JobCommand.Show(ctx, "iis", Root).ShouldBe(ExitCode.ConfigInvalid);
+
+        var shown = sink.Result.ShouldBeOfType<JobShowResult>();
+        shown.Keys.Select(k => k.Key).ShouldContain("rotate");
+        shown.Diagnostics.ShouldNotBeEmpty("and says why");
+    }
+
+    /// <summary>Show needs no administrator rights, because it writes nothing.</summary>
+    /// <remarks>
+    /// Which matters for the GUI: opening a job to look at it must not raise a UAC prompt.
+    /// </remarks>
+    [Fact]
+    public void ShowNeedsNoAdministratorRights()
+    {
+        WriteHandWritten();
+        var (sink, ctx) = Context();
+
+        JobCommand.Show(ctx, "iis", Root).ShouldBe(ExitCode.Ok, Why(sink));
+        sink.Diagnostics.ShouldAllBe(d => d.Code != DiagnosticCode.NeedsAdministrator);
+    }
+
+    /// <summary>
+    /// A source value as the command line would carry it.
+    /// </summary>
+    /// <remarks>
+    /// A shell strips the quotes around a scalar; an array is passed through, because
+    /// <c>JobSchema.TryParse</c> reads one back as its items. This is what a GUI building a
+    /// command line has to do, which is the point of asserting it here.
+    /// </remarks>
+    private static string Unquoted(string source) =>
+        source.Length > 1 && source[0] == '"' && source[^1] == '"'
+            ? source[1..^1]
+            : source;
+
     /// <summary>What the verb said, for an assertion that would otherwise only report a number.</summary>
     private static string Why(Capturing sink) =>
         sink.Diagnostics.Count == 0

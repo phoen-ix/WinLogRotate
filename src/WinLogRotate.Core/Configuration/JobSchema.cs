@@ -1,4 +1,5 @@
 using System.Globalization;
+using Tomlyn.Syntax;
 
 namespace WinLogRotate.Core.Configuration;
 
@@ -276,15 +277,72 @@ public static class JobSchema
                 return true;
 
             case JobKeyKind.TextList:
-                // One item. A caller repeating the key builds the list; this does not split on a
-                // separator, because a Windows path may contain any of them.
-                value = TomlValue.List([text]);
+                // One item, or the array `job show` printed. A caller repeating the key builds
+                // the list the ergonomic way; this never splits on a separator, because a Windows
+                // path may contain any of them.
+                value = TomlValue.List(ListItems(text));
                 return true;
 
             default:
                 value = TomlValue.Of(text);
                 return true;
         }
+    }
+
+    /// <summary>
+    /// The items one piece of command-line text names: one, unless it is an array of them.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// So that what <c>job show</c> prints goes back through <c>job set</c> unchanged. Without
+    /// this, feeding back <c>paths = ["C:/logs/*.log"]</c> would write a one-item list whose item
+    /// is the literal text <c>["C:/logs/*.log"]</c> - a job matching nothing, from a round trip
+    /// that looked like it worked.
+    /// </para>
+    /// <para>
+    /// Decided by parsing rather than by the brackets. <c>[</c> and <c>]</c> are legal in a
+    /// Windows filename, so <c>[archive]</c> is a directory somebody has and not an array; it
+    /// does not parse as TOML, and stays one item.
+    /// </para>
+    /// <para>
+    /// Public because <see cref="JobDocument"/> has to accumulate a repeated list key across
+    /// several pieces of text and cannot go through <see cref="TryParse"/>, which answers about
+    /// one. Two spellings of "what items does this text name" is how the two would come apart.
+    /// </para>
+    /// </remarks>
+    public static IReadOnlyList<string> ListItems(string text)
+    {
+        var trimmed = text.Trim();
+
+        if (trimmed.Length < 2 || trimmed[0] != '[' || trimmed[^1] != ']')
+        {
+            return [text];
+        }
+
+        // Through TomlFile, so this reads an array exactly as the rest of the product does.
+        var document = TomlFile.Parse($"x = {trimmed}", "<value>");
+
+        if (document.HasErrors
+            || document.Document.KeyValues.GetChild(0) is not KeyValueSyntax { Value: ArraySyntax array })
+        {
+            return [text];
+        }
+
+        var items = new List<string>();
+
+        for (var i = 0; i < array.Items.ChildrenCount; i++)
+        {
+            // Anything but a string means this is not a list this product writes - a number, or a
+            // nested array - and reading part of it would be worse than reading none.
+            if (array.Items.GetChild(i) is not { Value: StringValueSyntax { Value: { } item } })
+            {
+                return [text];
+            }
+
+            items.Add(item);
+        }
+
+        return items.Count == 0 ? [text] : items;
     }
 
     private static JobKey Row(string key, JobKeyKind kind, JobKeyGroup group, string sample) =>

@@ -556,3 +556,69 @@ public sealed record JobEditResult
     /// <summary>What a run would make of the edited file. Empty when it is happy with it.</summary>
     public required IReadOnlyList<ConfigDiagnosticDto> Diagnostics { get; init; }
 }
+
+/// <summary>One key a job file writes, exactly as it writes it.</summary>
+public sealed record JobKeyLineDto
+{
+    public required string Key { get; init; }
+
+    /// <summary>
+    /// The TOML source of the value. <c>"100M"</c> stays <c>"100M"</c>.
+    /// </summary>
+    /// <remarks>
+    /// Not a resolved value and not a normalised one: this is what has to go back through
+    /// <c>job set</c> unchanged, and 104857600 would be a different file even though it is the
+    /// same number of bytes.
+    /// </remarks>
+    public required string Source { get; init; }
+
+    public required int Line { get; init; }
+
+    /// <summary>
+    /// Whether this product reads this key.
+    /// </summary>
+    /// <remarks>
+    /// False for a key the binder warns about and ignores. Reported rather than hidden, because
+    /// an editor that listed only the keys the binder knows would show a file that does not match
+    /// the one on disk - and <c>job set --unset</c> is how the operator acts on that warning.
+    /// </remarks>
+    public required bool Known { get; init; }
+}
+
+/// <summary>
+/// Payload of <c>winlogrotate job show</c>: a job as its file writes it.
+/// </summary>
+/// <remarks>
+/// <para>
+/// A separate verb from <c>config show</c>, and separate on purpose. <c>config show</c> publishes
+/// <c>EffectiveJob</c> - every default and every <c>[defaults]</c> value materialised - which is
+/// the right answer to "what will happen tonight" and the wrong one to "what does this file say".
+/// An editor that read the first and wrote it back would sever the job from <c>[defaults]</c> on
+/// its first save, silently and permanently.
+/// </para>
+/// <para>
+/// So nothing here is resolved, and the contract is that feeding these keys back through
+/// <c>job set</c> changes no byte of the file. Not a mode flag on <c>config show</c> either:
+/// <c>Complete&lt;T&gt;</c> takes one <c>T</c>, so a flag would mean two payload shapes under one
+/// verb name - and the whole hazard is confusability, which two differently-named verbs cannot
+/// have.
+/// </para>
+/// <para>
+/// It also answers a question nothing else could. <c>ConfigLoader</c> drops a job with a
+/// validation error from <c>LoadedConfig.Jobs</c>, so <c>config show --json</c> does not list the
+/// job you opened the editor to fix. This reads the file directly.
+/// </para>
+/// </remarks>
+public sealed record JobShowResult
+{
+    /// <summary>The name as the file writes it, which is the job's identity.</summary>
+    public required string Job { get; init; }
+
+    public required string Path { get; init; }
+
+    /// <summary>Every key the file writes, in the order it writes them.</summary>
+    public required IReadOnlyList<JobKeyLineDto> Keys { get; init; }
+
+    /// <summary>What a run would make of this file. Empty when it is happy with it.</summary>
+    public required IReadOnlyList<ConfigDiagnosticDto> Diagnostics { get; init; }
+}

@@ -305,6 +305,90 @@ internal static class JobCommand
     }
 
     /// <summary>
+    /// Prints a job as its file writes it, and never as a run would resolve it.
+    /// </summary>
+    /// <remarks>
+    /// The one verb here that needs no elevation, because it writes nothing. That matters for the
+    /// GUI: opening a job to look at it must not raise a UAC prompt.
+    /// </remarks>
+    public static int Show(CommandContext ctx, string name, string? configDir)
+    {
+        var (_, guard, index) = Open(configDir);
+
+        if (Find(ctx, "job show", name, index) is not { } path)
+        {
+            return ExitCode.ConfigInvalid;
+        }
+
+        TomlFile file;
+
+        try
+        {
+            file = TomlFile.Load(path);
+        }
+        catch (Exception e) when (e is IOException or UnauthorizedAccessException)
+        {
+            ctx.Output.Diagnostic(new CliDiagnostic
+            {
+                Severity = Severity.Error,
+                Code = DiagnosticCode.ConfigUnreadable,
+                Message = $"{path} could not be read: {e.Message}",
+                Path = path,
+                Remedy = "Check the permissions on the conf.d directory.",
+            });
+
+            return ctx.Output.Complete<JobShowResult>("job show", ExitCode.Errors, null);
+        }
+
+        var keys = TomlEditor.Keys(file, JobDocument.Table)
+            .Select(k => new JobKeyLineDto
+            {
+                Key = k.Key,
+                Source = k.Source,
+                Line = k.Line,
+                Known = JobSchema.Find(k.Key) is not null,
+            })
+            .ToArray();
+
+        // Judged as well as read, because the job an editor opens is often the one that will not
+        // load - and a verdict is the reason they opened it.
+        var verdict = ConfigLoader.Judge(
+            file, path, index.Defaults, guard, index.NamesInUse(excludingFile: path));
+
+        ctx.Output.Line($"{name}  {path}");
+
+        foreach (var key in keys)
+        {
+            ctx.Output.Line(key.Known
+                ? $"    {key.Key} = {key.Source}"
+                : $"    {key.Key} = {key.Source}   # not a setting this product reads");
+        }
+
+        foreach (var d in verdict.Diagnostics)
+        {
+            ctx.Output.Diagnostic(new CliDiagnostic
+            {
+                Severity = d.Severity,
+                Code = d.Code,
+                Message = d.Message,
+                Path = d.File,
+                Line = d.Line == 0 ? null : d.Line,
+                Column = d.Column == 0 ? null : d.Column,
+                Remedy = d.Remedy,
+            });
+        }
+
+        return ctx.Output.Complete("job show", verdict.HasErrors ? ExitCode.ConfigInvalid : ExitCode.Ok,
+            new JobShowResult
+            {
+                Job = name,
+                Path = path,
+                Keys = keys,
+                Diagnostics = verdict.Diagnostics.Select(ConfigCommand.Map).ToArray(),
+            });
+    }
+
+    /// <summary>
     /// Everything a job verb needs before it can judge anything.
     /// </summary>
     /// <remarks>

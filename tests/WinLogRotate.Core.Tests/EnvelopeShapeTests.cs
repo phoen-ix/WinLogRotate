@@ -431,6 +431,42 @@ public sealed class EnvelopeShapeTests
             }),
             "job-set");
 
+    /// <summary>
+    /// A job as its file writes it - and, as much, without what it does not write.
+    /// </summary>
+    /// <remarks>
+    /// If a resolved value ever appears under this verb, this is where it shows up. The fixture
+    /// carries a known key, an unknown one and a forwarded diagnostic.
+    /// </remarks>
+    [Fact]
+    public void JobShowKeepsItsShape() =>
+        ShouldMatchSnapshot(
+            Envelope("job show", new JobShowResult
+            {
+                Job = "iis",
+                Path = @"C:\ProgramData\WinLogRotate\conf.d\iis.toml",
+                Keys =
+                [
+                    new JobKeyLineDto { Key = "name", Source = "\"iis\"", Line = 4, Known = true },
+                    new JobKeyLineDto { Key = "maxsize", Source = "\"100M\"", Line = 6, Known = true },
+                    new JobKeyLineDto { Key = "ownr", Source = "\"team-web\"", Line = 7, Known = false },
+                ],
+                Diagnostics =
+                [
+                    new ConfigDiagnosticDto
+                    {
+                        Severity = Severity.Warning,
+                        Code = DiagnosticCode.ConfigInvalid,
+                        Message = "'ownr' is not a [job] setting, and is ignored.",
+                        File = @"C:\ProgramData\WinLogRotate\conf.d\iis.toml",
+                        Line = 7,
+                        Column = 1,
+                        Remedy = "Remove it with 'winlogrotate job set iis --unset ownr'.",
+                    },
+                ],
+            }),
+            "job-show");
+
     [Fact]
     public void ScanKeepsItsShape() =>
         ShouldMatchSnapshot(

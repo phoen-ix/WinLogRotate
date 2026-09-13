@@ -22,12 +22,17 @@ result.jobs[].hookTimeout : String
 result.jobs[].kind : String
 result.jobs[].liveFiles : Number
 result.jobs[].lockStrategy : String
+result.jobs[].maxAge : Number
 result.jobs[].maxFiles : Number
+result.jobs[].maxSize : Number
+result.jobs[].minAge : Number
+result.jobs[].minSize : Number
 result.jobs[].missingOk : Boolean
 result.jobs[].monthDay : Number
 result.jobs[].name : String
 result.jobs[].notIfEmpty : Boolean
 result.jobs[].notify : Boolean
+result.jobs[].oldDir : String
 result.jobs[].paths[] : String
 result.jobs[].postRotate[] : (empty)
 result.jobs[].preRotate[] : (empty)
@@ -36,6 +41,7 @@ result.jobs[].retryIntervalMs : Number
 result.jobs[].rotate : Number
 result.jobs[].schedule : String
 result.jobs[].sizeThreshold : Number
+result.jobs[].sourceFile : String
 result.jobs[].start : Number
 result.jobs[].weekday : Number
 result.root : String

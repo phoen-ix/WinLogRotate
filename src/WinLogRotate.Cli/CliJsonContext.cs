@@ -48,5 +48,6 @@ namespace WinLogRotate.Cli;
 [JsonSerializable(typeof(CliEnvelope<NotifyTestResult>))]
 [JsonSerializable(typeof(CliEnvelope<PathResult>))]
 [JsonSerializable(typeof(CliEnvelope<JobEditResult>))]
+[JsonSerializable(typeof(CliEnvelope<JobShowResult>))]
 [JsonSerializable(typeof(CliDiagnostic))]
 internal sealed partial class CliJsonContext : JsonSerializerContext;

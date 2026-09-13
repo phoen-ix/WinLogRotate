@@ -21,10 +21,15 @@ internal static class Fixtures
         MonthDay = 0,
         Rotate = 4,
         Start = 1,
-        MaxAge = null,
-        MinAge = null,
-        MinSize = null,
-        MaxSize = null,
+        // Not null, unlike the five that follow, because these are what an editor and a
+        // retention report actually read - and a fixture that leaves a field null leaves that
+        // field out of the pinned envelope entirely, because the sink omits nulls. The shape
+        // this product publishes then goes unpinned for exactly the fields most likely to be
+        // added to or removed from.
+        MaxAge = 90,
+        MinAge = 2,
+        MinSize = 4096,
+        MaxSize = 104857600,
         SizeThreshold = 1 << 20,
         Compress = true,
         CompressType = CompressType.Zip,
@@ -33,7 +38,7 @@ internal static class Fixtures
         DateFormat = "-yyyyMMdd",
         MissingOk = true,
         NotIfEmpty = false,
-        OldDir = null,
+        OldDir = @"C:\archive",
         CreateOldDir = false,
         LockStrategy = LockStrategy.Rename,
         LiveFiles = 1,
@@ -44,5 +49,10 @@ internal static class Fixtures
         PostRotate = [],
         HookTimeout = TimeSpan.FromSeconds(60),
         AllowDangerous = [],
+
+        // The editor's only route from a job back to the file it came from. Absent from the
+        // pinned envelope for as long as this was null, so config show could have stopped
+        // publishing it without anything noticing.
+        SourceFile = @"C:\ProgramData\WinLogRotate\conf.d\app.toml",
     };
 }

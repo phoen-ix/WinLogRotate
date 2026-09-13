@@ -195,6 +195,55 @@ public static class TomlEditor
     }
 
     /// <summary>
+    /// Every key a table writes, in the order the file writes them.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// Including keys nothing in this product reads. An editor that listed only the keys the
+    /// binder knows would show a file that does not match the one on disk, and the operator would
+    /// have no way to see - or, since <c>job set --unset</c>, remove - a key the binder is
+    /// warning them about.
+    /// </para>
+    /// <para>
+    /// A dotted key is reported by its first part and skipped from there, because
+    /// <c>a.b = 1</c> defines <c>a</c> as a table and nothing in this product's schema is one.
+    /// </para>
+    /// </remarks>
+    public static IReadOnlyList<(string Key, string Source, int Line)> Keys(
+        TomlFile file, string[] tableParts)
+    {
+        var found = new List<(string, string, int)>();
+
+        foreach (var table in file.Document.Tables)
+        {
+            // Same comparison as Locate, and for the same reason: the header's parsed key nodes
+            // rather than its text, and never a [[table array]], which the binder refuses.
+            if (table is TableArraySyntax
+                || ConfigBinder.KeyParts(table) is not { } parts
+                || parts.Length != tableParts.Length
+                || !parts.Zip(tableParts).All(
+                    p => string.Equals(p.First, p.Second, StringComparison.OrdinalIgnoreCase)))
+            {
+                continue;
+            }
+
+            foreach (var candidate in table.Items.OfType<KeyValueSyntax>())
+            {
+                var name = NameParts(candidate);
+
+                if (name.Length == 0 || candidate.Value is null)
+                {
+                    continue;
+                }
+
+                found.Add((name[0], Rendered(candidate.Value), candidate.Span.Start.Line + 1));
+            }
+        }
+
+        return found;
+    }
+
+    /// <summary>
     /// A value's own text, without whatever follows it on the line.
     /// </summary>
     /// <remarks>

@@ -342,9 +342,23 @@ internal static class CommandTree
             parse.GetValue(GlobalOptions.ConfigDir)?.FullName,
             parse.GetValue(goneDry))));
 
+        var shown = new Argument<string>("name") { Description = "The job to print." };
+
+        var show = new Command("show",
+            "Print a job as its file writes it - not as a run would resolve it. This is what to feed back into 'job set'.")
+        {
+            shown,
+        };
+
+        GlobalOptions.AddTo(show);
+        show.SetAction(parse => CommandContext.Guarded(parse, ctx => JobCommand.Show(
+            ctx,
+            parse.GetRequiredValue(shown),
+            parse.GetValue(GlobalOptions.ConfigDir)?.FullName)));
+
         return new Command("job", "Create and change jobs.")
         {
-            add, edit, Switch("enable", true), Switch("disable", false), remove,
+            add, edit, Switch("enable", true), Switch("disable", false), remove, show,
         };
     }
 

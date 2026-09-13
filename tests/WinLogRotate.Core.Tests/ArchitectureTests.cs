@@ -2,6 +2,7 @@ using System.Globalization;
 using System.Reflection;
 using System.Text.RegularExpressions;
 using Shouldly;
+using WinLogRotate.Cli.Output;
 using WinLogRotate.Contracts;
 using WinLogRotate.Core.Configuration;
 using WinLogRotate.Core.Safety;
@@ -131,6 +132,54 @@ public partial class ArchitectureTests
         Code(Path.Combine(commands, "ConfigWrites.cs"))
             .ShouldContain("File.Delete", customMessage: "the rule is looking for the wrong spelling");
     }
+
+    /// <summary>
+    /// The job editor never publishes a merged job.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// The central hazard of the whole milestone, stated so it cannot be reintroduced by
+    /// accident. The only job object this product publishes is <c>EffectiveJob</c>, with every
+    /// default and every <c>[defaults]</c> value materialised. It is the right answer to "what
+    /// will happen tonight" and the wrong one to "what does this file say" - and an editor that
+    /// read the first and wrote it back would sever the job from <c>[defaults]</c> on its first
+    /// save, silently and permanently.
+    /// </para>
+    /// <para>
+    /// By reflection rather than by text, because the way this comes back is somebody adding a
+    /// convenient property to a payload, not somebody writing the words.
+    /// </para>
+    /// </remarks>
+    [Fact]
+    public void TheJobEditorNeverPublishesAMergedJob()
+    {
+        Type[] payloads = [typeof(JobEditResult), typeof(JobShowResult), typeof(JobKeyLineDto), typeof(JobChangeDto)];
+
+        var offenders = payloads
+            .SelectMany(t => t.GetProperties().Select(p => (Owner: t.Name, Property: p)))
+            .Where(x => Resolved(x.Property.PropertyType))
+            .Select(x => $"{x.Owner}.{x.Property.Name} is a {x.Property.PropertyType.Name}")
+            .ToArray();
+
+        offenders.ShouldBeEmpty(
+            "publish what the file says, never what a run would resolve it to; writing a merged "
+            + "job back severs it from [defaults] permanently");
+
+        // Self-check: the predicate has to actually recognise the types it is looking for, or
+        // this passes by failing to look.
+        Resolved(typeof(EffectiveJob)).ShouldBeTrue();
+        Resolved(typeof(IReadOnlyList<EffectiveJob>)).ShouldBeTrue();
+        Resolved(typeof(JobConfig)).ShouldBeTrue();
+        Resolved(typeof(string)).ShouldBeFalse();
+    }
+
+    /// <summary>Whether a type is, or carries, a job this product has already resolved.</summary>
+    private static bool Resolved(Type type) =>
+        type == typeof(EffectiveJob)
+        || type == typeof(JobConfig)
+        || type == typeof(JobSettings)
+        || (type.IsGenericType && type.GetGenericArguments().Any(Resolved))
+        || (type.IsArray && Resolved(type.GetElementType()!));
 
     /// <summary>
     /// A file's code, without its comments.

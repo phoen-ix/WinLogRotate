@@ -574,8 +574,11 @@ public static class ConfigBinder
                 LineOf(kv), ColumnOf(kv),
                 remedy: Suggest(key) is { } near
                     ? $"Did you mean '{near}'?"
-                    : "Remove it, or check it against docs/configuration.md "
-                      + "(hooks are in docs/hooks.md).");
+                    // Names the verb, now that there is one. A remedy that says "remove it"
+                    // and leaves the operator to find the file and open Notepad is the shape of
+                    // advice this milestone exists to stop giving.
+                    : "Remove it with 'winlogrotate job set <name> --unset " + key
+                      + "', or check it against docs/configuration.md (hooks are in docs/hooks.md).");
         }
     }
 
