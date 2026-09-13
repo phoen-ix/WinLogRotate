@@ -815,6 +815,18 @@ public static class ConfigBinder
 
         if (kv.Value is IntegerValueSyntax i)
         {
+            // Tomlyn reads a 64-bit integer and every key here is a 32-bit one. A bare cast
+            // wrapped silently: rotate = 4294967303 bound to 7, and an operator's typo became a
+            // retention policy nobody could see in the file.
+            if (i.Value is < int.MinValue or > int.MaxValue)
+            {
+                d.Error(file, DiagnosticCode.ConfigInvalid,
+                    $"'{key}' is {i.Value}, which is outside the range this key can hold.",
+                    LineOf(kv), ColumnOf(kv),
+                    "Every whole-number key here fits in 32 bits, and none has a legitimate value anywhere near that.");
+                return null;
+            }
+
             return (int)i.Value;
         }
 
@@ -975,8 +987,19 @@ public static class ConfigBinder
             return false;
         }
 
-        bytes = value * multiplier;
-        return true;
+        // Checked, because a size that wraps negative is a threshold every file is above -
+        // "9999999999G" would have made a size-triggered job rotate on every run - and a value
+        // that large is a typo whichever way it is read.
+        try
+        {
+            bytes = checked(value * multiplier);
+        }
+        catch (OverflowException)
+        {
+            return false;
+        }
+
+        return value >= 0;
     }
 
     private static IReadOnlyList<string> GetStringList(

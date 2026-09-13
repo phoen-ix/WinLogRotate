@@ -227,6 +227,48 @@ public class ConfigBinderTests
         job.ShouldNotBeNull().MaxSize.ShouldBe(expected);
     }
 
+    /// <summary>
+    /// A whole number that does not fit the key is an error, not a silent wrap.
+    /// </summary>
+    /// <remarks>
+    /// Tomlyn reads 64 bits and the binder cast to 32: <c>rotate = 4294967303</c> bound to 7 and
+    /// became a retention policy nobody could see in the file.
+    /// </remarks>
+    [Fact]
+    public void AnIntegerBeyondThirtyTwoBitsIsAnErrorNotAWrap()
+    {
+        var (job, d) = Bind("""
+            schema = 1
+            [job]
+            name = "big"
+            paths = ["C:/logs/*.log"]
+            rotate = 4294967303
+            """);
+
+        job.ShouldNotBeNull().Rotate.ShouldBeNull();
+        d.Items.ShouldContain(x => x.Severity == Severity.Error && x.Message.Contains("rotate"));
+    }
+
+    /// <summary>A size too large to hold is refused rather than wrapping negative.</summary>
+    /// <remarks>
+    /// A negative threshold is one every file is above, so <c>size = "9999999999G"</c> would have
+    /// rotated a size-triggered job on every run.
+    /// </remarks>
+    [Theory]
+    [InlineData("9999999999G", false)]
+    [InlineData("-5M", false)]
+    [InlineData("8191P", false)]
+    [InlineData("100M", true)]
+    public void ASizeThatDoesNotFitIsRefused(string literal, bool ok)
+    {
+        ConfigBinder.TryParseSize(literal, out var bytes).ShouldBe(ok);
+
+        if (ok)
+        {
+            bytes.ShouldBePositive();
+        }
+    }
+
     [Fact]
     public void DiagnosticsCarryLineAndColumn()
     {

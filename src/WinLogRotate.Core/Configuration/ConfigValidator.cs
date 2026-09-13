@@ -159,6 +159,39 @@ public static class ConfigValidator
                 remedy: "minsize suppresses a due rotation; maxsize forces an early one. Setting minsize above maxsize cancels both.");
         }
 
+        // RetryPolicy refuses fewer than one attempt with an ArgumentOutOfRangeException, and
+        // Thread.Sleep treats -1 as "for ever". Neither is an IOException, so neither was caught
+        // anywhere: retrycount = 0 ended every run at exit 4 on its first file operation, and
+        // retryinterval = -1 hung the first retry until the scheduled task's limit killed it.
+        // Both are values somebody plausibly writes to mean "do not retry".
+        if (job.RetryCount < 1)
+        {
+            d.Error(file, DiagnosticCode.ConfigInvalid,
+                $"retrycount = {job.RetryCount} is not a number of attempts.",
+                remedy: "It counts attempts, not retries: 1 tries once and never retries. The default is 5.");
+        }
+
+        if (job.RetryIntervalMs < 0)
+        {
+            d.Error(file, DiagnosticCode.ConfigInvalid,
+                $"retryinterval = {job.RetryIntervalMs} is negative.",
+                remedy: "Milliseconds between attempts; 0 retries at once. The default is 100.");
+        }
+
+        if (job.MaxFiles < 1)
+        {
+            d.Error(file, DiagnosticCode.ConfigInvalid,
+                $"maxfiles = {job.MaxFiles} would refuse every pattern, because every pattern matches at least one file when it matches at all.",
+                remedy: "Set the largest number of files one pattern may legitimately match. The default is 1000.");
+        }
+
+        if (job.Start < 0)
+        {
+            d.Error(file, DiagnosticCode.ConfigInvalid,
+                $"start = {job.Start} is negative, and app.log.-1 is not a name this product can find again.",
+                remedy: "The index the first archive gets: 1 gives app.log.1, 0 gives app.log.0.");
+        }
+
         CheckHooks(job, HookStage.PreRotate, job.PreRotate, file, d);
         CheckHooks(job, HookStage.PostRotate, job.PostRotate, file, d);
 
