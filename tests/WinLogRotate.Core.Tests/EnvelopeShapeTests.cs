@@ -392,6 +392,45 @@ public sealed class EnvelopeShapeTests
             }),
             "import");
 
+    /// <summary>
+    /// What an edit publishes - and, as much, what it does not.
+    /// </summary>
+    /// <remarks>
+    /// The fixture carries a set, an unset and an unchanged key and a forwarded diagnostic, so
+    /// the snapshot records every field an editor could read. If a resolved value ever appears
+    /// under this verb, this is where it shows up.
+    /// </remarks>
+    [Fact]
+    public void JobEditKeepsItsShape() =>
+        ShouldMatchSnapshot(
+            Envelope("job set", new JobEditResult
+            {
+                Verb = "set",
+                Job = "iis",
+                Path = @"C:\ProgramData\WinLogRotate\conf.d\iis.toml",
+                Written = true,
+                Changes =
+                [
+                    new JobChangeDto { Key = "rotate", Kind = "Set", Before = "7", After = "14" },
+                    new JobChangeDto { Key = "compress", Kind = "Unset", Before = "true" },
+                    new JobChangeDto { Key = "daily", Kind = "Unchanged", Before = "true", After = "true" },
+                ],
+                Diagnostics =
+                [
+                    new ConfigDiagnosticDto
+                    {
+                        Severity = Severity.Warning,
+                        Code = DiagnosticCode.DangerousPathRefused,
+                        Message = "C:/logs/*.log is outside every allowed root.",
+                        File = @"C:\ProgramData\WinLogRotate\conf.d\iis.toml",
+                        Line = 5,
+                        Column = 1,
+                        Remedy = "Add it to allowdangerous, or point the job somewhere else.",
+                    },
+                ],
+            }),
+            "job-set");
+
     [Fact]
     public void ScanKeepsItsShape() =>
         ShouldMatchSnapshot(

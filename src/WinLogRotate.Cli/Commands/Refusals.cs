@@ -47,6 +47,26 @@ internal static class Refusals
     }
 
     /// <summary>
+    /// The same refusal, said but not returned.
+    /// </summary>
+    /// <remarks>
+    /// For a verb that has more than one thing to refuse at once. Somebody correcting a form
+    /// wants every bad field named in one pass, not one per round trip - and the verb still has
+    /// to decide its own exit code and payload afterwards, which <see cref="CannotUse{T}"/>
+    /// decides for it. Here rather than at the call site because <c>LR1007</c> has to keep
+    /// meaning one thing, which is what <c>ADiagnosticCodeIsRaisedOnlyWhereItMeansWhatItSays</c>
+    /// enforces.
+    /// </remarks>
+    public static void Unusable(CommandContext ctx, string message, string? remedy) =>
+        ctx.Output.Diagnostic(new CliDiagnostic
+        {
+            Severity = Severity.Error,
+            Code = DiagnosticCode.ArgumentUnusable,
+            Message = message,
+            Remedy = remedy,
+        });
+
+    /// <summary>
     /// This verb exists, was reached, and declines to do the thing it is named after.
     /// </summary>
     /// <remarks>

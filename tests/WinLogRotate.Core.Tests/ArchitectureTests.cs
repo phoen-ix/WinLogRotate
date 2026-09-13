@@ -83,6 +83,51 @@ public partial class ArchitectureTests
     }
 
     /// <summary>
+    /// A file's code, without its comments.
+    /// </summary>
+    /// <remarks>
+    /// Because a rule that says "this call must not appear here" would otherwise be broken by
+    /// the doc comment explaining why it must not appear here - which is an incentive to leave
+    /// the explanation out, and the explanation is the part that stops somebody undoing it.
+    /// </remarks>
+    private static string Code(string path) =>
+        string.Join('\n', File.ReadAllLines(path)
+            .Select(l => l.TrimStart())
+            .Where(l => !l.StartsWith("///", StringComparison.Ordinal)
+                && !l.StartsWith("//", StringComparison.Ordinal)));
+
+    /// <summary>
+    /// A job file is never written in place.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// <c>File.WriteAllText</c> truncates and then writes. A crash, a full disk or a reader in
+    /// that window leaves half a job file - and <c>ConfigLoader</c> does not leave half a job
+    /// file alone, it quarantines it to <c>.toml.bad</c>. So the failure mode of this product's
+    /// Save button would be to delete the operator's job, which is the one outcome a Save button
+    /// must not have.
+    /// </para>
+    /// <para>
+    /// A text rule rather than a behavioural one, deliberately and with the limitation stated:
+    /// proving atomicity needs a crash in the window, which no test can schedule. What a test
+    /// <i>can</i> do is keep the truncating call out of the file that does the writing, and that
+    /// is the whole of the regression - somebody reaching for the one-liner.
+    /// </para>
+    /// </remarks>
+    [Fact]
+    public void AJobFileIsNeverWrittenInPlace()
+    {
+        var writes = Code(Path.Combine(
+            RepoRoot.Find().FullName, "src", "WinLogRotate.Cli", "Commands", "ConfigWrites.cs"));
+
+        writes.ShouldNotContain("File.WriteAllText",
+            customMessage: "write a temp sibling and move it; a truncated job file is quarantined, "
+                + "so an interrupted in-place write deletes the job");
+
+        writes.ShouldContain("File.Move");
+    }
+
+    /// <summary>
     /// One spelling of what this product makes of a job file.
     /// </summary>
     /// <remarks>
@@ -1124,7 +1169,7 @@ public partial class ArchitectureTests
     /// </remarks>
     private static readonly Dictionary<string, string[]> Raisers = new(StringComparer.Ordinal)
     {
-        [nameof(DiagnosticCode.NeedsAdministrator)] = ["HostCommand.cs", "SecretCommand.cs"],
+        [nameof(DiagnosticCode.NeedsAdministrator)] = ["HostCommand.cs", "JobCommand.cs", "SecretCommand.cs"],
         [nameof(DiagnosticCode.ConfigUnreadable)] = ["ConfigLoader.cs", "SecretCommand.cs"],
         [nameof(DiagnosticCode.ConfigInvalid)] = ["ConfigBinder.cs", "ConfigLoader.cs", "ConfigValidator.cs", "Diagnose.cs", "ImportCommand.cs", "LogrotateImporter.cs", "SecretCommand.cs"],
         [nameof(DiagnosticCode.NoJobsConfigured)] = ["ConfigLoader.cs"],
@@ -1134,7 +1179,7 @@ public partial class ArchitectureTests
         [nameof(DiagnosticCode.AlreadyRunning)] = ["GateRefusal.cs"],
         [nameof(DiagnosticCode.RotationGateHeld)] = ["DoctorCommand.cs", "GateRefusal.cs"],
         [nameof(DiagnosticCode.FailedWithoutReason)] = ["DiagnosticCollector.cs"],
-        [nameof(DiagnosticCode.ConfigUnwritable)] = ["ConfigLoader.cs", "SecretCommand.cs"],
+        [nameof(DiagnosticCode.ConfigUnwritable)] = ["ConfigLoader.cs", "JobCommand.cs", "SecretCommand.cs"],
         [nameof(DiagnosticCode.JobSkipped)] = ["Diagnose.cs", "RunCommand.cs"],
         [nameof(DiagnosticCode.FileMissing)] = ["ProbeCommand.cs", "RotationRunner.cs"],
         [nameof(DiagnosticCode.FileEmpty)] = ["RotationRunner.cs"],

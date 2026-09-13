@@ -1,6 +1,7 @@
 using System.CommandLine;
 using WinLogRotate.Cli.Output;
 using WinLogRotate.Core;
+using WinLogRotate.Core.Configuration;
 using WinLogRotate.Core.Engine;
 using WinLogRotate.Core.Secrets;
 using WinLogRotate.Hosting.Security;
@@ -22,6 +23,7 @@ internal static class CommandTree
             BuildProbe(),
             BuildGlob(),
             BuildConfig(),
+            BuildJob(),
             BuildHost(),
             BuildImport(),
             BuildScan(),
@@ -220,6 +222,115 @@ internal static class CommandTree
         show.SetAction(parse => CommandContext.Guarded(parse, ctx => ConfigCommand.Show(ctx, parse.GetValue(GlobalOptions.ConfigDir)?.FullName)));
 
         return new Command("config", "Inspect and validate the configuration.") { check, show };
+    }
+
+    /// <summary>
+    /// The verbs that create and change jobs.
+    /// </summary>
+    /// <remarks>
+    /// <c>--set KEY=VALUE</c> rather than one typed option per key. There are 38 of them, and
+    /// every flag among them would need <c>Option&lt;bool?&gt;</c> because "set false" and "leave
+    /// alone" are different answers - which is the same reason <c>JobSettings</c> is nullable
+    /// throughout. The option's own description is generated from <see cref="JobSchema"/>, so
+    /// <c>--help</c> cannot fall behind the binder.
+    /// </remarks>
+    private static Command BuildJob()
+    {
+        var name = new Argument<string>("name") { Description = "The job's name. It appears in the journal and in every diagnostic." };
+
+        var paths = new Option<string[]>("--paths")
+        {
+            Description = "A glob the job rotates. Repeat for more than one.",
+            AllowMultipleArgumentsPerToken = false,
+        };
+
+        var kind = new Option<string?>("--kind")
+        {
+            Description = "rotate (this product renames and compresses) or manage (the producer rotates; this product only prunes).",
+        };
+
+        var disabled = new Option<bool>("--disabled") { Description = "Write the job switched off." };
+
+        var set = new Option<string[]>("--set")
+        {
+            Description = "A key to set, as KEY=VALUE. Repeat for more. Keys: " + JobSchema.Summary,
+            AllowMultipleArgumentsPerToken = false,
+        };
+
+        var dryRun = new Option<bool>("--dry-run")
+        {
+            Description = "Judge the result and report it, without writing anything.",
+        };
+
+        var add = new Command("add", "Create a job. This is what the GUI's Jobs page has always told you to do by hand.")
+        {
+            name, paths, kind, disabled, set, dryRun,
+        };
+
+        GlobalOptions.AddTo(add);
+        add.SetAction(parse => CommandContext.Guarded(parse, ctx =>
+        {
+            var edits = Edits(
+                parse.GetValue(paths), parse.GetValue(kind), parse.GetValue(disabled) ? false : null,
+                parse.GetValue(set), out var malformed);
+
+            return malformed is { } bad
+                ? Refusals.CannotUse<JobEditResult>(ctx, "job add", bad, "a KEY=VALUE pair", "Write it as --set rotate=14.")
+                : JobCommand.Add(
+                    ctx,
+                    parse.GetRequiredValue(name),
+                    parse.GetValue(GlobalOptions.ConfigDir)?.FullName,
+                    edits,
+                    parse.GetValue(dryRun));
+        }));
+
+        return new Command("job", "Create and change jobs.") { add };
+    }
+
+    /// <summary>
+    /// Turns this verb's options into the key edits <c>JobDocument</c> applies.
+    /// </summary>
+    /// <remarks>
+    /// The typed options and <c>--set</c> produce the same thing, so there is one write path and
+    /// the typed ones are shorthand rather than a second route into the file.
+    /// </remarks>
+    private static List<JobEdit> Edits(
+        string[]? paths, string? kind, bool? enabled, string[]? set, out string? malformed)
+    {
+        malformed = null;
+        var edits = new List<JobEdit>();
+
+        foreach (var p in paths ?? [])
+        {
+            edits.Add(new JobEdit("paths", p));
+        }
+
+        if (kind is not null)
+        {
+            edits.Add(new JobEdit("kind", kind));
+        }
+
+        if (enabled is { } flag)
+        {
+            edits.Add(new JobEdit("enabled", flag ? "true" : "false"));
+        }
+
+        foreach (var pair in set ?? [])
+        {
+            // Split once. A value may contain '=' - a webhook URL does, and so does a date
+            // format - and splitting on every one of them would silently truncate it.
+            var at = pair.IndexOf('=', StringComparison.Ordinal);
+
+            if (at <= 0)
+            {
+                malformed = pair;
+                return edits;
+            }
+
+            edits.Add(new JobEdit(pair[..at].Trim(), pair[(at + 1)..]));
+        }
+
+        return edits;
     }
 
     private static Command BuildJournal()

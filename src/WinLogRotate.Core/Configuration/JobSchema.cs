@@ -180,6 +180,16 @@ public static class JobSchema
     }
 
     /// <summary>
+    /// Every key, in schema order, for a help string.
+    /// </summary>
+    /// <remarks>
+    /// Generated rather than written out, so <c>--help</c> cannot fall behind the binder. That is
+    /// not hypothetical tidiness: the list an operator reads is the list they will type against,
+    /// and a key that exists but is undocumented is a key nobody uses.
+    /// </remarks>
+    public static string Summary { get; } = string.Join(", ", Keys.Select(k => k.Key));
+
+    /// <summary>
     /// Turns text a caller typed into a value of the type this key is read back as.
     /// </summary>
     /// <remarks>

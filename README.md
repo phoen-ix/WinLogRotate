@@ -110,6 +110,7 @@ WinLogRotate-Setup.exe /S /AllUsers /HOST=task /CONFIG=\\srv\deploy\jobs
 ## Use
 
 ```
+winlogrotate job add iis --paths "C:/inetpub/logs/**/*.log" --set rotate=14
 winlogrotate scan                     # what on this machine needs help?
 winlogrotate glob "C:/logs/**/*.log"  # what would this pattern match?
 winlogrotate probe C:\logs\app.log    # can this file even be rotated?
@@ -135,6 +136,7 @@ doesn't run on Server Core and that's where IIS usually lives.
 | `probe <path>` | Which locked-file strategies a path actually supports |
 | `glob <pattern>` | Resolve a pattern, or explain why it was refused |
 | `config check` / `show` | Validate; print with every default resolved |
+| `job add <name>` | Create a job, without writing TOML by hand |
 | `host use task\|service\|none` | Choose what runs rotations — switch freely, any time |
 | `host status` / `repair` / `pause` | Reality vs config; re-apply permissions; suspend |
 | `host export-task` | Scheduled Task XML, for GPO or DSC |

@@ -28,6 +28,16 @@ paths = ["C:/inetpub/logs/LogFiles/**/u_ex*.log"]
 Everything else comes from the built-in defaults below. Forward slashes are accepted
 everywhere and are usually easier to read in TOML than escaped backslashes.
 
+You do not have to write that file yourself:
+
+```
+winlogrotate job add iis --paths "C:/inetpub/logs/LogFiles/**/u_ex*.log"
+```
+
+writes exactly it, in `conf.d`, owned by Administrators. Add `--set KEY=VALUE` for any key on
+this page, repeat `--paths` for more than one pattern, and add `--dry-run` to see what it would
+write and what a run would make of it without writing anything.
+
 ## Every `[job]` key
 
 ### Structural

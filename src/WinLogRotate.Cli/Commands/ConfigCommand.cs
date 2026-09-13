@@ -111,7 +111,7 @@ internal static class ConfigCommand
         return (ConfigLoader.Load(paths, guard, new StoreSecretLookup(Senders.Platform(), paths.SecretsFile), quarantine), paths);
     }
 
-    private static ConfigDiagnosticDto Map(ConfigDiagnostic d) => new()
+    internal static ConfigDiagnosticDto Map(ConfigDiagnostic d) => new()
     {
         Severity = d.Severity,
         Code = d.Code,

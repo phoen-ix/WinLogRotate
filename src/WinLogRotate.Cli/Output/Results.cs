@@ -505,3 +505,54 @@ public sealed record UpdateResult
     public required bool UpdateAvailable { get; init; }
     public string? Detail { get; init; }
 }
+
+/// <summary>One key an edit changed, in the file's own spelling.</summary>
+public sealed record JobChangeDto
+{
+    public required string Key { get; init; }
+
+    /// <summary><c>Set</c>, <c>Unset</c>, or <c>Unchanged</c>.</summary>
+    public required string Kind { get; init; }
+
+    /// <summary>The TOML source the key had, absent if it had none.</summary>
+    public string? Before { get; init; }
+
+    /// <summary>The TOML source it has now, absent if it was removed.</summary>
+    public string? After { get; init; }
+}
+
+/// <summary>
+/// Payload of <c>job add</c>, <c>set</c>, <c>enable</c>, <c>disable</c> and <c>remove</c>.
+/// </summary>
+/// <remarks>
+/// <para>
+/// It carries what the file says, never what a run would resolve it to. That is not a
+/// simplification: the only job object this product publishes is <c>EffectiveJob</c>, with
+/// <c>[defaults]</c> already merged in, and an editor that read one back and wrote it out would
+/// sever the job from <c>[defaults]</c> on its first save. Nothing here can be fed back into a
+/// write path, because nothing here is a job.
+/// </para>
+/// <para>
+/// <c>Changes</c> is empty when the file already said what was asked. That is a success with exit
+/// 0, and the human line says so - "nothing to change" is an answer, and reporting it as a write
+/// would make an idempotent script look like a configuration that keeps drifting.
+/// </para>
+/// </remarks>
+public sealed record JobEditResult
+{
+    /// <summary><c>add</c>, <c>set</c>, <c>enable</c>, <c>disable</c>, or <c>remove</c>.</summary>
+    public required string Verb { get; init; }
+
+    public required string Job { get; init; }
+
+    /// <summary>The file the job lives in, or would have lived in.</summary>
+    public required string Path { get; init; }
+
+    /// <summary>Whether anything was actually written. False under <c>--dry-run</c>.</summary>
+    public required bool Written { get; init; }
+
+    public required IReadOnlyList<JobChangeDto> Changes { get; init; }
+
+    /// <summary>What a run would make of the edited file. Empty when it is happy with it.</summary>
+    public required IReadOnlyList<ConfigDiagnosticDto> Diagnostics { get; init; }
+}
