@@ -510,37 +510,23 @@ public static class ConfigBinder
     /// Every key a <c>[job]</c> table may carry.
     /// </summary>
     /// <remarks>
+    /// <para>
     /// Deliberately next to <see cref="BindSettings"/> rather than beside the unknown-key loop
     /// that consumes it: a key added to the binder and forgotten here starts being reported as a
     /// mistake the moment it works, which is loud, immediate and impossible to ship past.
+    /// </para>
+    /// <para>
+    /// Derived from <see cref="JobSchema.Keys"/> rather than listed again, for the reason
+    /// <see cref="DefaultsKeys"/> gives one level down: a key added to one is never missing from
+    /// the other. The schema adds the key's <i>type</i>, which is what a writer needs and a bare
+    /// list of names cannot carry.
+    /// </para>
     /// </remarks>
-    internal static readonly string[] JobKeys =
-    [
-        // Structural - read by BindJob itself.
-        "name", "paths", "kind", "enabled", "allowdangerous",
-
-        // Schedule.
-        "hourly", "daily", "weekly", "monthly", "yearly", "schedule", "size",
-        "weekday", "monthday",
-
-        // Retention.
-        "rotate", "start", "maxage", "minage", "minsize", "maxsize", "maxfiles",
-
-        // Archiving.
-        "compress", "compresstype", "delaycompress", "dateext", "dateformat",
-        "olddir", "createolddir",
-
-        // Behaviour.
-        "missingok", "notify", "notifempty", "lockstrategy", "livefiles",
-        "retrycount", "retryinterval",
-
-        // Hooks.
-        "prerotate", "postrotate", "hook_timeout",
-    ];
+    internal static readonly string[] JobKeys = [.. JobSchema.Keys.Select(k => k.Key)];
 
     /// <summary>Keys that name or scope one job, and so mean nothing file-wide.</summary>
     private static readonly string[] Structural =
-        ["name", "paths", "kind", "enabled", "allowdangerous"];
+        [.. JobSchema.Keys.Where(k => k.PerJobOnly).Select(k => k.Key)];
 
     /// <summary>
     /// Every key <c>[defaults]</c> may carry: the job keys, minus the ones that describe a
@@ -595,58 +581,10 @@ public static class ConfigBinder
 
     /// <summary>The known key one edit away from what was written, if there is exactly one.</summary>
     /// <remarks>
-    /// Only substitutions, insertions and deletions of a single character - enough for
-    /// <c>postrotae</c> and <c>compres</c>, and not enough to confidently propose
-    /// <c>postrotate</c> for <c>firstaction</c>, which is a different directive rather than a
-    /// misspelling of this one.
+    /// The schema's, so the binder's "did you mean" and a writer's refusal cannot come to
+    /// disagree about what the near miss is.
     /// </remarks>
-    private static string? Suggest(string key)
-    {
-        string? best = null;
-
-        foreach (var known in JobKeys)
-        {
-            if (Math.Abs(known.Length - key.Length) > 1 || !WithinOneEdit(key, known))
-            {
-                continue;
-            }
-
-            if (best is not null)
-            {
-                return null;
-            }
-
-            best = known;
-        }
-
-        return best;
-    }
-
-    private static bool WithinOneEdit(string a, string b)
-    {
-        if (a.Equals(b, StringComparison.OrdinalIgnoreCase))
-        {
-            return false;
-        }
-
-        // Walk both from the front until they diverge, then from the back. What is left in the
-        // middle is the edit, and one edit means at most one character left on each side: a
-        // substitution leaves one and one, an insertion one and none.
-        int i = 0, j = a.Length - 1, k = b.Length - 1;
-
-        while (i < a.Length && i < b.Length && char.ToLowerInvariant(a[i]) == char.ToLowerInvariant(b[i]))
-        {
-            i++;
-        }
-
-        while (j >= i && k >= i && char.ToLowerInvariant(a[j]) == char.ToLowerInvariant(b[k]))
-        {
-            j--;
-            k--;
-        }
-
-        return j <= i && k <= i;
-    }
+    private static string? Suggest(string key) => JobSchema.Nearest(key);
 
     // ---- syntax-tree helpers ------------------------------------------------------------
 
