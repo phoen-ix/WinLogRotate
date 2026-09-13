@@ -63,15 +63,34 @@ internal sealed class JsonOutputSink(bool verbose, bool stream, TextWriter? stre
 
     public void Diagnostic(CliDiagnostic d) => _diagnostics.Add(d);
 
+    /// <summary>
+    /// Whether the stream has stopped accepting lines.
+    /// </summary>
+    /// <remarks>
+    /// Latched for <c>JournalWriter.Fault</c>'s reason. <see cref="Event"/> is called from inside
+    /// the engine, between the plan half and the apply half of an operation, so a closed stdout
+    /// pipe - <c>run --json-stream | head -1</c> - or a TEMP that filled under <c>--output</c>
+    /// threw out of the rotation, unsaved state and all, and reported itself as a defect. A run
+    /// must not stop because nobody is listening to its commentary.
+    /// </remarks>
+    private bool _streamFault;
+
     public void Event(CliEvent e)
     {
-        if (!stream)
+        if (!stream || _closed || _streamFault)
         {
             return;
         }
 
-        _events.WriteLine(JsonSerializer.Serialize(e, CliEventJson.Default.CliEvent));
-        _events.Flush();
+        try
+        {
+            _events.WriteLine(JsonSerializer.Serialize(e, CliEventJson.Default.CliEvent));
+            _events.Flush();
+        }
+        catch (Exception ex) when (ex is IOException or ObjectDisposedException)
+        {
+            _streamFault = true;
+        }
     }
 
     // Human-readable extras have no place in a machine-readable stream; the same information
@@ -121,6 +140,11 @@ internal sealed class JsonOutputSink(bool verbose, bool stream, TextWriter? stre
         {
             _events.WriteLine(JsonSerializer.Serialize(envelope, info));
             _events.Flush();
+        }
+        catch (Exception e) when (e is IOException or ObjectDisposedException)
+        {
+            // The one channel the caller asked for is gone, so there is nowhere left to say so;
+            // the exit code is what remains, and it is the verb's, not a defect's.
         }
         finally
         {

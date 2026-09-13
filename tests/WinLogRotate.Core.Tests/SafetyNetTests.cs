@@ -242,6 +242,52 @@ public sealed class SafetyNetTests : IDisposable
     }
 
     /// <summary>
+    /// A stream nobody is listening to does not stop the run.
+    /// </summary>
+    /// <remarks>
+    /// <c>Event</c> is called from inside the engine, between the two halves of an operation. A
+    /// closed stdout pipe (<c>run --json-stream | head -1</c>) or a TEMP that filled under
+    /// <c>--output</c> threw out of the rotation with state unsaved and reported itself as a
+    /// defect. The writer here refuses every line, the way a closed pipe does.
+    /// </remarks>
+    [Fact]
+    public void AStreamNobodyIsListeningToDoesNotStopTheRun()
+    {
+        var sink = new Cli.Output.JsonOutputSink(verbose: false, stream: true, new ClosedPipe());
+
+        Should.NotThrow(() => sink.Event(new CliEvent
+        {
+            Ts = string.Empty,
+            Run = string.Empty,
+            Operation = Op.RunStart,
+            Phase = Phase.Apply,
+        }));
+
+        Should.NotThrow(() => sink.Event(new CliEvent
+        {
+            Ts = string.Empty,
+            Run = string.Empty,
+            Operation = Op.RunEnd,
+            Phase = Phase.Apply,
+        }));
+
+        sink.Complete("run", ExitCode.Errors, new Cli.Output.EmptyResult())
+            .ShouldBe(ExitCode.Errors, "the verb's own answer, not a defect's");
+    }
+
+    /// <summary>A writer whose reader has gone away.</summary>
+    private sealed class ClosedPipe : TextWriter
+    {
+        public override System.Text.Encoding Encoding => System.Text.Encoding.UTF8;
+
+        public override void Write(char value) => throw new IOException("Broken pipe");
+
+        public override void Write(string? value) => throw new IOException("Broken pipe");
+
+        public override void Flush() => throw new IOException("Broken pipe");
+    }
+
+    /// <summary>
     /// The run's own account of what it reached is still there.
     /// </summary>
     /// <remarks>
