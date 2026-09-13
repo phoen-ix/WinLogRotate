@@ -98,6 +98,60 @@ public static class JobEditorModel
     public static IReadOnlyList<string> Structural { get; } =
         [.. JobSchema.Keys.Where(k => k.PerJobOnly).Select(k => k.Key)];
 
+    /// <summary>The keys whose value is a command this product would run.</summary>
+    /// <remarks>
+    /// Named here rather than derived from <see cref="JobKeyGroup.Hooks"/>, because
+    /// <c>hook_timeout</c> is in that group and is a duration, not a command - warning that a
+    /// timeout will never run would be nonsense.
+    /// </remarks>
+    public static IReadOnlyList<string> Hooks { get; } = ["prerotate", "postrotate"];
+
+    /// <summary>
+    /// What to say beside a hook field, given what <c>doctor</c> made of this installation.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// Null when there is nothing to say. Otherwise the field is one whose contents will never
+    /// run: the hook gate judges the owner of every file it would execute from, and on a per-user
+    /// installation the owner is the installing user by design - which is most people who open
+    /// this window at all.
+    /// </para>
+    /// <para>
+    /// Said rather than enforced. The key is still writable, because the installation can change
+    /// and a job file written on one machine is deployed to others; what must not happen is
+    /// accepting it in silence, which is how somebody discovers at three in the morning that the
+    /// service-restart hook they configured has never once fired.
+    /// </para>
+    /// </remarks>
+    public static string? HookWarning(bool hooksAllowed) =>
+        hooksAllowed
+            ? null
+            : "Hooks are refused on this installation, so anything entered here will never run. "
+              + "'winlogrotate doctor' says why.";
+
+    /// <summary>Whether <c>doctor --json</c> says hooks can run here.</summary>
+    /// <remarks>
+    /// False when the answer cannot be read at all, which is the safe direction: a warning shown
+    /// where hooks do work is a sentence somebody ignores, and a warning missing where they do
+    /// not is a hook nobody knows is dead.
+    /// </remarks>
+    public static bool HooksAllowed(string doctorJson)
+    {
+        try
+        {
+            using var document = JsonDocument.Parse(doctorJson);
+
+            return document.RootElement.GetProperty("result")
+                .GetProperty("hooksAllowed").GetBoolean();
+        }
+        catch (Exception e) when (e is JsonException
+                                      or KeyNotFoundException
+                                      or InvalidOperationException)
+        {
+            return false;
+        }
+    }
+
     /// <summary>An empty editor, for a job that does not exist yet.</summary>
     public static JobEditorView Blank() => new()
     {

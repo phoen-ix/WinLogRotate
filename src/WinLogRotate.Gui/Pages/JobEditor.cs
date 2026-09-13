@@ -47,6 +47,7 @@ public sealed class JobEditor : Form
     private readonly string? _configDir;
     private readonly bool _isNew;
     private readonly JobEditorView _original;
+    private readonly string? _hookWarning;
     private readonly Dictionary<string, Control> _editors = new(StringComparer.OrdinalIgnoreCase);
 
     private readonly TextBox _name = new() { Bounds = new Rectangle(120, 16, 260, 24) };
@@ -88,12 +89,14 @@ public sealed class JobEditor : Form
         ForeColor = Theme.Current.Muted,
     };
 
-    private JobEditor(CliRunner cli, string? configDir, JobEditorView view, bool isNew)
+    private JobEditor(
+        CliRunner cli, string? configDir, JobEditorView view, bool isNew, string? hookWarning)
     {
         _cli = cli;
         _configDir = configDir;
         _original = view;
         _isNew = isNew;
+        _hookWarning = hookWarning;
 
         Text = isNew ? "New job" : $"Job: {view.Job}";
         FormBorderStyle = FormBorderStyle.FixedDialog;
@@ -145,7 +148,19 @@ public sealed class JobEditor : Form
             }
         }
 
-        using var form = new JobEditor(cli, configDir, view, job is null);
+        // Asked once, when the window opens. The hook gate judges the owner of every file it
+        // would execute from, and on a per-user installation that owner is the installing user
+        // by design - so hooks are refused for most people who open this window, and a field
+        // that accepted them in silence is how somebody finds out at three in the morning that
+        // their service-restart hook has never fired.
+        var doctor = await cli.RunAsync(CliArgs.For(configDir, "doctor", "--json"))
+            .ConfigureAwait(true);
+
+        var warning = doctor.IsDefect
+            ? null
+            : JobEditorModel.HookWarning(JobEditorModel.HooksAllowed(doctor.StdOut));
+
+        using var form = new JobEditor(cli, configDir, view, job is null, warning);
         return form.ShowDialog(owner) == DialogResult.OK;
     }
 
@@ -332,6 +347,14 @@ public sealed class JobEditor : Form
 
             var row = _advanced.Rows[_advanced.Rows.Add(field.Key, field.Value ?? string.Empty, State(field))];
 
+            if (_hookWarning is not null
+                && JobEditorModel.Hooks.Contains(field.Key, StringComparer.OrdinalIgnoreCase))
+            {
+                row.Cells["state"].Value = "will never run here";
+                row.Cells["state"].ToolTipText = _hookWarning;
+                row.DefaultCellStyle.ForeColor = Theme.Current.Warning;
+            }
+
             if (!field.Known)
             {
                 // This build has no row for it, so it can be cleared and not written. Saying so
@@ -347,6 +370,10 @@ public sealed class JobEditor : Form
         {
             _status.Text = string.Join("  ", _original.Problems);
             _status.ForeColor = Theme.Current.Warning;
+        }
+        else if (_hookWarning is not null && _advanced.Rows.Count > 0)
+        {
+            Say(_hookWarning, Theme.Current.Warning);
         }
     }
 
@@ -369,8 +396,13 @@ public sealed class JobEditor : Form
             var key = row.Cells["key"].Value as string ?? string.Empty;
             var field = Field(key);
 
-            if (field is null || !field.Known)
+            if (field is null
+                || !field.Known
+                || (_hookWarning is not null
+                    && JobEditorModel.Hooks.Contains(key, StringComparer.OrdinalIgnoreCase)))
             {
+                // A hook's label says it will never run here, which stays true whatever is typed
+                // into it - and is the more important of the two things that cell could say.
                 continue;
             }
 

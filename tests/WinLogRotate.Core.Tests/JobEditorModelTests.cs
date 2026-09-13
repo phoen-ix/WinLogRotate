@@ -369,4 +369,61 @@ public sealed class JobEditorModelTests
             ShouldParse(cleared);
         }
     }
+
+    // ---- hooks -----------------------------------------------------------------------------
+
+    /// <summary>
+    /// A hook field says so when nothing typed into it will ever run.
+    /// </summary>
+    /// <remarks>
+    /// The hook gate judges the owner of every file it would execute from, and on a per-user
+    /// installation that owner is the installing user by design - so hooks are refused for most
+    /// people who open this window. A field that accepted one in silence is how somebody finds
+    /// out at three in the morning that their service-restart hook has never once fired.
+    /// </remarks>
+    [Fact]
+    public void AHookFieldSaysSoWhenNothingTypedIntoItWillRun()
+    {
+        JobEditorModel.HookWarning(hooksAllowed: true).ShouldBeNull();
+
+        var warning = JobEditorModel.HookWarning(hooksAllowed: false).ShouldNotBeNull();
+        warning.ShouldContain("never run");
+        warning.ShouldContain("doctor", Case.Insensitive);
+    }
+
+    /// <summary>The warning is about the commands, not about the timeout beside them.</summary>
+    /// <remarks>
+    /// <c>hook_timeout</c> is in the Hooks group and is a duration. Telling somebody a timeout
+    /// will never run is nonsense, and nonsense beside a real warning is how the real one stops
+    /// being read.
+    /// </remarks>
+    [Fact]
+    public void TheWarningIsAboutTheCommandsAndNotTheTimeout()
+    {
+        JobEditorModel.Hooks.ShouldBe(["prerotate", "postrotate"]);
+
+        // Both are real keys, and the timeout that sits beside them is deliberately not one.
+        foreach (var hook in JobEditorModel.Hooks)
+        {
+            JobSchema.Find(hook).ShouldNotBeNull();
+        }
+
+        JobSchema.Find("hook_timeout").ShouldNotBeNull();
+        JobEditorModel.Hooks.ShouldNotContain("hook_timeout");
+    }
+
+    /// <summary>Doctor's verdict is read, and an unreadable answer means refused.</summary>
+    /// <remarks>
+    /// The safe direction. A warning shown where hooks do work is a sentence somebody ignores;
+    /// a warning missing where they do not is a hook nobody knows is dead.
+    /// </remarks>
+    [Theory]
+    [InlineData("""{"result":{"hooksAllowed":true}}""", true)]
+    [InlineData("""{"result":{"hooksAllowed":false}}""", false)]
+    [InlineData("""{"result":{}}""", false)]
+    [InlineData("""{"result":{"hooksAllowed":"yes"}}""", false)]
+    [InlineData("not json", false)]
+    [InlineData("", false)]
+    public void DoctorsVerdictIsReadAndAnUnreadableAnswerMeansRefused(string json, bool expected) =>
+        JobEditorModel.HooksAllowed(json).ShouldBe(expected);
 }

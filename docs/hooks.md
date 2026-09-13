@@ -167,6 +167,15 @@ necessarily write, so hooks are refused there permanently and by design. Nothing
 an install and there is nothing to repair: `winlogrotate doctor` says so rather than reporting it
 as a fault. Everything else works identically.
 
+The GUI's job editor says it where it matters. `prerotate` and `postrotate` are labelled
+**"will never run here"** when this installation refuses hooks, so a field you can type into is
+never one whose contents are silently dead. The keys stay writable — an installation can change,
+and a job file written on one machine is deployed to others — but they are not accepted in silence,
+which is how somebody discovers at three in the morning that a service-restart hook has never once
+fired. If the editor cannot read `doctor`'s verdict at all it shows the warning anyway: a warning
+where hooks do work is a sentence you ignore, and a missing one where they do not is a hook nobody
+knows is dead.
+
 To see where you stand:
 
 ```
