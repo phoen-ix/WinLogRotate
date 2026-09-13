@@ -177,6 +177,202 @@ public sealed class JobEditorModelTests
         JobEditorModel.From(ShownWith(("olddir", source)))
             .Fields.Single(f => f.Key == "olddir").Value.ShouldBe(shown);
 
+    /// <summary>
+    /// A list handed back with the line endings a text box uses is not a change.
+    /// </summary>
+    /// <remarks>
+    /// The model shows a list joined with <c>\n</c>; a multiline WinForms box hands back
+    /// <c>\r\n</c>. Compared as text they differ on every line, so every path was re-sent, Save
+    /// raised a UAC prompt for a file the operator had not touched, and the CLI then said
+    /// Unchanged - a prompt for nothing, on every save of every job with a paths list.
+    /// </remarks>
+    [Fact]
+    public void AListHandedBackWithWindowsLineEndingsIsNotAChange()
+    {
+        var view = Loaded();
+        var edited = view.Fields.ToDictionary(f => f.Key, f => f.Value);
+
+        edited["paths"] = "C:/logs/*.log\r\nD:/b/*.log\r\n";
+
+        JobEditorModel.SaveArgs(null, "iis", isNew: false, view, edited)
+            .ShouldBe(["job", "set", "iis"]);
+    }
+
+    /// <summary>A scalar is trimmed before it is compared or sent.</summary>
+    /// <remarks>
+    /// <c>" 30"</c> is what a box holds after a stray space, and the verb refuses it as not a
+    /// whole number. Trimmed, it is the number - and a space typed around an unchanged value is
+    /// not a change either.
+    /// </remarks>
+    [Fact]
+    public void AScalarIsTrimmedBeforeItIsComparedOrSent()
+    {
+        var view = Loaded();
+        var edited = view.Fields.ToDictionary(f => f.Key, f => f.Value);
+
+        edited["rotate"] = " 14 ";
+        JobEditorModel.SaveArgs(null, "iis", isNew: false, view, edited).ShouldBe(["job", "set", "iis"]);
+
+        edited["rotate"] = " 30";
+        JobEditorModel.SaveArgs(null, "iis", isNew: false, view, edited)
+            .ShouldBe(["job", "set", "iis", "--set", "rotate=30"]);
+    }
+
+    /// <summary>
+    /// An explicit <c>enabled = true</c> is not unset by an untouched save.
+    /// </summary>
+    /// <remarks>
+    /// The form's checkbox maps ticked to null, because absent means enabled and writing the
+    /// second spelling of the default would put a line in the file nobody asked for. A file that
+    /// already carries the explicit spelling then read as different from the box, and an untouched
+    /// Save sent <c>--unset enabled</c>: a UAC prompt to delete a line that meant the same thing.
+    /// Unticking still writes false, and ticking a disabled job still unsets - which is what
+    /// makes enable a byte-exact undo of disable.
+    /// </remarks>
+    [Fact]
+    public void AnExplicitEnabledTrueIsNotUnsetByAnUntouchedSave()
+    {
+        var explicitlyOn = JobEditorModel.From(ShownWith(("enabled", "true")));
+
+        JobEditorModel.SaveArgs(
+                null, "iis", isNew: false, explicitlyOn,
+                new Dictionary<string, string?> { ["enabled"] = null })
+            .ShouldBe(["job", "set", "iis"]);
+
+        JobEditorModel.SaveArgs(
+                null, "iis", isNew: false, explicitlyOn,
+                new Dictionary<string, string?> { ["enabled"] = "false" })
+            .ShouldBe(["job", "set", "iis", "--set", "enabled=false"]);
+
+        var off = JobEditorModel.From(ShownWith(("enabled", "false")));
+
+        JobEditorModel.SaveArgs(
+                null, "iis", isNew: false, off,
+                new Dictionary<string, string?> { ["enabled"] = null })
+            .ShouldBe(["job", "set", "iis", "--unset", "enabled"]);
+    }
+
+    /// <summary>
+    /// A <c>job show</c> that refused is reported as the refusal, not as a version mismatch.
+    /// </summary>
+    /// <remarks>
+    /// A name that is not a job completes with no payload and its reason on the envelope: which
+    /// names are. Reading <c>result</c> threw <c>KeyNotFoundException</c>, and the editor told the
+    /// operator "the two are different versions" about a typo. Driven through the real verb and
+    /// the real JSON sink, because that shape is the whole point.
+    /// </remarks>
+    [Fact]
+    public void AShowThatRefusedIsReportedAsTheRefusal()
+    {
+        var dir = Directory.CreateTempSubdirectory("winlogrotate-editor-");
+
+        try
+        {
+            Directory.CreateDirectory(Path.Combine(dir.FullName, "conf.d"));
+            File.WriteAllText(Path.Combine(dir.FullName, "conf.d", "iis.toml"),
+                "schema = 1\n\n[job]\nname = \"iis\"\npaths = [\"C:/logs/*.log\"]\n");
+
+            var writer = new StringWriter();
+            var ctx = new Cli.Commands.CommandContext(
+                new Cli.Output.JsonOutputSink(verbose: false, stream: false, streamTo: writer),
+                CommandTree.Build().Parse(["job", "show", "nginx", "--json"]));
+
+            Cli.Commands.JobCommand.Show(ctx, "nginx", dir.FullName).ShouldBe(ExitCode.ConfigInvalid);
+
+            var view = JobEditorModel.From(writer.ToString());
+
+            view.Unreadable.ShouldBeFalse("a refusal is not an unreadable response");
+            view.Fields.ShouldBeEmpty();
+
+            var refusal = view.Refusal.ShouldNotBeNull();
+            refusal.ShouldContain("nginx");
+            view.Problems.ShouldContain(p => p.Contains("nginx", StringComparison.Ordinal));
+        }
+        finally
+        {
+            try { dir.Delete(recursive: true); } catch (IOException) { }
+        }
+    }
+
+    /// <summary>A job that was read has no refusal to report.</summary>
+    [Fact]
+    public void AJobThatWasReadHasNoRefusal() => Loaded().Refusal.ShouldBeNull();
+
+    /// <summary>
+    /// Every key is reachable from the form: carried on it, common on it, or in the grid.
+    /// </summary>
+    /// <remarks>
+    /// <c>allowdangerous</c> was in none of the three. It is structural - a job's own, with no
+    /// <c>[defaults]</c> layer - so the form skipped it along with name, paths, kind and enabled,
+    /// which have controls of their own; it had none. The only escape hatch from a guard refusal
+    /// could be neither seen nor edited from the window that promised to edit jobs.
+    /// </remarks>
+    [Fact]
+    public void EveryKeyIsReachableFromTheForm()
+    {
+        var view = Loaded();
+        var grid = JobEditorModel.GridFields(view).Select(f => f.Key).ToArray();
+
+        grid.ShouldContain("allowdangerous");
+        grid.ShouldContain("ownr", "a key this build does not know is still shown");
+
+        JobEditorModel.Common.Intersect(JobEditorModel.Carried, StringComparer.OrdinalIgnoreCase)
+            .ShouldBeEmpty("a key with a control of its own is not also a common field");
+
+        var reachable = JobEditorModel.Common
+            .Concat(JobEditorModel.Carried)
+            .Concat(grid)
+            .ToHashSet(StringComparer.OrdinalIgnoreCase);
+
+        JobSchema.Keys.Select(k => k.Key).Where(k => !reachable.Contains(k))
+            .ShouldBeEmpty("keys the form offers no way to see or edit");
+
+        // And nothing is offered twice: a grid row for a key that also has a box on the form
+        // would be two places to type one value.
+        grid.Intersect(JobEditorModel.Common, StringComparer.OrdinalIgnoreCase).ShouldBeEmpty();
+        grid.Intersect(JobEditorModel.Carried, StringComparer.OrdinalIgnoreCase).ShouldBeEmpty();
+    }
+
+    /// <summary>A new job never sends <c>--unset</c>, because there is nothing to inherit again.</summary>
+    /// <remarks>
+    /// <c>job add</c> declares no such option, so a blank field on a new job that produced one
+    /// would turn the first Save into a parse error. Pinned because the model's rule - a cleared
+    /// field is an unset - makes it the natural mistake.
+    /// </remarks>
+    [Fact]
+    public void ANewJobNeverEmitsUnset()
+    {
+        var args = JobEditorModel.SaveArgs(
+            null, "nginx", isNew: true, JobEditorModel.Blank(),
+            new Dictionary<string, string?>
+            {
+                ["paths"] = "C:/a/*.log",
+                ["rotate"] = null,
+                ["compress"] = "",
+                ["olddir"] = "   ",
+            });
+
+        args.ShouldNotContain("--unset");
+        args.ShouldBe(["job", "add", "nginx", "--set", "paths=C:/a/*.log"]);
+        ShouldParse(args);
+    }
+
+    /// <summary>Whether a command line changes anything is read from the words the model emits.</summary>
+    /// <remarks>
+    /// <c>Changes</c> once also looked for <c>--paths</c>, which nothing here ever emitted - a
+    /// list goes out as one <c>--set</c> per item. A dead branch in a predicate is a predicate
+    /// nobody can tell is right.
+    /// </remarks>
+    [Fact]
+    public void ChangesNamesOnlyWhatSaveArgsEmits()
+    {
+        JobEditorModel.Changes(["job", "set", "iis"]).ShouldBeFalse();
+        JobEditorModel.Changes(["job", "set", "iis", "--set", "rotate=14"]).ShouldBeTrue();
+        JobEditorModel.Changes(["job", "set", "iis", "--unset", "rotate"]).ShouldBeTrue();
+        JobEditorModel.Changes(["job", "set", "iis", "--paths", "C:/a"]).ShouldBeFalse(
+            "the model never emits --paths, so a predicate that answered to it answered to nothing");
+    }
+
     /// <summary>A key this build does not know is shown, not dropped.</summary>
     /// <remarks>
     /// The operator is being warned about it, and <c>--unset</c> is the only way to act on that

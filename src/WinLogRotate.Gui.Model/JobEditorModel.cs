@@ -70,6 +70,16 @@ public sealed record JobEditorView
 
     /// <summary>The response made no sense, so the fields say nothing rather than nothing much.</summary>
     public required bool Unreadable { get; init; }
+
+    /// <summary>
+    /// Why <c>job show</c> would not read the job, or null when it did.
+    /// </summary>
+    /// <remarks>
+    /// A refusal completes with no payload and its reason on the envelope - the name is not a
+    /// job, and here are the ones that are. That is a readable answer, not a version mismatch,
+    /// and the editor has to be able to tell the two apart to say the right thing about either.
+    /// </remarks>
+    public string? Refusal { get; init; }
 }
 
 /// <summary>
@@ -91,13 +101,40 @@ public sealed record JobEditorView
 /// </remarks>
 public static class JobEditorModel
 {
-    /// <summary>The keys a job file owns and <c>[defaults]</c> cannot supply.</summary>
+    /// <summary>
+    /// The keys with a control of their own on the form.
+    /// </summary>
     /// <remarks>
-    /// Shown on the main form rather than in the advanced grid, because they are the ones
-    /// without an inherited state to explain: a job either says them or has none.
+    /// Named rather than derived from <see cref="JobKey.PerJobOnly"/>, which is what the form
+    /// used to skip. That set also holds <c>allowdangerous</c>, which has no control of its own -
+    /// so the only escape hatch from a guard refusal was in neither the form nor the grid, and
+    /// could be neither seen nor edited from the window that promised to edit jobs.
     /// </remarks>
-    public static IReadOnlyList<string> Structural { get; } =
-        [.. JobSchema.Keys.Where(k => k.PerJobOnly).Select(k => k.Key)];
+    public static IReadOnlyList<string> Carried { get; } = ["name", "paths", "kind", "enabled"];
+
+    /// <summary>
+    /// The keys the form gives a box each, in the order it shows them.
+    /// </summary>
+    /// <remarks>
+    /// Chosen rather than derived: these are the ones somebody opens the editor to change. Here
+    /// rather than on the form so that the layout arithmetic and the reachability rule can both
+    /// be asserted against the same list on the leg that cannot open a window.
+    /// </remarks>
+    public static IReadOnlyList<string> Common { get; } =
+        ["schedule", "rotate", "maxage", "maxsize", "compress", "compresstype", "olddir", "missingok"];
+
+    /// <summary>
+    /// The fields the advanced grid shows: everything the form does not carry or box.
+    /// </summary>
+    /// <remarks>
+    /// Derived from the view rather than from the schema, so a key the file has and this build
+    /// does not know lands here too - it can be seen and cleared, which is the only way to act on
+    /// the warning about it.
+    /// </remarks>
+    public static IReadOnlyList<JobField> GridFields(JobEditorView view) =>
+        [.. view.Fields.Where(f =>
+            !Common.Contains(f.Key, StringComparer.OrdinalIgnoreCase)
+            && !Carried.Contains(f.Key, StringComparer.OrdinalIgnoreCase))];
 
     /// <summary>The keys whose value is a command this product would run.</summary>
     /// <remarks>
@@ -174,6 +211,28 @@ public static class JobEditorModel
         try
         {
             using var document = JsonDocument.Parse(json);
+
+            // A refusal before a version mismatch. The verb completes with no payload when the
+            // name is not a job, and says which names are; reading `result` regardless threw
+            // KeyNotFoundException, and the editor told the operator the two executables were
+            // different versions about a typo in a name.
+            if (document.RootElement.ValueKind == JsonValueKind.Object
+                && (!document.RootElement.TryGetProperty("result", out var payload)
+                    || payload.ValueKind != JsonValueKind.Object)
+                && EnvelopeDiagnostics.From(json, "diagnostics").Where(d => d.IsProblem).ToList()
+                    is { Count: > 0 } refused)
+            {
+                return new JobEditorView
+                {
+                    Job = string.Empty,
+                    Path = string.Empty,
+                    Fields = [],
+                    Problems = [.. refused.Select(d => d.Message)],
+                    Unreadable = false,
+                    Refusal = refused[0].Message,
+                };
+            }
+
             var result = document.RootElement.GetProperty("result");
 
             var written = new Dictionary<string, (string Source, int Line, bool Known)>(
@@ -300,10 +359,14 @@ public static class JobEditorModel
                 continue;
             }
 
+            var kind = kinds.GetValueOrDefault(key, JobKeyKind.Text);
             var was = before.TryGetValue(key, out var found) ? found : null;
-            var value = Blank(now) ? null : now;
 
-            if (string.Equals(was, value, StringComparison.Ordinal))
+            // Trimmed, because " 30" is what a box holds after a stray space and the verb refuses
+            // it as not a whole number - and a space around an unchanged value is not a change.
+            var value = Blank(now) ? null : now!.Trim();
+
+            if (Same(key, kind, was, value))
             {
                 continue;
             }
@@ -317,7 +380,7 @@ public static class JobEditorModel
 
             // A list is one --set per item, because the verb accumulates a repeated key and
             // deliberately never splits on a separator - a Windows path may contain any of them.
-            foreach (var item in Items(kinds.GetValueOrDefault(key, JobKeyKind.Text), value))
+            foreach (var item in Items(kind, value))
             {
                 args.Add("--set");
                 args.Add($"{key}={item}");
@@ -326,6 +389,42 @@ public static class JobEditorModel
 
         return CliArgs.For(configDir, [.. args]);
     }
+
+    /// <summary>
+    /// Whether what the form holds is what the file says, allowing for how a form holds it.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// A list is compared item by item. The model joins one with <c>\n</c> and a multiline box
+    /// hands it back with <c>\r\n</c>, so compared as text every path was a change, and an
+    /// untouched Save raised a UAC prompt for a write the CLI then reported as Unchanged.
+    /// </para>
+    /// <para>
+    /// For <c>enabled</c>, an explicit <c>true</c> and an absent key are the same state - there is
+    /// no <c>[defaults]</c> layer beneath it - and the form's checkbox says the first as null.
+    /// Without this an explicit <c>enabled = true</c> in the file was unset by every untouched
+    /// Save.
+    /// </para>
+    /// </remarks>
+    private static bool Same(string key, JobKeyKind kind, string? was, string? now)
+    {
+        if (kind == JobKeyKind.TextList)
+        {
+            return Items(kind, was ?? string.Empty)
+                .SequenceEqual(Items(kind, now ?? string.Empty), StringComparer.Ordinal);
+        }
+
+        if (string.Equals(key, "enabled", StringComparison.OrdinalIgnoreCase))
+        {
+            return string.Equals(Enabled(was), Enabled(now), StringComparison.OrdinalIgnoreCase);
+        }
+
+        return string.Equals(was, now, StringComparison.Ordinal);
+    }
+
+    /// <summary>An <c>enabled</c> value with the default spelled the way the form spells it.</summary>
+    private static string? Enabled(string? value) =>
+        string.Equals(value, "true", StringComparison.OrdinalIgnoreCase) ? null : value;
 
     /// <summary>
     /// The same command line, with the flag that makes it write nothing.
@@ -355,11 +454,13 @@ public static class JobEditorModel
 
     /// <summary>Whether a Save would send anything at all.</summary>
     /// <remarks>
-    /// Four words, because the verb and the name are always there: <c>job set NAME</c> plus the
-    /// configuration directory. Anything longer names a change.
+    /// The two words <see cref="SaveArgs"/> can emit for a change, and nothing else: it once
+    /// also answered to <c>--paths</c>, which nothing here has ever produced - a list goes out as
+    /// one <c>--set</c> per item - and a predicate with a dead branch is one nobody can tell is
+    /// right.
     /// </remarks>
     public static bool Changes(IReadOnlyList<string> args) =>
-        args.Any(a => a is "--set" or "--unset" or "--paths");
+        args.Any(a => a is "--set" or "--unset");
 
     private static JobField Unset(JobKey row) => new()
     {
@@ -440,6 +541,10 @@ public static class JobEditorModel
     }
 
     /// <summary>What one field's text names, which for a list is one item per line.</summary>
+    /// <remarks>
+    /// Each line trimmed, which is also what drops the <c>\r</c> a Windows text box leaves on
+    /// every line but the last.
+    /// </remarks>
     private static IReadOnlyList<string> Items(JobKeyKind kind, string value) =>
         kind == JobKeyKind.TextList
             ? [.. value.Split('\n').Select(i => i.Trim()).Where(i => i.Length > 0)]

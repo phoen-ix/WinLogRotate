@@ -33,16 +33,6 @@ namespace WinLogRotate.Gui.Pages;
 /// </remarks>
 public sealed class JobEditor : Form
 {
-    /// <summary>The keys the form itself carries, in the order it shows them.</summary>
-    /// <remarks>
-    /// Chosen rather than derived: these are the ones somebody opens the editor to change. The
-    /// grid below holds everything else, so nothing is unreachable either way.
-    /// </remarks>
-    private static readonly string[] Common =
-    [
-        "schedule", "rotate", "maxage", "maxsize", "compress", "compresstype", "olddir", "missingok",
-    ];
-
     private readonly CliRunner _cli;
     private readonly string? _configDir;
     private readonly bool _isNew;
@@ -147,6 +137,14 @@ public sealed class JobEditor : Form
 
             view = JobEditorModel.From(read.StdOut);
 
+            // The verb's own reason - usually which jobs there are, for a name that is not one -
+            // rather than the version-mismatch sentence a refusal used to be reported as.
+            if (view.Refusal is { } refusal)
+            {
+                LrDialog.Error(owner, "Job", refusal, read.Details);
+                return null;
+            }
+
             if (view.Unreadable)
             {
                 LrDialog.Error(owner, "Unexpected response",
@@ -201,7 +199,7 @@ public sealed class JobEditor : Form
 
         var y = 152;
 
-        foreach (var key in Common)
+        foreach (var key in JobEditorModel.Common)
         {
             if (Field(key) is not { } row)
             {
@@ -352,14 +350,11 @@ public sealed class JobEditor : Form
 
         _advanced.Rows.Clear();
 
-        foreach (var field in _original.Fields)
+        // The model decides what the grid holds, so the rule that every key is reachable from
+        // this form is asserted where a test can reach it. The grid used to skip every
+        // structural key, and allowdangerous is structural without having a box of its own.
+        foreach (var field in JobEditorModel.GridFields(_original))
         {
-            if (Common.Contains(field.Key, StringComparer.OrdinalIgnoreCase)
-                || JobEditorModel.Structural.Contains(field.Key, StringComparer.OrdinalIgnoreCase))
-            {
-                continue;
-            }
-
             var row = _advanced.Rows[_advanced.Rows.Add(field.Key, field.Value ?? string.Empty, State(field))];
 
             if (_hookWarning is not null
