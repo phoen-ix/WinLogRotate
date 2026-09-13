@@ -271,6 +271,75 @@ public partial class ArchitectureTests
     }
 
     /// <summary>
+    /// Controls that paint their own background, and so need a case in the theme.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// Spelled out rather than asked of the framework, because <c>System.Windows.Forms</c> is not
+    /// loaded in this process at all - the whole reason every GUI rule here is a text scan. An
+    /// explicit list is reviewable, which reflection over an absent assembly is not.
+    /// </para>
+    /// <para>
+    /// A container - a panel, a form, a label - is deliberately absent: it takes the colour of
+    /// what it is in, which is what <c>Theme.Walk</c>'s default arm gives it.
+    /// </para>
+    /// </remarks>
+    private static readonly string[] PaintsItsOwnBackground =
+    [
+        "TextBox", "RichTextBox", "ListBox", "ComboBox", "NumericUpDown", "CheckBox",
+        "RadioButton", "DataGridView", "ListView", "TreeView", "DateTimePicker",
+        "MaskedTextBox", "CheckedListBox", "PropertyGrid", "ProgressBar", "TrackBar",
+    ];
+
+    /// <summary>
+    /// Every control the GUI builds that paints its own background has a case in the theme.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// <c>Theme.Walk</c>'s default arm sets the foreground and leaves the background alone, which
+    /// is right for a panel and wrong for anything that draws one. A <c>ComboBox</c> draws white;
+    /// in dark mode the default arm gives it near-white text on that white, so the field is
+    /// unreadable on a form that otherwise looks correct - and nothing about that is visible in a
+    /// build, in a test, or in a light-mode screenshot.
+    /// </para>
+    /// <para>
+    /// A text scan, because a test project referencing the GUI carries a
+    /// Microsoft.WindowsDesktop.App framework reference and cannot run on the Linux leg.
+    /// </para>
+    /// </remarks>
+    [Fact]
+    public void EveryControlTheGuiBuildsHasACaseInTheTheme()
+    {
+        var gui = Path.Combine(RepoRoot.Find().FullName, "src", "WinLogRotate.Gui");
+        var theme = Code(Path.Combine(gui, "Ui", "Theme.cs"));
+
+        var code = Directory
+            .EnumerateFiles(gui, "*.cs", SearchOption.AllDirectories)
+            .Where(f => !f.Contains(Path.Combine("obj", ""), StringComparison.Ordinal))
+            .Where(f => !f.Contains(Path.Combine("bin", ""), StringComparison.Ordinal))
+            .Where(f => !f.EndsWith("Theme.cs", StringComparison.Ordinal))
+            .Select(Code)
+            .ToArray();
+
+        // The type as a whole word, not "new TypeName": a field initialised with a target-typed
+        // `new()` never writes the type after `new`, and DataGridView - the one control every
+        // page here uses - is declared exactly that way.
+        var built = PaintsItsOwnBackground
+            .Where(t => code.Any(c => Regex.IsMatch(c, $@"\b{t}\b")))
+            .ToArray();
+
+        // Self-check: named rather than counted, so it cannot be satisfied by lowering a number.
+        built.ShouldContain("TextBox");
+        built.ShouldContain("DataGridView");
+
+        built
+            .Where(t => !theme.Contains(t, StringComparison.Ordinal))
+            .ShouldBeEmpty(
+                "Theme.Walk's default arm leaves a control's own background alone, so a control "
+                + "that paints one is unreadable in dark mode until the switch names it");
+    }
+
+    /// <summary>
     /// A file's code, without its comments.
     /// </summary>
     /// <remarks>
@@ -690,9 +759,12 @@ public partial class ArchitectureTests
     /// outright - so the thing the CLI had gone to trouble to say arrived nowhere.
     /// </para>
     /// <para>
-    /// Scoped to <c>Pages/</c>. <c>MainForm</c> runs the CLI too, but its one invocation is the
-    /// identity probe, whose failures are already a banner; a dialog there would be a second
-    /// report of the same thing before the window has even finished opening.
+    /// Scoped to the project rather than to <c>Pages/</c>. It was the folder until a dialog
+    /// needed to run the CLI - and a rule that a window escapes by being saved somewhere else is
+    /// not a rule. <c>MainForm</c> is exempted by name instead, and for a reason rather than by
+    /// where it sits: its one invocation is the identity probe, whose failures are already a
+    /// banner, so a dialog there would report the same thing twice before the window has finished
+    /// opening.
     /// </para>
     /// <para>
     /// A text scan, because a test project that references the GUI carries a
@@ -702,10 +774,13 @@ public partial class ArchitectureTests
     [Fact]
     public void EveryPageThatRunsTheCliReportsADefect()
     {
-        var pages = Path.Combine(RepoRoot.Find().FullName, "src", "WinLogRotate.Gui", "Pages");
+        var pages = Path.Combine(RepoRoot.Find().FullName, "src", "WinLogRotate.Gui");
 
         var runners = Directory
             .EnumerateFiles(pages, "*.cs", SearchOption.AllDirectories)
+            .Where(f => !f.Contains(Path.Combine("obj", ""), StringComparison.Ordinal))
+            .Where(f => !f.Contains(Path.Combine("bin", ""), StringComparison.Ordinal))
+            .Where(f => Path.GetFileName(f) is not ("MainForm.cs" or "CliRunner.cs"))
             .Where(f => File.ReadAllLines(f)
                 .Where(line => !line.TrimStart().StartsWith("//", StringComparison.Ordinal))
                 .Any(line =>
@@ -881,14 +956,21 @@ public partial class ArchitectureTests
     /// pages' projections out at once - so it asks only that a page which does it says so in its
     /// catch.
     /// </para>
+    /// <para>
+    /// Scoped to the project rather than to <c>Pages/</c>, for the same reason as the rule above:
+    /// a dialog is the easiest place to walk an envelope and the easiest place to forget, and a
+    /// rule a file escapes by sitting in a different folder is not a rule.
+    /// </para>
     /// </remarks>
     [Fact]
     public void APageThatWalksAnEnvelopeCatchesEveryWayItCanFail()
     {
-        var pages = Path.Combine(RepoRoot.Find().FullName, "src", "WinLogRotate.Gui", "Pages");
+        var pages = Path.Combine(RepoRoot.Find().FullName, "src", "WinLogRotate.Gui");
 
         var walkers = Directory
             .EnumerateFiles(pages, "*.cs", SearchOption.AllDirectories)
+            .Where(f => !f.Contains(Path.Combine("obj", ""), StringComparison.Ordinal))
+            .Where(f => !f.Contains(Path.Combine("bin", ""), StringComparison.Ordinal))
             .Where(f => File.ReadAllText(f).Contains("GetProperty(", StringComparison.Ordinal))
             .ToArray();
 

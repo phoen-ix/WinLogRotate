@@ -193,6 +193,15 @@ differs in exactly one line. Your comments survive — including the "do NOT ena
 shipper can't read .gz" note that explains why a setting is the way it is. YAML and JSON both
 destroy comments on write.
 
+That is now a property you can check rather than a claim: the Jobs page's editor, and the `job`
+verbs beneath it, change only the keys you name, and a test opens a hand-written file — comment,
+unknown key, `allowdangerous` entry, CRLF — changes one key, and asserts exactly one line differs.
+
+A field the editor shows as **inherited** stays inherited unless you type in it. That matters more
+than it sounds: the only job object the product publishes has `[defaults]` already merged in, so an
+editor that handed every field back would sever each job from `[defaults]` the first time anybody
+pressed Save — the job keeps working and silently stops following `[defaults]` for ever.
+
 `lockstrategy = "auto"` asks the file what its writer permits and picks accordingly — rename if it
 allows `FILE_SHARE_DELETE`, copytruncate if it allows writing, a copy if it allows only reading,
 and nothing at all if it allows none of those, which is what log4net's default `ExclusiveLock`

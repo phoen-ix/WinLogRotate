@@ -109,6 +109,22 @@ public static partial class Theme
                 control.ForeColor = colors.Text;
                 break;
 
+            // Without this these fall to the default arm, which sets the foreground and leaves
+            // the background alone - and their background is white, drawn by the control rather
+            // than inherited. In dark mode that is near-white text on white: a field nobody can
+            // read, on a form that looks otherwise correct.
+            case ComboBox or NumericUpDown:
+                control.BackColor = colors.Surface;
+                control.ForeColor = colors.Text;
+                break;
+
+            // A CheckBox draws its own label over whatever is behind it, so it takes the
+            // surrounding colour rather than a surface of its own.
+            case CheckBox or RadioButton:
+                control.BackColor = Color.Transparent;
+                control.ForeColor = colors.Text;
+                break;
+
             case Button button:
                 button.FlatStyle = FlatStyle.System;
                 break;

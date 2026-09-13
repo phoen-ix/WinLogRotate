@@ -48,7 +48,30 @@ public sealed class JobsPage : UserControl
         var open = new Button { Text = "Open folder", Width = 110, FlatStyle = FlatStyle.System };
         open.Click += async (_, _) => await OpenFolderAsync().ConfigureAwait(true);
 
-        toolbar.Controls.AddRange([refresh, check, open]);
+        var add = new Button { Text = "New", Width = 70, FlatStyle = FlatStyle.System };
+        add.Click += async (_, _) => await EditAsync(null).ConfigureAwait(true);
+
+        var edit = new Button { Text = "Edit", Width = 70, FlatStyle = FlatStyle.System };
+        edit.Click += async (_, _) => await EditAsync(Selected()).ConfigureAwait(true);
+
+        var toggle = new Button { Text = "Enable/Disable", Width = 120, FlatStyle = FlatStyle.System };
+        toggle.Click += async (_, _) => await ToggleAsync().ConfigureAwait(true);
+
+        var remove = new Button { Text = "Remove", Width = 90, FlatStyle = FlatStyle.System };
+        remove.Click += async (_, _) => await RemoveAsync().ConfigureAwait(true);
+
+        // A double-click opens the row under the pointer rather than whatever was selected
+        // before it, which is not the same row when the click also moves the selection.
+        _grid.CellDoubleClick += async (_, e) =>
+        {
+            if (e.RowIndex >= 0)
+            {
+                await EditAsync(_grid.Rows[e.RowIndex].Cells["name"].Value as string)
+                    .ConfigureAwait(true);
+            }
+        };
+
+        toolbar.Controls.AddRange([add, edit, toggle, remove, refresh, check, open]);
 
         Controls.Add(_grid);
         Controls.Add(toolbar);
@@ -157,5 +180,109 @@ public sealed class JobsPage : UserControl
             // dialog. Caught at all only so that a missing field cannot end the process from an
             // async void handler.
         }
+    }
+
+    /// <summary>The job the grid has selected, or null when it has none.</summary>
+    private string? Selected() =>
+        _grid.SelectedRows.Count > 0
+            ? _grid.SelectedRows[0].Cells["name"].Value as string
+            : null;
+
+    /// <summary>Opens the editor, and reloads only if it wrote something.</summary>
+    /// <remarks>
+    /// A null name is a new job. Reloading unconditionally would be harmless but slower and, on a
+    /// cancelled edit, would look to somebody watching like their cancel did something.
+    /// </remarks>
+    private async Task EditAsync(string? job)
+    {
+        if (await JobEditor.ShowAsync(this, _cli, _configDir, job).ConfigureAwait(true))
+        {
+            await LoadAsync().ConfigureAwait(true);
+        }
+    }
+
+    /// <summary>Switches the selected job off, or back on.</summary>
+    /// <remarks>
+    /// One button rather than two, because the grid already says which state a job is in and a
+    /// pair of buttons of which one is always wrong for the selected row is a pair somebody has
+    /// to read twice.
+    /// </remarks>
+    private async Task ToggleAsync()
+    {
+        if (Selected() is not { } job)
+        {
+            _status.Text = "Select a job first.";
+            _status.ForeColor = Theme.Current.Muted;
+            return;
+        }
+
+        var on = _grid.SelectedRows[0].Cells["state"].Value as string == "disabled";
+
+        var result = await _cli.RunElevatedAsync(
+            CliArgs.For(_configDir, "job", on ? "enable" : "disable", job)).ConfigureAwait(true);
+
+        await AfterWriteAsync(result, on ? "Enable" : "Disable").ConfigureAwait(true);
+    }
+
+    /// <summary>Deletes the selected job, having said what that costs.</summary>
+    /// <remarks>
+    /// Confirmed here rather than by the CLI, which is not interactive. The wording names
+    /// Disable, because the file is about to be deleted and disabling is the reversible thing the
+    /// operator may have meant.
+    /// </remarks>
+    private async Task RemoveAsync()
+    {
+        if (Selected() is not { } job)
+        {
+            _status.Text = "Select a job first.";
+            _status.ForeColor = Theme.Current.Muted;
+            return;
+        }
+
+        // The wording names Disable, because the file is about to be deleted and disabling is
+        // the reversible thing the operator may have meant. needsAdmin puts the shield on Yes,
+        // so the UAC prompt that follows is not a surprise.
+        if (!LrDialog.Confirm(this, "Remove job",
+                $"Delete '{job}' and its file? This cannot be undone.\n\n"
+                + "Disable keeps the file and can be reversed exactly.",
+                needsAdmin: true))
+        {
+            return;
+        }
+
+        var result = await _cli.RunElevatedAsync(CliArgs.For(_configDir, "job", "remove", job))
+            .ConfigureAwait(true);
+
+        await AfterWriteAsync(result, "Remove").ConfigureAwait(true);
+    }
+
+    /// <summary>What every elevated write here does with its answer.</summary>
+    /// <remarks>
+    /// One place, because the three of them differ only in the word in the title - and a guard
+    /// copied three times is a guard that will be copied a fourth.
+    /// </remarks>
+    private async Task AfterWriteAsync(CliResult result, string what)
+    {
+        if (result.Failure == CliFailure.UacDeclined)
+        {
+            _status.Text = "Elevation was cancelled. Nothing was written.";
+            _status.ForeColor = Theme.Current.Muted;
+            return;
+        }
+
+        if (result.IsDefect)
+        {
+            LrDialog.Error(this, what, result.Describe(), result.Details);
+            return;
+        }
+
+        if (!result.Ok)
+        {
+            var view = ConfigCheckProjection.From(result, Core.ExitCode.ConfigInvalid);
+            LrDialog.Show(this, DialogKind.Error, what, view.Message, view.Details);
+            return;
+        }
+
+        await LoadAsync().ConfigureAwait(true);
     }
 }
