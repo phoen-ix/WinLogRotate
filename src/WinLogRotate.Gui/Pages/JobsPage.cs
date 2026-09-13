@@ -23,6 +23,11 @@ public sealed class JobsPage : UserControl
 
     private readonly Label _status = new() { Dock = DockStyle.Bottom, Height = 24 };
 
+    private readonly FlowLayoutPanel _toolbar = new() { Dock = DockStyle.Top, Height = 40, AutoSize = false };
+
+    /// <summary>Whether an action is in flight, so a second click during it does nothing.</summary>
+    private bool _busy;
+
     public JobsPage(CliRunner cli, string? configDir)
     {
         _cli = cli;
@@ -37,28 +42,26 @@ public sealed class JobsPage : UserControl
         _grid.Columns.Add("paths", "Paths");
         _grid.Columns.Add("policy", "Policy");
 
-        var toolbar = new FlowLayoutPanel { Dock = DockStyle.Top, Height = 40, AutoSize = false };
-
         var refresh = new Button { Text = "Refresh", Width = 90, FlatStyle = FlatStyle.System };
-        refresh.Click += async (_, _) => await LoadAsync().ConfigureAwait(true);
+        refresh.Click += async (_, _) => await OneAtATimeAsync(() => LoadAsync()).ConfigureAwait(true);
 
         var check = new Button { Text = "Check configuration", Width = 160, FlatStyle = FlatStyle.System };
-        check.Click += async (_, _) => await CheckAsync().ConfigureAwait(true);
+        check.Click += async (_, _) => await OneAtATimeAsync(CheckAsync).ConfigureAwait(true);
 
         var open = new Button { Text = "Open folder", Width = 110, FlatStyle = FlatStyle.System };
-        open.Click += async (_, _) => await OpenFolderAsync().ConfigureAwait(true);
+        open.Click += async (_, _) => await OneAtATimeAsync(OpenFolderAsync).ConfigureAwait(true);
 
         var add = new Button { Text = "New", Width = 70, FlatStyle = FlatStyle.System };
-        add.Click += async (_, _) => await EditAsync(null).ConfigureAwait(true);
+        add.Click += async (_, _) => await OneAtATimeAsync(() => EditAsync(null)).ConfigureAwait(true);
 
         var edit = new Button { Text = "Edit", Width = 70, FlatStyle = FlatStyle.System };
-        edit.Click += async (_, _) => await EditAsync(Selected()).ConfigureAwait(true);
+        edit.Click += async (_, _) => await OneAtATimeAsync(() => EditAsync(Selected())).ConfigureAwait(true);
 
         var toggle = new Button { Text = "Enable/Disable", Width = 120, FlatStyle = FlatStyle.System };
-        toggle.Click += async (_, _) => await ToggleAsync().ConfigureAwait(true);
+        toggle.Click += async (_, _) => await OneAtATimeAsync(ToggleAsync).ConfigureAwait(true);
 
         var remove = new Button { Text = "Remove", Width = 90, FlatStyle = FlatStyle.System };
-        remove.Click += async (_, _) => await RemoveAsync().ConfigureAwait(true);
+        remove.Click += async (_, _) => await OneAtATimeAsync(RemoveAsync).ConfigureAwait(true);
 
         // A double-click opens the row under the pointer rather than whatever was selected
         // before it, which is not the same row when the click also moves the selection.
@@ -66,18 +69,53 @@ public sealed class JobsPage : UserControl
         {
             if (e.RowIndex >= 0)
             {
-                await EditAsync(_grid.Rows[e.RowIndex].Cells["name"].Value as string)
-                    .ConfigureAwait(true);
+                var name = _grid.Rows[e.RowIndex].Cells["name"].Value as string;
+                await OneAtATimeAsync(() => EditAsync(name)).ConfigureAwait(true);
             }
         };
 
-        toolbar.Controls.AddRange([add, edit, toggle, remove, refresh, check, open]);
+        _toolbar.Controls.AddRange([add, edit, toggle, remove, refresh, check, open]);
 
         Controls.Add(_grid);
-        Controls.Add(toolbar);
+        Controls.Add(_toolbar);
         Controls.Add(_status);
 
-        Load += async (_, _) => await LoadAsync().ConfigureAwait(true);
+        Load += async (_, _) => await OneAtATimeAsync(() => LoadAsync()).ConfigureAwait(true);
+    }
+
+    /// <summary>
+    /// Runs one action at a time, with the toolbar disabled while it runs.
+    /// </summary>
+    /// <remarks>
+    /// Every button stayed enabled for the length of its await, and a Remove or Enable/Disable
+    /// awaits a UAC prompt: a double-click was two prompts and two writes, and the second dialog
+    /// opened on a page that might by then have been navigated away from. One flag and one
+    /// disabled panel, rather than a guard per button, because a guard copied seven times is a
+    /// guard that will be copied an eighth.
+    /// </remarks>
+    private async Task OneAtATimeAsync(Func<Task> action)
+    {
+        if (_busy)
+        {
+            return;
+        }
+
+        _busy = true;
+        _toolbar.Enabled = false;
+
+        try
+        {
+            await action().ConfigureAwait(true);
+        }
+        finally
+        {
+            _busy = false;
+
+            if (!IsDisposed)
+            {
+                _toolbar.Enabled = true;
+            }
+        }
     }
 
     /// <param name="said">
@@ -89,6 +127,13 @@ public sealed class JobsPage : UserControl
         _status.Text = "Loading...";
         var result = await _cli.RunAsync(CliArgs.For(_configDir, "config", "show", "--json"))
             .ConfigureAwait(true);
+
+        // Navigated away from while the verb ran. There is no grid left to fill, and a dialog
+        // owned by a disposed page is itself the exception this guard exists to prevent.
+        if (IsDisposed)
+        {
+            return;
+        }
 
         _grid.Rows.Clear();
 
@@ -141,6 +186,11 @@ public sealed class JobsPage : UserControl
         var result = await _cli.RunAsync(CliArgs.For(_configDir, "config", "check", "--json"))
             .ConfigureAwait(true);
 
+        if (IsDisposed)
+        {
+            return;
+        }
+
         var view = ConfigCheckProjection.From(result, Core.ExitCode.ConfigInvalid);
 
         LrDialog.Show(
@@ -172,10 +222,12 @@ public sealed class JobsPage : UserControl
             var root = document.RootElement.GetProperty("result").GetProperty("root").GetString();
             if (root is not null && Directory.Exists(root))
             {
+                // Disposed rather than discarded: the Process object is a handle, and opening
+                // a folder through the shell may or may not hand one back.
                 System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo(root)
                 {
                     UseShellExecute = true,
-                });
+                })?.Dispose();
             }
         }
         catch (Exception e) when (e is JsonException or KeyNotFoundException or InvalidOperationException)
@@ -200,7 +252,9 @@ public sealed class JobsPage : UserControl
     /// </remarks>
     private async Task EditAsync(string? job)
     {
-        if (await JobEditor.ShowAsync(this, _cli, _configDir, job).ConfigureAwait(true) is { } said)
+        var said = await JobEditor.ShowAsync(this, _cli, _configDir, job).ConfigureAwait(true);
+
+        if (said is not null && !IsDisposed)
         {
             await LoadAsync(said).ConfigureAwait(true);
         }
@@ -225,6 +279,11 @@ public sealed class JobsPage : UserControl
 
         var result = await _cli.RunElevatedAsync(
             CliArgs.For(_configDir, "job", on ? "enable" : "disable", job)).ConfigureAwait(true);
+
+        if (IsDisposed)
+        {
+            return;
+        }
 
         await AfterWriteAsync(result, on ? "Enable" : "Disable").ConfigureAwait(true);
     }
@@ -257,6 +316,11 @@ public sealed class JobsPage : UserControl
 
         var result = await _cli.RunElevatedAsync(CliArgs.For(_configDir, "job", "remove", job))
             .ConfigureAwait(true);
+
+        if (IsDisposed)
+        {
+            return;
+        }
 
         await AfterWriteAsync(result, "Remove").ConfigureAwait(true);
     }

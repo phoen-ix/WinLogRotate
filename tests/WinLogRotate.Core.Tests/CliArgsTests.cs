@@ -141,6 +141,38 @@ public sealed class CliArgsTests
         }
         .Describe().ShouldContain(expected);
 
+    /// <summary>
+    /// A child that could not be run says why, and is not a defect in the CLI.
+    /// </summary>
+    /// <remarks>
+    /// Only two ways to fail to start were caught - the executable missing, and the UAC prompt
+    /// declined. AppLocker refusing it, a corrupt image, an unwritable temporary folder for the
+    /// event stream and a locked event file all threw out of the page that asked, and the stock
+    /// exception dialog is what the operator saw. Each is now a result with the system's own
+    /// sentence in it, and none of them is exit 4: the CLI never ran, so it reported nothing.
+    /// </remarks>
+    [Fact]
+    public void AChildThatCouldNotBeRunSaysWhy()
+    {
+        var result = new CliResult
+        {
+            ExitCode = -1,
+            StdOut = "",
+            StdErr = "",
+            Failure = CliFailure.CouldNotStart,
+            Reason = "This program is blocked by group policy.",
+            Verb = "doctor",
+        };
+
+        result.Ok.ShouldBeFalse();
+        result.IsDefect.ShouldBeFalse("nothing ran, so nothing reported a defect");
+        result.Describe().ShouldContain("could not be run");
+        result.Describe().ShouldContain("blocked by group policy");
+
+        // And without a reason the sentence still stands on its own.
+        (result with { Reason = string.Empty }).Describe().ShouldBe("winlogrotate.exe could not be run.");
+    }
+
     /// <summary>Success and the other failures say the same thing for every verb.</summary>
     /// <remarks>
     /// Only exit 1 is ambiguous about what was attempted. "The configuration has errors, so

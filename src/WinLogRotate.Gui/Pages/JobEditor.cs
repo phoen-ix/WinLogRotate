@@ -43,6 +43,14 @@ public sealed class JobEditor : Form
     /// <summary>What the save wrote, in the verb's words, for the page that opened this.</summary>
     private string? _said;
 
+    // Fields rather than locals, because Check and Save are disabled for the length of their own
+    // awaits: a double-click on Save was two UAC prompts and two writes.
+    private readonly Button _check = new() { Text = "Check", FlatStyle = FlatStyle.System };
+    private readonly Button _save = new() { Text = "Save", FlatStyle = FlatStyle.System };
+
+    /// <summary>Whether a Check or Save is in flight, so a second click during it does nothing.</summary>
+    private bool _busy;
+
     // No bounds here. Every position comes from JobEditorLayout in Build, so that the arithmetic
     // is in one place and that place is one a test can reach.
     private readonly TextBox _name = new();
@@ -113,6 +121,13 @@ public sealed class JobEditor : Form
             var read = await cli.RunAsync(CliArgs.For(configDir, "job", "show", job, "--json"))
                 .ConfigureAwait(true);
 
+            // The page that asked has been navigated away from. A dialog owned by a disposed
+            // control is itself an exception, and there is nobody looking.
+            if (owner is Control { IsDisposed: true })
+            {
+                return null;
+            }
+
             // Exit 2 is a job whose file will not load, which is the commonest reason to open
             // this window at all - so it is read, not refused. Only a defect stops us.
             if (read.IsDefect)
@@ -147,6 +162,11 @@ public sealed class JobEditor : Form
         // their service-restart hook has never fired.
         var doctor = await cli.RunAsync(CliArgs.For(configDir, "doctor", "--json"))
             .ConfigureAwait(true);
+
+        if (owner is Control { IsDisposed: true })
+        {
+            return null;
+        }
 
         var warning = doctor.IsDefect
             ? null
@@ -228,19 +248,8 @@ public sealed class JobEditor : Form
         _status.Bounds = layout.Status.ToRectangle();
         Controls.Add(_status);
 
-        var check = new Button
-        {
-            Text = "Check",
-            Bounds = layout.Check.ToRectangle(),
-            FlatStyle = FlatStyle.System,
-        };
-
-        var save = new Button
-        {
-            Text = "Save",
-            Bounds = layout.Save.ToRectangle(),
-            FlatStyle = FlatStyle.System,
-        };
+        _check.Bounds = layout.Check.ToRectangle();
+        _save.Bounds = layout.Save.ToRectangle();
 
         var cancel = new Button
         {
@@ -253,15 +262,48 @@ public sealed class JobEditor : Form
         // The shield goes on Save and not on Check: Check runs --dry-run, which writes nothing
         // and needs no rights at all. A shield on it would promise a prompt that never comes,
         // and train somebody to expect one where it matters less.
-        LrDialog.AddShield(save);
+        LrDialog.AddShield(_save);
 
-        check.Click += async (_, _) => await CheckAsync().ConfigureAwait(true);
-        save.Click += async (_, _) => await SaveAsync().ConfigureAwait(true);
+        _check.Click += async (_, _) => await OneAtATimeAsync(CheckAsync).ConfigureAwait(true);
+        _save.Click += async (_, _) => await OneAtATimeAsync(SaveAsync).ConfigureAwait(true);
 
-        Controls.Add(check);
-        Controls.Add(save);
+        Controls.Add(_check);
+        Controls.Add(_save);
         Controls.Add(cancel);
         CancelButton = cancel;
+    }
+
+    /// <summary>
+    /// Runs Check or Save, with both disabled until it has finished.
+    /// </summary>
+    /// <remarks>
+    /// Save awaits a dry run and then a UAC prompt. Both buttons stayed enabled throughout, so a
+    /// double-click was two prompts and two writes, and the second one's dialog could open on a
+    /// form the first had already closed.
+    /// </remarks>
+    private async Task OneAtATimeAsync(Func<Task> action)
+    {
+        if (_busy)
+        {
+            return;
+        }
+
+        _busy = true;
+        _check.Enabled = _save.Enabled = false;
+
+        try
+        {
+            await action().ConfigureAwait(true);
+        }
+        finally
+        {
+            _busy = false;
+
+            if (!IsDisposed)
+            {
+                _check.Enabled = _save.Enabled = true;
+            }
+        }
     }
 
     private Control Editor(JobField row, Box box)
@@ -473,6 +515,12 @@ public sealed class JobEditor : Form
 
         var result = await _cli.RunAsync(Args(dryRun: true)).ConfigureAwait(true);
 
+        // Closed while the check ran. Nothing to say it on.
+        if (IsDisposed)
+        {
+            return;
+        }
+
         if (result.IsDefect)
         {
             LrDialog.Error(this, "Check", result.Describe(), result.Details);
@@ -495,6 +543,11 @@ public sealed class JobEditor : Form
         // was never going to work.
         var dry = await _cli.RunAsync(Args(dryRun: true)).ConfigureAwait(true);
 
+        if (IsDisposed)
+        {
+            return;
+        }
+
         if (dry.IsDefect)
         {
             LrDialog.Error(this, "Save", dry.Describe(), dry.Details);
@@ -514,6 +567,13 @@ public sealed class JobEditor : Form
         }
 
         var result = await _cli.RunElevatedAsync(Args(dryRun: false)).ConfigureAwait(true);
+
+        // Closed while the elevated child ran. The file is whatever the child made of it, and
+        // the Jobs page will show that on its next refresh.
+        if (IsDisposed)
+        {
+            return;
+        }
 
         if (result.Failure == CliFailure.UacDeclined)
         {

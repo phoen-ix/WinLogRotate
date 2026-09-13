@@ -28,19 +28,26 @@ public sealed class SchedulingPage : UserControl
     /// anything. Owned by <see cref="RefreshStatusAsync"/>; read by the Apply path.</summary>
     private bool _known;
     private readonly Label _current = new() { Dock = DockStyle.Top, Height = 44 };
-    private readonly TextBox _log = new()
-    {
-        Dock = DockStyle.Fill,
-        Multiline = true,
-        ReadOnly = true,
-        ScrollBars = ScrollBars.Vertical,
-        Font = new Font(FontFamily.GenericMonospace, 9f),
-    };
+
+    // Held so it can be disposed with the page. A Font assigned to a control is not owned by it,
+    // so one created inline here outlived every navigation away from this page.
+    private readonly Font _mono = new(FontFamily.GenericMonospace, 9f);
+
+    private readonly TextBox _log;
 
     public SchedulingPage(CliRunner cli, string? configDir)
     {
         _cli = cli;
         _configDir = configDir;
+
+        _log = new TextBox
+        {
+            Dock = DockStyle.Fill,
+            Multiline = true,
+            ReadOnly = true,
+            ScrollBars = ScrollBars.Vertical,
+            Font = _mono,
+        };
 
         LrDialog.AddShield(_apply);
         _apply.Click += async (_, _) => await ApplyAsync().ConfigureAwait(true);
@@ -81,6 +88,13 @@ public sealed class SchedulingPage : UserControl
     {
         var result = await _cli.RunAsync(CliArgs.For(_configDir, "doctor", "--json"))
             .ConfigureAwait(true);
+
+        // Navigated away from while doctor ran. Nothing to show it on, and _known must not be
+        // touched: a disposed page's Apply cannot be pressed anyway.
+        if (IsDisposed)
+        {
+            return;
+        }
 
         var view = SchedulingProjection.From(result);
 
@@ -123,6 +137,11 @@ public sealed class SchedulingPage : UserControl
                 UiThread.LineTo(_log, line => _log.AppendText(line + Environment.NewLine)))
                 .ConfigureAwait(true);
 
+            if (IsDisposed)
+            {
+                return;
+            }
+
             _log.AppendText(result.Describe() + Environment.NewLine);
 
             if (!result.Ok && result.Failure != CliFailure.UacDeclined)
@@ -137,7 +156,21 @@ public sealed class SchedulingPage : UserControl
             // Back to what is known, never unconditionally on. The refresh above has usually
             // just set this; on the path where it threw, the last established answer is still
             // the right one to offer - and if nothing was ever established, still nothing.
-            _apply.Enabled = _known;
+            if (!IsDisposed)
+            {
+                _apply.Enabled = _known;
+            }
+        }
+    }
+
+    /// <summary>Disposes the font the page created, after the control that used it.</summary>
+    protected override void Dispose(bool disposing)
+    {
+        base.Dispose(disposing);
+
+        if (disposing)
+        {
+            _mono.Dispose();
         }
     }
 }

@@ -16,15 +16,11 @@ public sealed class RunPage : UserControl
     private readonly CliRunner _cli;
     private readonly string? _configDir;
 
-    private readonly TextBox _output = new()
-    {
-        Dock = DockStyle.Fill,
-        Multiline = true,
-        ReadOnly = true,
-        ScrollBars = ScrollBars.Both,
-        WordWrap = false,
-        Font = new Font(FontFamily.GenericMonospace, 9f),
-    };
+    // Held so it can be disposed with the page. A Font assigned to a control is not owned by it,
+    // so one created inline here outlived every navigation away from this page.
+    private readonly Font _mono = new(FontFamily.GenericMonospace, 9f);
+
+    private readonly TextBox _output;
 
     private readonly Button _dryRun = new() { Text = "Dry run", Width = 120, FlatStyle = FlatStyle.System };
     private readonly Button _run = new() { Text = "Rotate now", Width = 120, FlatStyle = FlatStyle.System };
@@ -34,6 +30,16 @@ public sealed class RunPage : UserControl
     {
         _cli = cli;
         _configDir = configDir;
+
+        _output = new TextBox
+        {
+            Dock = DockStyle.Fill,
+            Multiline = true,
+            ReadOnly = true,
+            ScrollBars = ScrollBars.Both,
+            WordWrap = false,
+            Font = _mono,
+        };
 
         // Rotating for real needs administrator on a per-machine install, so it carries the
         // shield. Dry run does not: it changes nothing.
@@ -86,6 +92,13 @@ public sealed class RunPage : UserControl
                 ? await _cli.RunAsync(arguments).ConfigureAwait(true)
                 : await _cli.RunElevatedAsync(arguments, Append).ConfigureAwait(true);
 
+            // Navigated away from while the run went on. The child has finished and its record
+            // is in the journal; there is no page left to report it on.
+            if (IsDisposed)
+            {
+                return;
+            }
+
             // The elevated path has already appended every line as it arrived, and its StdOut is
             // the whole NDJSON file those lines came from - so appending it here printed the run
             // a second time, as JSON, under the readable copy. Invisible while both were empty.
@@ -116,7 +129,21 @@ public sealed class RunPage : UserControl
         }
         finally
         {
-            _dryRun.Enabled = _run.Enabled = true;
+            if (!IsDisposed)
+            {
+                _dryRun.Enabled = _run.Enabled = true;
+            }
+        }
+    }
+
+    /// <summary>Disposes the font the page created, after the control that used it.</summary>
+    protected override void Dispose(bool disposing)
+    {
+        base.Dispose(disposing);
+
+        if (disposing)
+        {
+            _mono.Dispose();
         }
     }
 

@@ -90,6 +90,13 @@ public sealed class MainForm : Form
         var identity = CliIdentity.Inspect(
             await _cli.RunAsync(CliIdentity.Arguments).ConfigureAwait(true));
 
+        // Closed while the probe ran, which a quick operator or the installer's quit event can
+        // both manage. There is nothing left to put a banner on.
+        if (IsDisposed)
+        {
+            return;
+        }
+
         if (!identity.Ok)
         {
             ShowBanner(identity.Describe(), identity.Severity);
@@ -137,9 +144,21 @@ public sealed class MainForm : Form
         _ => Theme.Current.Muted,
     };
 
+    /// <summary>
+    /// Replaces the page being shown, and disposes the one it replaces.
+    /// </summary>
+    /// <remarks>
+    /// <c>Controls.Clear()</c> detaches without disposing, so every navigation leaked a page: its
+    /// window handles parked, its fonts rooted, and its handlers still wired to a runner that
+    /// would call them. A control disposes itself out of its parent's collection, so disposing
+    /// each old page is the whole of the replacement.
+    /// </remarks>
     private void ShowPage(int index)
     {
-        _content.Controls.Clear();
+        foreach (var stale in _content.Controls.Cast<Control>().ToArray())
+        {
+            stale.Dispose();
+        }
 
         Control page = index switch
         {

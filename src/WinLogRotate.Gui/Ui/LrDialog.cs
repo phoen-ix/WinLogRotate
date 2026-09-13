@@ -109,12 +109,17 @@ public static partial class LrDialog
 
         if (hasDetails)
         {
+            // Disposed with the form. A Font is not owned by the control it is assigned to, so
+            // one created inline here went with neither the box nor the dialog, once per error.
+            var mono = new Font(FontFamily.GenericMonospace, 8.25f);
+            form.Disposed += (_, _) => mono.Dispose();
+
             detailBox = new TextBox
             {
                 Multiline = true,
                 ReadOnly = true,
                 ScrollBars = ScrollBars.Vertical,
-                Font = new Font(FontFamily.GenericMonospace, 8.25f),
+                Font = mono,
                 Text = details,
                 Visible = false,
                 BackColor = colors.Surface,

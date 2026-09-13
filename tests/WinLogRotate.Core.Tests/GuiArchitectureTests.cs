@@ -49,6 +49,9 @@ public sealed partial class GuiArchitectureTests
     [GeneratedRegex(@"^\s*(?:private|public|internal|protected)\b.*\(.*\)\s*$", RegexOptions.Compiled)]
     private static partial Regex MethodSignature();
 
+    [GeneratedRegex(@"new\s+Font\s*\(|\bFont\s+\w+\s*=\s*new\s*\(", RegexOptions.Compiled)]
+    private static partial Regex CreatesAFont();
+
     /// <summary>
     /// A <c>job</c> verb's answer is read by the projection written for it.
     /// </summary>
@@ -169,5 +172,123 @@ public sealed partial class GuiArchitectureTests
             code.ShouldContain(layout, customMessage: $"{file} must ask its layout");
             code.ShouldContain("layout.ClientHeight", customMessage: $"{file}'s client size is the layout's too");
         }
+    }
+
+    /// <summary>
+    /// The window catches what its handlers let escape.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// A premise the GUI's comments repeated was wrong in a useful way: an exception escaping an
+    /// <c>async void</c> handler does not end a WinForms process. The framework shows its stock
+    /// <c>ThreadExceptionDialog</c> - light, a stack trace, a Continue button - and leaves the
+    /// page half-updated. No handler was installed, so that dialog is what every unanticipated
+    /// failure looked like.
+    /// </para>
+    /// <para>
+    /// Three lines, and all three are needed: the mode, or the framework keeps its own dialog;
+    /// the thread handler, which is where an escaping handler exception goes; and the task
+    /// handler, for a fault nobody awaited.
+    /// </para>
+    /// </remarks>
+    [Fact]
+    public void TheWindowCatchesWhatItsHandlersLetEscape()
+    {
+        var program = Code(Path.Combine(Gui, "Program.cs"));
+
+        program.ShouldContain("Application.SetUnhandledExceptionMode(UnhandledExceptionMode.CatchException)");
+        program.ShouldContain("Application.ThreadException +=");
+        program.ShouldContain("TaskScheduler.UnobservedTaskException +=");
+    }
+
+    /// <summary>
+    /// The quit listener is armed once the window can hear it, and stays armed.
+    /// </summary>
+    /// <remarks>
+    /// It was registered before <c>Application.Run</c>, with <c>executeOnlyOnce</c>. A signal
+    /// in the window between registration and the handle was consumed by a post that had nothing
+    /// to post to, and the registration was then spent - so the installer's polite request was
+    /// heard exactly never, and its fixed two-second wait failed on a locked executable.
+    /// </remarks>
+    [Fact]
+    public void TheQuitListenerIsArmedOnceTheWindowCanHearIt()
+    {
+        var program = Code(Path.Combine(Gui, "Program.cs"));
+
+        program.ShouldContain("HandleCreated", customMessage: "arm the wait when there is a handle to post to");
+        program.ShouldContain("executeOnlyOnce: false");
+        program.ShouldNotContain("executeOnlyOnce: true", customMessage: "a wait that fires once is spent by a signal nobody could act on");
+    }
+
+    /// <summary>
+    /// The main window disposes the page it replaces.
+    /// </summary>
+    /// <remarks>
+    /// <c>Controls.Clear()</c> detaches without disposing, so every navigation leaked a page -
+    /// window handles parked, fonts rooted, handlers still wired to a runner that would call them.
+    /// A control disposes itself out of its parent's collection, so disposing is the whole of the
+    /// replacement and clearing is never needed.
+    /// </remarks>
+    [Fact]
+    public void TheMainWindowDisposesThePageItReplaces()
+    {
+        var main = Code(Path.Combine(Gui, "MainForm.cs"));
+
+        main.ShouldNotContain("Controls.Clear()", customMessage: "Clear detaches without disposing; dispose the old pages instead");
+        main.ShouldContain(".Dispose()");
+    }
+
+    /// <summary>
+    /// A window that waits checks it is still there before it says anything.
+    /// </summary>
+    /// <remarks>
+    /// Every page awaits the CLI and then writes to its controls or opens a dialog it owns. An
+    /// operator who navigates away during the wait disposes the page, and a dialog owned by a
+    /// disposed control is itself an exception - reported, now, by the handler above, which is
+    /// better than the stock dialog and still a report of something that should not happen. The
+    /// rule is a per-file floor, not a per-await proof: a page that never checks at all is what
+    /// it catches.
+    /// </remarks>
+    [Fact]
+    public void AWindowThatWaitsChecksItIsStillThere()
+    {
+        var waiting = GuiFiles()
+            .Where(f => Code(f).Contains("ConfigureAwait(true)", StringComparison.Ordinal))
+            .ToArray();
+
+        // Self-check: every page waits on the CLI, or the scan has stopped seeing awaits.
+        waiting.Length.ShouldBeGreaterThan(5);
+
+        waiting
+            .Where(f => !Code(f).Contains("IsDisposed", StringComparison.Ordinal))
+            .Select(Path.GetFileName)
+            .ShouldBeEmpty("a page that waits on the CLI must check IsDisposed before it touches itself");
+    }
+
+    /// <summary>
+    /// Every font a window creates is disposed by it.
+    /// </summary>
+    /// <remarks>
+    /// A <c>Font</c> assigned to a control is not owned by the control, so one created inline in
+    /// a field initialiser outlived the page on every navigation, and one created per error dialog
+    /// outlived every error. Four files did this. The rule asks only that a file which creates one
+    /// also disposes something, which is the shape the fix takes in each of them.
+    /// </remarks>
+    [Fact]
+    public void EveryFontAWindowCreatesIsDisposed()
+    {
+        // Both spellings: `new Font(...)`, and a field typed Font initialised with a target-typed
+        // `new(...)`, which is how the pages write it and never spells the type after `new`.
+        var creators = GuiFiles()
+            .Where(f => CreatesAFont().IsMatch(Code(f)))
+            .ToArray();
+
+        // Self-check: the run, scheduling and settings pages and the dialog all create one.
+        creators.Length.ShouldBeGreaterThan(2);
+
+        creators
+            .Where(f => !Code(f).Contains(".Dispose(", StringComparison.Ordinal))
+            .Select(Path.GetFileName)
+            .ShouldBeEmpty("a font a window creates is a font it has to dispose");
     }
 }

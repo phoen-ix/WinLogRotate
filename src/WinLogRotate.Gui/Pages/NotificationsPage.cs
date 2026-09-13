@@ -88,6 +88,13 @@ public sealed class NotificationsPage : UserControl
         var result = await _cli.RunAsync(
             CliArgs.For(_configDir, "notify", "show", "--json")).ConfigureAwait(true);
 
+        // Navigated away from while the verb ran. There is no grid left to fill, and a dialog
+        // owned by a disposed page is itself the exception this guard exists to prevent.
+        if (IsDisposed)
+        {
+            return;
+        }
+
         // Cleared before the failure is reported, not after. Returning early left the previous
         // refresh's rows on screen beside an error status line, so a refresh that failed looked
         // exactly like one that succeeded a minute ago - and the operator reads rows, not the
@@ -202,6 +209,11 @@ public sealed class NotificationsPage : UserControl
         var result = await _cli.RunAsync(
             CliArgs.For(_configDir, "notify", "test", "--json")).ConfigureAwait(true);
 
+        if (IsDisposed)
+        {
+            return;
+        }
+
         // notify test always exits 0 - a webhook outage is not a rotation failure - so the counts
         // are what say whether anything arrived. Scraping stdout for the word FAILED was a text
         // contract nothing pins, and it could not tell "sent to none" from "sent to three".
@@ -232,6 +244,11 @@ public sealed class NotificationsPage : UserControl
 
         var result = await _cli.RunAsync(
             CliArgs.For(_configDir, "notify", "reset")).ConfigureAwait(true);
+
+        if (IsDisposed)
+        {
+            return;
+        }
 
         _status.ForeColor = result.Ok ? Theme.Current.Muted : Theme.Current.Danger;
         _status.Text = result.Ok ? "Suppressed channels cleared." : result.Describe();
@@ -284,7 +301,10 @@ public sealed class NotificationsPage : UserControl
         }
         finally
         {
-            _credential.Enabled = true;
+            if (!IsDisposed)
+            {
+                _credential.Enabled = true;
+            }
         }
     }
 
@@ -331,6 +351,12 @@ public sealed class NotificationsPage : UserControl
             .ConfigureAwait(true);
 
         Array.Clear(message);
+
+        // The credential is cleared above whatever happened; only the reporting is skipped.
+        if (IsDisposed)
+        {
+            return;
+        }
 
         if (result.Failure == CliFailure.UacDeclined)
         {

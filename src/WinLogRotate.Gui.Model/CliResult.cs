@@ -9,6 +9,16 @@ public enum CliFailure
     NotFound,
     UacDeclined,
     Timeout,
+
+    /// <summary>
+    /// The executable is there and was not declined, and still nothing ran to completion.
+    /// </summary>
+    /// <remarks>
+    /// AppLocker refusing it, a corrupt image, a temporary folder the event stream could not be
+    /// created in, an event file something else held open. Each used to throw out of the page
+    /// that asked; the system's own sentence is carried in <see cref="CliResult.Reason"/>.
+    /// </remarks>
+    CouldNotStart,
 }
 
 /// <summary>What one invocation produced.</summary>
@@ -18,6 +28,9 @@ public sealed record CliResult
     public required string StdOut { get; init; }
     public required string StdErr { get; init; }
     public CliFailure Failure { get; init; }
+
+    /// <summary>Why a <see cref="CliFailure.CouldNotStart"/> could not, in the system's words. Empty otherwise.</summary>
+    public string Reason { get; init; } = string.Empty;
 
     /// <summary>
     /// The verb that produced this, for a sentence that has to name what did not work.
@@ -79,6 +92,9 @@ public sealed record CliResult
         CliFailure.NotFound => "winlogrotate.exe could not be found.",
         CliFailure.UacDeclined => "Elevation was cancelled. Nothing was changed.",
         CliFailure.Timeout => "The operation took too long and was stopped.",
+        CliFailure.CouldNotStart => Reason.Length > 0
+            ? $"winlogrotate.exe could not be run: {Reason}"
+            : "winlogrotate.exe could not be run.",
         _ => ExitCode switch
         {
             Core.ExitCode.Ok => "Completed.",

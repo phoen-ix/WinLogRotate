@@ -62,6 +62,13 @@ public sealed class HistoryPage : UserControl
         var result = await _cli.RunAsync(CliArgs.For(_configDir, "journal", "--json"))
             .ConfigureAwait(true);
 
+        // Navigated away from while the verb ran. The page is disposed and there is nothing to
+        // fill; a dialog owned by it would be the exception this guard exists to prevent.
+        if (IsDisposed)
+        {
+            return;
+        }
+
         _grid.Rows.Clear();
 
         if (!result.Ok)

@@ -107,6 +107,13 @@ public sealed class CliRunner(string executablePath)
         {
             return Failed(CliFailure.NotFound);
         }
+        catch (Exception e) when (e is Win32Exception or InvalidOperationException or IOException)
+        {
+            // AppLocker (5), a corrupt image (193), a pipe that broke. Only code 2 used to be
+            // caught, so the rest threw out of whichever page's load had asked - and the stock
+            // exception dialog, not this product's, is what the operator saw on start-up.
+            return Failed(CliFailure.CouldNotStart, e.Message);
+        }
         catch (OperationCanceledException)
         {
             return Failed(CliFailure.Timeout);
@@ -149,9 +156,7 @@ public sealed class CliRunner(string executablePath)
         Action<int>? onStarted = null,
         CancellationToken cancellationToken = default)
     {
-        var workDirectory = Path.Combine(
-            Path.GetTempPath(), $"WinLogRotate-op-{Guid.NewGuid():N}");
-        Directory.CreateDirectory(workDirectory);
+        var workDirectory = Path.Combine(Path.GetTempPath(), WorkDirectories.Name(Guid.NewGuid()));
         var eventFile = Path.Combine(workDirectory, "events.ndjson");
 
         var info = new ProcessStartInfo(ExecutablePath)
@@ -173,6 +178,10 @@ public sealed class CliRunner(string executablePath)
 
         try
         {
+            // Inside the try. An unwritable temporary folder threw from here, before any catch
+            // below could turn it into a result, and the page that asked went down with it.
+            Directory.CreateDirectory(workDirectory);
+
             using var process = Process.Start(info);
             if (process is null)
             {
@@ -218,6 +227,16 @@ public sealed class CliRunner(string executablePath)
             // the process instead of showing the one dialog that explains it.
             return Failed(CliFailure.NotFound);
         }
+        catch (Exception e) when (e is Win32Exception
+                                      or InvalidOperationException
+                                      or IOException
+                                      or UnauthorizedAccessException)
+        {
+            // Everything else that stops a child running or being read: AppLocker, a corrupt
+            // image, a temporary folder that cannot be written, an event file held open by an
+            // antivirus scanner after the child exited. The system's sentence travels with it.
+            return Failed(CliFailure.CouldNotStart, e.Message);
+        }
         catch (OperationCanceledException)
         {
             return Failed(CliFailure.Timeout);
@@ -225,6 +244,69 @@ public sealed class CliRunner(string executablePath)
         finally
         {
             TryCleanUp(workDirectory);
+        }
+    }
+
+    /// <summary>
+    /// Removes the scratch directories earlier operations could not remove themselves.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// <see cref="TryCleanUp"/> has always said that what it leaves behind is swept on the next
+    /// start, and for several milestones nothing did: the comment described a mechanism that did
+    /// not exist. This is the mechanism. Called once, from <c>Program.Main</c>, before the window
+    /// opens.
+    /// </para>
+    /// <para>
+    /// Only directories nobody has written to for <see cref="WorkDirectories.Grace"/> are removed.
+    /// A GUI that was killed leaves a child running, and that child is still appending to its
+    /// file; deleting the directory from under it would be a worse outcome than the litter. The
+    /// decision is <see cref="WorkDirectories.IsStale"/>, which is asserted where the tests run.
+    /// </para>
+    /// </remarks>
+    public static void SweepStaleWork()
+    {
+        var now = DateTimeOffset.UtcNow;
+
+        IEnumerable<string> stale;
+
+        try
+        {
+            stale = Directory.EnumerateDirectories(Path.GetTempPath(), WorkDirectories.Pattern)
+                .Where(d => WorkDirectories.IsStale(LastWrite(d), now))
+                .ToArray();
+        }
+        catch (Exception e) when (e is IOException or UnauthorizedAccessException)
+        {
+            // A temporary folder that cannot be listed is not a reason to refuse to open.
+            return;
+        }
+
+        foreach (var directory in stale)
+        {
+            TryCleanUp(directory);
+        }
+    }
+
+    /// <summary>The newest write in a directory: the directory itself, or any file in it.</summary>
+    private static DateTimeOffset LastWrite(string directory)
+    {
+        try
+        {
+            var newest = Directory.GetLastWriteTimeUtc(directory);
+
+            foreach (var file in Directory.EnumerateFiles(directory))
+            {
+                var written = File.GetLastWriteTimeUtc(file);
+                newest = written > newest ? written : newest;
+            }
+
+            return newest;
+        }
+        catch (Exception e) when (e is IOException or UnauthorizedAccessException)
+        {
+            // Unreadable is treated as just written: the sweep leaves it for next time.
+            return DateTimeOffset.UtcNow;
         }
     }
 
@@ -237,19 +319,21 @@ public sealed class CliRunner(string executablePath)
         catch (IOException)
         {
             // An elevated child may still be exiting and holding the file. Left behind on
-            // purpose rather than retried here; the next GUI start sweeps WinLogRotate-op-*.
+            // purpose rather than retried here; SweepStaleWork removes it on the next start,
+            // once nothing has written to it for an hour.
         }
         catch (UnauthorizedAccessException)
         {
         }
     }
 
-    private static CliResult Failed(CliFailure failure) =>
+    private static CliResult Failed(CliFailure failure, string reason = "") =>
         new()
         {
             ExitCode = -1,
             StdOut = string.Empty,
             StdErr = string.Empty,
             Failure = failure,
+            Reason = reason,
         };
 }
