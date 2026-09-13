@@ -104,7 +104,7 @@ public sealed record RunReport
 public sealed class RotationRunner(
     IJournal journal, PathGuard guard, StateStore state, TimeProvider clock,
     IArchiveSource? archiveSource = null, IHookHost? hookHost = null, HookGate? hookGate = null,
-    IWriterInspector? inspector = null, IFileSource? files = null)
+    IWriterInspector? inspector = null, IFileSource? files = null, IPlanApplier? applier = null)
 {
     /// <summary>
     /// What can be asked of a live log: what its writer permits, and what it looks like now.
@@ -205,7 +205,9 @@ public sealed class RotationRunner(
         // computed on every truncation and dropped on the floor every time.
         var truncated = new Dictionary<string, TruncationOutcome>(StringComparer.OrdinalIgnoreCase);
 
-        var executor = new PlanExecutor(journal, guard, clock)
+        // The applier is the one seam a run has onto the disk. Handed through rather than built
+        // here so a test can fail one operation and watch what the run does about the rest.
+        var executor = new PlanExecutor(journal, guard, clock, applier: applier)
         {
             RecordTruncation = (path, outcome) => truncated[path] = outcome,
         };

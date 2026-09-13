@@ -1,5 +1,4 @@
 using WinLogRotate.Contracts;
-using WinLogRotate.Core.Compression;
 using WinLogRotate.Core.Configuration;
 using WinLogRotate.Core.Io;
 using WinLogRotate.Core.Journaling;
@@ -85,8 +84,14 @@ public sealed record ExecutionResult
 /// rather than a separate description that could drift from what the executor really does.
 /// </remarks>
 public sealed class PlanExecutor(
-    IJournal journal, PathGuard guard, TimeProvider clock, ILinkResolver? links = null)
+    IJournal journal, PathGuard guard, TimeProvider clock, ILinkResolver? links = null,
+    IPlanApplier? applier = null)
 {
+    /// <summary>
+    /// What touches the files. Defaults to the real thing, so every existing caller is unchanged.
+    /// </summary>
+    private readonly IPlanApplier _applier = applier ?? new WindowsPlanApplier();
+
     public ExecutionResult Execute(JobPlan plan, EffectiveJob job, bool dryRun)
     {
         var completed = 0;
@@ -159,8 +164,14 @@ public sealed class PlanExecutor(
             var started = clock.GetTimestamp();
             try
             {
-                var bytes = Apply(op, job, (_, _) => retries++);
+                var applied = _applier.Apply(op, job, (_, _) => retries++);
                 completed++;
+
+                if (applied.Truncation is { } truncation)
+                {
+                    RecordTruncation?.Invoke(op.Source, truncation);
+                }
+
                 completedBy[op.Action] = completedBy.GetValueOrDefault(op.Action) + 1;
                 if (op.Action == PlannedAction.Delete)
                 {
@@ -176,7 +187,7 @@ public sealed class PlanExecutor(
                 }
 
                 Emit(plan, op, Phase.Apply, OpResult.Ok, null,
-                    (long)clock.GetElapsedTime(started).TotalMilliseconds, bytes);
+                    (long)clock.GetElapsedTime(started).TotalMilliseconds, applied.BytesAfter);
             }
             // ExternalException covers Win32Exception, which nothing here threw until hooks
             // existed and which this filter did not match. It escaped Execute, and then RunCommand
@@ -286,100 +297,12 @@ public sealed class PlanExecutor(
             : WinPath.Combine(real, WinPath.FileName(path));
     }
 
-    private long? Apply(PlannedOp op, EffectiveJob job, Action<int, Exception> onRetry)
-    {
-        // Applying a plan is where the Win32 surface begins. Guarding here rather than marking
-        // the whole executor Windows-only keeps Execute platform-neutral, which is what lets
-        // the dry-run path - the property that matters most, that --dry-run changes nothing -
-        // be tested on the Linux CI leg alongside the planners.
-        if (!OperatingSystem.IsWindows())
-        {
-            throw new PlatformNotSupportedException(
-                "Applying a rotation plan requires Windows. Use --dry-run to plan anywhere.");
-        }
-
-        return ApplyOnWindows(op, job, onRetry);
-    }
-
-    /// <summary>
-    /// The Win32 half, split out and annotated rather than guarded inline.
-    /// <para>
-    /// CA1416's flow analysis does not follow a platform check into a lambda, and every call
-    /// below is wrapped in one for the retry policy - so an inline guard silences nothing.
-    /// Splitting the method is what actually lets the analyzer verify the boundary instead of
-    /// having it suppressed.
-    /// </para>
-    /// </summary>
-    [System.Runtime.Versioning.SupportedOSPlatform("windows")]
-    private long? ApplyOnWindows(PlannedOp op, EffectiveJob job, Action<int, Exception> onRetry)
-    {
-        switch (op.Action)
-        {
-            case PlannedAction.Compress:
-                var result = Compressor.Compress(
-                    op.Source, job.CompressType,
-                    retryCount: job.RetryCount, retryIntervalMs: job.RetryIntervalMs,
-                    onRetry: onRetry);
-                return result.BytesAfter;
-
-            case PlannedAction.Delete:
-                RetryPolicy.Execute(
-                    () => FileOps.Delete(op.Source), job.RetryCount, job.RetryIntervalMs, onRetry);
-                return 0;
-
-            case PlannedAction.CreateDirectory:
-                RetryPolicy.Execute(
-                    () => FileOps.CreateDirectory(op.Source), job.RetryCount, job.RetryIntervalMs, onRetry);
-                return 0;
-
-            case PlannedAction.Rename:
-                RetryPolicy.Execute(
-                    () => FileOps.Rename(op.Source, op.Destination!),
-                    job.RetryCount, job.RetryIntervalMs, onRetry);
-                return null;
-
-            case PlannedAction.CopyTruncate:
-            case PlannedAction.Copy:
-                var truncate = op.Action == PlannedAction.CopyTruncate;
-
-                // The retries live inside, and that is the whole of the fix. Wrapped from out
-                // here, an attempt that archived the log and then failed to empty it was retried
-                // from the top: the second attempt measured a source the first had already
-                // truncated, copied nothing, and moved the nothing over the archive it had just
-                // saved. The call returned normally and the run reported a success.
-                //
-                // FileOps.CopyTruncate now retries opening, copying and cutting separately, so a
-                // cut that fails is retried alone against a handle whose archive is committed.
-                // Restoring a wrapper here restores the defect in full.
-                var outcome = FileOps.CopyTruncate(
-                    op.Source, op.Destination!, truncate,
-                    attempts: job.RetryCount, intervalMs: job.RetryIntervalMs, onRetry: onRetry);
-
-                // Recorded so the run can judge whether the writer honoured the truncation or
-                // resumed at a cached offset and left NTFS to zero-fill the gap. Both numbers,
-                // not just the size: the gap begins where the cut left the file, and sampling
-                // from byte zero finds the preserved tail rather than the NUL run.
-                if (truncate)
-                {
-                    RecordTruncation?.Invoke(op.Source, outcome);
-                }
-
-                return outcome.SizeBefore;
-
-            case PlannedAction.Create:
-                RetryPolicy.Execute(() => FileOps.Create(op.Destination ?? op.Source),
-                    job.RetryCount, job.RetryIntervalMs, onRetry);
-                return 0;
-
-            default:
-                throw new NotSupportedException($"{op.Action} has no implementation.");
-        }
-    }
-
     /// <summary>
     /// Called after a truncation with the size the file had beforehand, so the caller can store
     /// it in state. Without that number the NUL-fill detector has nothing to compare against on
-    /// the following run, and the failure it exists to catch stays invisible.
+    /// the following run, and the failure it exists to catch stays invisible. The numbers come
+    /// back from <see cref="IPlanApplier.Apply"/> rather than being raised inside it, so a fake
+    /// applier reports a truncation the same way the real one does.
     /// </summary>
     public Action<string, TruncationOutcome>? RecordTruncation { get; set; }
 
