@@ -282,10 +282,12 @@ public sealed class NotifySenderTests : IDisposable
                 Kind = NotifyProviderKind.Email,
 
                 // Nothing is listening, so the send fails inside the try - which is the case that
-                // matters: the finally is what has to put the callback back.
+                // matters: the finally is what has to put the callback back. tls = none, because
+                // any other setting asks the relay first and a refused probe never reaches the
+                // try at all - the test would pass without exercising the thing it pins.
                 Host = "127.0.0.1",
                 Port = 9,
-                Tls = SmtpTls.Required,
+                Tls = SmtpTls.None,
                 From = "a@example.test",
                 To = ["b@example.test"],
             };

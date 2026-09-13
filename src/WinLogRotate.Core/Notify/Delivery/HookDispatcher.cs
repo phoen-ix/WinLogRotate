@@ -222,6 +222,7 @@ public static class HookDispatcher
             var starved = 0;
             string? lastError = null;
             string? lastRefusal = null;
+            string? noted = null;
             var lastStatus = 0;
             var abandoned = false;
 
@@ -252,6 +253,7 @@ public static class HookDispatcher
                 {
                     accepted[m]++;
                     sent++;
+                    noted ??= result.Note;
                     continue;
                 }
 
@@ -310,6 +312,22 @@ public static class HookDispatcher
                 diagnostics.Add(Starved(
                     $"{channel.Display}: {starved} message(s) were never sent - this channel's "
                     + "share of the notification budget ran out."));
+            }
+
+            if (noted is { } note)
+            {
+                // A delivery the transport had something to say about - opportunistic SMTP that
+                // found no STARTTLS and sent in the clear. Once per channel per run, because the
+                // fact is about the relay rather than about each message that crossed it. The
+                // note used to be dropped here, so the only place it was ever shown was notify
+                // test: a scheduled run that downgraded every night said nothing, and
+                // docs/notifications.md promised it would.
+                diagnostics.Add(new CliDiagnostic
+                {
+                    Severity = Severity.Warning,
+                    Code = DiagnosticCode.NotifyMisconfigured,
+                    Message = $"{channel.Display}: {note}",
+                });
             }
 
             if (refusedHere > 0)

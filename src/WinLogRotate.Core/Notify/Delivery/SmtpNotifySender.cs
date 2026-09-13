@@ -1,3 +1,4 @@
+using System.Diagnostics;
 using System.Globalization;
 using System.Net;
 using System.Net.Mail;
@@ -16,6 +17,12 @@ namespace WinLogRotate.Core.Notify.Delivery;
 /// of December 2026. Internal relays, IP-authorised relays, <c>delivery = "pickup"</c> and
 /// <c>auth = "integrated"</c> are unaffected - none of them ever used it. The documentation says so
 /// and points Microsoft 365 tenants at a webhook.
+/// </para>
+/// <para>
+/// <b>Opportunistic TLS asks first.</b> <see cref="SmtpClient"/> cannot be asked whether the relay
+/// offers STARTTLS - it either insists or never looks - so <see cref="StartTlsProbe"/> asks with a
+/// plaintext EHLO before the send, and <c>EnableSsl</c> is set from the answer. That is what makes
+/// the documented downgrade happen, and what lets <c>tls = "required"</c> say what was missing.
 /// </para>
 /// <para>
 /// <b>Pinning goes through a process-global.</b> <see cref="SmtpClient"/> exposes no per-client
@@ -53,25 +60,50 @@ public sealed class SmtpNotifySender : INotifySender
             return SendResult.Failed(400, "the email provider names no host");
         }
 
-        // Opportunistic first; if the relay offers no STARTTLS the send is retried in the clear
-        // and says so. "Required" never retries.
-        var result = Deliver(provider, channel, message, timeout, tls: provider.Tls != SmtpTls.None);
-
-        if (result.Ok || provider.Tls != SmtpTls.Opportunistic || !result.Error!.Contains(
-                "secure connections", StringComparison.OrdinalIgnoreCase))
+        if (provider.Tls == SmtpTls.None)
         {
-            return result;
+            return Deliver(provider, channel, message, timeout, tls: false);
         }
 
-        var plain = Deliver(provider, channel, message, timeout, tls: false);
+        // Asked, because SmtpClient cannot be: with EnableSsl it insists and throws a bare
+        // GeneralFailure when STARTTLS is absent, without it it never looks. The sender used to
+        // retry in the clear when the error text said "secure connections", a phrase nothing here
+        // produces, so the downgrade this key promises had never once happened.
+        var started = Stopwatch.GetTimestamp();
+        var answer = StartTlsProbe.Ask(provider.Host, provider.Port, timeout);
 
-        return plain.Ok
-            ? plain with
+        if (answer.Offered is not { } offered)
+        {
+            return SendResult.Unreachable(answer.Error ?? "the relay could not be reached", answer.NativeError);
+        }
+
+        if (!offered && provider.Tls == SmtpTls.Required)
+        {
+            // Not retryable and not about the message: the relay will not grow STARTTLS tonight,
+            // and every message would meet the same answer.
+            return SendResult.Failed(400,
+                $"{provider.Host} offers no STARTTLS, and tls = \"required\" does not send in the clear");
+        }
+
+        var remaining = timeout - Stopwatch.GetElapsedTime(started);
+
+        if (remaining <= TimeSpan.Zero)
+        {
+            return SendResult.Unreachable("the relay did not answer in time");
+        }
+
+        var result = Deliver(provider, channel, message, remaining, tls: offered);
+
+        // A downgrade nobody is told about is not opportunistic encryption, it is an unencrypted
+        // connection with a reassuring configuration key next to it. The dispatcher and notify
+        // test both raise this as LR5001.
+        return result.Ok && !offered
+            ? result with
             {
                 Note = $"{provider.Host} offers no STARTTLS, so the message was sent unencrypted. "
                      + "Set tls = \"required\" to refuse instead.",
             }
-            : plain;
+            : result;
     }
 
     private static SendResult Deliver(
@@ -268,6 +300,12 @@ public sealed class SmtpNotifySender : INotifySender
         SmtpStatusCode.GeneralFailure when e.InnerException is not null =>
             SendResult.Unreachable(Describe(e)),
 
+        // SmtpClient's own word for a conversation that did not go as expected: its timeout, a
+        // connection dropped mid-transaction, a relay that closed on us. None of them is the relay
+        // refusing the message, which is what this arm used to say, with a 500 beside it.
+        SmtpStatusCode.GeneralFailure =>
+            SendResult.Unreachable("the relay did not complete the conversation"),
+
         _ => SendResult.Failed(500, "the relay refused the message"),
     };
 
@@ -277,13 +315,7 @@ public sealed class SmtpNotifySender : INotifySender
         {
             if (inner is System.Net.Sockets.SocketException socket)
             {
-                return socket.SocketErrorCode switch
-                {
-                    System.Net.Sockets.SocketError.HostNotFound => "the relay's host name did not resolve",
-                    System.Net.Sockets.SocketError.ConnectionRefused => "the relay refused the connection",
-                    System.Net.Sockets.SocketError.TimedOut => "the relay did not answer in time",
-                    _ => "the relay could not be reached",
-                };
+                return StartTlsProbe.Describe(socket.SocketErrorCode);
             }
 
             if (inner is AuthenticationException)

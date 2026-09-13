@@ -1492,7 +1492,7 @@ public partial class ArchitectureTests
         [nameof(DiagnosticCode.HostRegistrationFailed)] = ["HostCommand.cs"],
         [nameof(DiagnosticCode.PathUnwritable)] = ["HostCommand.cs"],
         [nameof(DiagnosticCode.UpdateCheckFailed)] = ["UpdateCommand.cs"],
-        [nameof(DiagnosticCode.NotifyMisconfigured)] = ["ChannelResolver.cs", "ConfigBinder.cs", "ConfigLoader.cs", "NotifyCommand.cs", "NotifyTestCommand.cs", "SecretCommand.cs"],
+        [nameof(DiagnosticCode.NotifyMisconfigured)] = ["ChannelResolver.cs", "ConfigBinder.cs", "ConfigLoader.cs", "HookDispatcher.cs", "NotifyCommand.cs", "NotifyTestCommand.cs", "SecretCommand.cs"],
         [nameof(DiagnosticCode.NotifyFailed)] = ["HookDispatcher.cs"],
         [nameof(DiagnosticCode.NotifyCircuitOpen)] = ["DoctorCommand.cs", "HookDispatcher.cs"],
         [nameof(DiagnosticCode.NotifyStateUnreadable)] = ["NotifyCommand.cs", "NotifyPhase.cs"],

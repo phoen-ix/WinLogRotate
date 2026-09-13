@@ -659,6 +659,33 @@ public sealed class NotifyDeliveryTests : IDisposable
     }
 
     /// <summary>
+    /// A delivery the transport has something to say about is delivered, and the something is said.
+    /// </summary>
+    /// <remarks>
+    /// <c>SendResult.Note</c> exists for one case - opportunistic SMTP that found no STARTTLS and
+    /// sent in the clear - and docs/notifications.md promises an LR5001 naming the host when it
+    /// happens. The dispatcher dropped the note on the floor: only <c>notify test</c> ever showed
+    /// it, so a scheduled run that downgraded every night said nothing. Once per channel per run,
+    /// because the fact is about the relay, not about each message that crossed it.
+    /// </remarks>
+    [Fact]
+    public void ADeliveryThatCarriesANoteIsReportedOncePerChannel()
+    {
+        var downgraded = new FakeSender(_clock)
+        {
+            Answer = _ => SendResult.Delivered() with { Note = "relay offers no STARTTLS, so the message was sent unencrypted" },
+        };
+
+        var report = Dispatch(Plan("iis", "app"), State(), [(Channel("email.relay", HookScheme.Smtp), downgraded)]);
+
+        report.Delivered.Count.ShouldBe(2, "a note is not a failure");
+
+        var said = report.Diagnostics.Where(d => d.Code == DiagnosticCode.NotifyMisconfigured).ShouldHaveSingleItem();
+        said.Message.ShouldContain("STARTTLS");
+        said.Message.ShouldContain("email.relay");
+    }
+
+    /// <summary>
     /// A transport that throws is a channel that failed, not a run that crashed.
     /// </summary>
     /// <remarks>

@@ -251,14 +251,17 @@ public sealed class NotifySmtpTests
     private static string ThumbprintOf(X509Certificate2 certificate) =>
         Convert.ToHexString(SHA256.HashData(certificate.GetRawCertData()));
 
-    private static SendResult Send(FakeSmtpRelay relay, SmtpTls tls, string? pin)
+    private static SendResult Send(FakeSmtpRelay relay, SmtpTls tls, string? pin) =>
+        Send(relay.Port, tls, pin, Timeout);
+
+    private static SendResult Send(int port, SmtpTls tls, string? pin, TimeSpan timeout)
     {
         var provider = new NotifyProvider
         {
             Name = "email.relay",
             Kind = NotifyProviderKind.Email,
             Host = "127.0.0.1",
-            Port = relay.Port,
+            Port = port,
             Tls = tls,
             From = "winlogrotate@example.test",
             To = ["ops@example.test"],
@@ -310,7 +313,113 @@ public sealed class NotifySmtpTests
         return new SmtpNotifySender().Send(
             channel,
             new NotifyMessage { Subject = plan.Subject, Body = "body", Plan = plan, Run = run },
-            Timeout);
+            timeout);
+    }
+
+    // ---- opportunistic tls ------------------------------------------------------------------
+
+    /// <summary>
+    /// The documented downgrade: no STARTTLS on offer, so the message goes in the clear and says so.
+    /// </summary>
+    /// <remarks>
+    /// This never happened. The sender retried in the clear only when the error text contained
+    /// "secure connections", and no branch of its own classifier produced that phrase - so a relay
+    /// without STARTTLS was a failed channel every night and, after breaker_after nights, a
+    /// suppressed one. That is the common case the documentation describes: port 25, an internal
+    /// relay that authorises by IP, the default tls. SmtpClient has no capability API, so the sender
+    /// now asks the relay itself with a plaintext EHLO before deciding whether to insist.
+    /// </remarks>
+    [Fact]
+    public void OpportunisticTlsSendsInTheClearWhenTheRelayOffersNoStartTlsAndSaysSo()
+    {
+        using var relay = new FakeSmtpRelay(offersStartTls: false);
+
+        var result = Send(relay, SmtpTls.Opportunistic, pin: null);
+
+        result.Ok.ShouldBeTrue(result.Error);
+        result.Note.ShouldNotBeNull().ShouldContain("STARTTLS");
+        relay.Handshakes.ShouldBe(0);
+        relay.Received.ShouldHaveSingleItem();
+
+        // One connection to ask, one to send. The cost is stated so that it is a decision.
+        relay.Connections.ShouldBe(2);
+    }
+
+    [Fact]
+    public void OpportunisticTlsStillEncryptsWhenTheRelayOffersIt()
+    {
+        // The downgrade is the exception, not the rule: a relay that offers STARTTLS gets it, and
+        // nothing is said, because nothing surprising happened.
+        using var certificate = SelfSigned();
+        using var relay = new FakeSmtpRelay(offersStartTls: true, certificate);
+
+        var result = Send(relay, SmtpTls.Opportunistic, ThumbprintOf(certificate));
+
+        result.Ok.ShouldBeTrue(result.Error);
+        result.Note.ShouldBeNull();
+        relay.Handshakes.ShouldBe(1);
+    }
+
+    [Fact]
+    public void RequiredTlsRefusesARelayWithoutStartTlsAndNamesTheReason()
+    {
+        // Required means required. And it says what was missing, rather than "the relay refused
+        // the message" - which is what SmtpClient's bare GeneralFailure used to be read as.
+        using var relay = new FakeSmtpRelay(offersStartTls: false);
+
+        var result = Send(relay, SmtpTls.Required, pin: null);
+
+        result.Ok.ShouldBeFalse();
+        result.Error.ShouldNotBeNull().ShouldContain("STARTTLS");
+        relay.Received.ShouldBeEmpty("nothing may go in the clear when the operator said required");
+    }
+
+    [Fact]
+    public void ARelayThatIsNotListeningIsUnreachable()
+    {
+        // A free port: bound, read, released. Nothing else is listening on it by the time the
+        // sender connects, and a refused connection is the outcome that matters here.
+        int port;
+        using (var free = new TcpListener(IPAddress.Loopback, 0))
+        {
+            free.Start();
+            port = ((IPEndPoint)free.LocalEndpoint).Port;
+            free.Stop();
+        }
+
+        var result = Send(port, SmtpTls.Opportunistic, pin: null, Timeout);
+
+        result.Ok.ShouldBeFalse();
+        result.Status.ShouldBe(0, "a connection that never completed is unreachable, and retryable");
+    }
+
+    /// <summary>
+    /// A relay that accepts and never speaks is a timeout, and a timeout is "unreachable".
+    /// </summary>
+    /// <remarks>
+    /// SmtpClient reports its own timeout as an SmtpException with GeneralFailure and no inner
+    /// exception, and that landed in the classifier's fallthrough arm as "the relay refused the
+    /// message" - status 500, and a sentence about a relay that had said nothing at all.
+    /// </remarks>
+    [Fact]
+    public async Task ARelayThatNeverAnswersIsUnreachableNotARefusal()
+    {
+        using var silent = new TcpListener(IPAddress.Loopback, 0);
+        silent.Start();
+
+        // Accepted and then ignored, which is what a wedged relay looks like from here.
+        var held = silent.AcceptTcpClientAsync(TestContext.Current.CancellationToken);
+
+        var result = Send(
+            ((IPEndPoint)silent.LocalEndpoint).Port, SmtpTls.None, pin: null, TimeSpan.FromSeconds(1));
+
+        result.Ok.ShouldBeFalse();
+        result.Status.ShouldBe(0);
+
+        if (held.IsCompletedSuccessfully)
+        {
+            (await held).Dispose();
+        }
     }
 
     // ---- the pin ----------------------------------------------------------------------------
