@@ -345,7 +345,7 @@ public static class LogrotateImporter
 
         return new ImportedJob
         {
-            SuggestedFileName = name.ToLowerInvariant().Replace(' ', '-') + ".toml",
+            SuggestedFileName = JobFiles.NameFor(name),
             Toml = KeepTheLastOfEachKey(body.ToString()),
             Warnings = warnings,
             NeedsReview = needsReview,

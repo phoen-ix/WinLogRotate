@@ -83,6 +83,46 @@ public partial class ArchitectureTests
     }
 
     /// <summary>
+    /// One spelling of what this product makes of a job file.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// Parse, bind, merge, validate - that chain decides whether a job runs, is skipped, or is
+    /// refused for a name somebody else already has. It lived inside <c>ConfigLoader.Load</c>'s
+    /// per-file loop, reachable only by pointing at a directory. The job verbs need the same
+    /// answer about one proposed file before writing it, and the tempting way to get it is to
+    /// assemble the chain a second time.
+    /// </para>
+    /// <para>
+    /// Which is the defect this rule exists to prevent, not a hypothetical one: two spellings
+    /// drift, and the direction they drift is that the editor says yes to a file the loader will
+    /// later say no to - a job written through the GUI that silently never runs. So the loop body
+    /// was extracted into <c>ConfigLoader.Judge</c> and the loader calls it, and nothing else in
+    /// the product gets to hold both halves of the chain.
+    /// </para>
+    /// </remarks>
+    [Fact]
+    public void OneSpellingOfWhatThisProductThinksOfAJobFile()
+    {
+        var src = Path.Combine(RepoRoot.Find().FullName, "src");
+
+        var offenders = Directory
+            .EnumerateFiles(src, "*.cs", SearchOption.AllDirectories)
+            .Where(f => !f.Contains(Path.Combine("obj", ""), StringComparison.Ordinal))
+            .Where(f => !f.Contains(Path.Combine("bin", ""), StringComparison.Ordinal))
+            .Where(f => Path.GetFileName(f) != "ConfigLoader.cs")
+            .Where(f => File.ReadAllText(f) is var text
+                && text.Contains("SettingsMerge.Resolve", StringComparison.Ordinal)
+                && text.Contains("ConfigValidator.Validate", StringComparison.Ordinal))
+            .Select(Path.GetFileName)
+            .ToArray();
+
+        offenders.ShouldBeEmpty(
+            "ask ConfigLoader.Judge what this product makes of a job file; an editor that "
+            + "judges a proposal differently from the loader writes jobs that never run");
+    }
+
+    /// <summary>
     /// The enumerator does not decide where to descend by looking for <c>**</c>.
     /// </summary>
     /// <remarks>

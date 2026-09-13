@@ -26,6 +26,73 @@ public static class JobFiles
     /// <summary>The only shape a job file has.</summary>
     public const string Pattern = "*.toml";
 
+    /// <summary>
+    /// The file a job of this name is written to.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// Hoisted out of <c>LogrotateImporter</c>, which lowercased and replaced spaces and nothing
+    /// else. That was survivable for names taken from a logrotate file; it is not for a name
+    /// somebody types. A job called <c>IIS: W3SVC1</c> produced <c>iis:-w3svc1.toml</c> - a legal
+    /// filename on Linux, and an alternate-data-stream spelling on Windows.
+    /// </para>
+    /// <para>
+    /// Every character Windows forbids becomes a dash, runs collapse, and the result is trimmed
+    /// of leading and trailing dashes and dots - a name is not allowed to produce a dotfile or a
+    /// file whose stem is empty.
+    /// </para>
+    /// </remarks>
+    public static string NameFor(string jobName)
+    {
+        var stem = new System.Text.StringBuilder(jobName.Length);
+
+        foreach (var c in jobName.ToLowerInvariant())
+        {
+            if (Usable(c))
+            {
+                stem.Append(c);
+            }
+            else if (stem.Length > 0 && stem[^1] != '-')
+            {
+                stem.Append('-');
+            }
+        }
+
+        var name = stem.ToString().Trim('-', '.');
+
+        // Capped so a pasted sentence cannot produce a path Windows refuses to create, and
+        // trimmed again in case the cut landed on a dash.
+        if (name.Length > 120)
+        {
+            name = name[..120].TrimEnd('-', '.');
+        }
+
+        return (name.Length == 0 ? "job" : name) + ".toml";
+    }
+
+    /// <summary>
+    /// Whether a character may appear in a file name on the platform this product runs on.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// Spelled out rather than asked of <see cref="Path.GetInvalidFileNameChars"/>, which answers
+    /// for the <b>running</b> platform. On Linux that set is <c>{ '\0', '/' }</c> - so every test
+    /// leg that matters here would have watched <c>*</c>, <c>?</c>, <c>"</c> and <c>\</c> pass
+    /// straight through, and the one platform this product is for is the one no test would have
+    /// asked about. A rule that only one CI leg executes is a rule that is not being checked.
+    /// </para>
+    /// <para>
+    /// The set is Windows' own: the ASCII control characters, the five path and stream separators,
+    /// and the three wildcard and redirection characters. A colon is in it, which is the case that
+    /// prompted this: <c>IIS: W3SVC1</c> used to yield <c>iis:-w3svc1.toml</c>, which names an
+    /// alternate data stream on a file called <c>iis</c> rather than a file.
+    /// </para>
+    /// </remarks>
+    private static bool Usable(char c) =>
+        !char.IsWhiteSpace(c)
+        && !char.IsControl(c)
+        && "\\/:*?\"<>|".IndexOf(c, StringComparison.Ordinal) < 0;
+
     /// <summary>Every job file in <paramref name="directory"/>, or none if it is not there.</summary>
     public static IEnumerable<string> In(string directory) =>
         !Directory.Exists(directory)

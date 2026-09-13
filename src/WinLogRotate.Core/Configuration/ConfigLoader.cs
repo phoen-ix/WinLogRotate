@@ -201,42 +201,31 @@ public static class ConfigLoader
                 continue;
             }
 
-            var job = ConfigBinder.BindJob(file, diagnostics);
-            if (job is null)
+            var verdict = Judge(file, path, defaults, guard, seenNames);
+
+            foreach (var item in verdict.Diagnostics)
             {
-                continue;
+                diagnostics.Add(item);
             }
 
-            // Two jobs with one name make the journal and every diagnostic ambiguous.
-            if (seenNames.TryGetValue(job.Name, out var firstFile))
+            if (verdict.Job is not null && verdict.Outcome != JobOutcome.Duplicate)
             {
-                diagnostics.Error(path, DiagnosticCode.ConfigInvalid,
-                    $"A job called '{job.Name}' is already defined in {Path.GetFileName(firstFile)}.",
-                    remedy: "Job names appear in the journal and in every diagnostic, so they have to be unique.");
-                continue;
+                seenNames[verdict.Job.Name] = path;
             }
 
-            seenNames[job.Name] = path;
-
-            var effective = SettingsMerge.Resolve(job, defaults);
-
-            // Into a bag of its own, so what validation says about this job can be attributed to
-            // it and weighed separately from a fault with the configuration as a whole.
-            var jobBag = new DiagnosticBag();
-            ConfigValidator.Validate(effective, guard, jobBag);
-
-            foreach (var item in jobBag.Items)
+            switch (verdict.Outcome)
             {
-                diagnostics.Add(item with { Job = effective.Name });
-            }
+                case JobOutcome.Invalid:
+                    skipped.Add(verdict.Effective!);
+                    break;
 
-            if (jobBag.HasErrors)
-            {
-                skipped.Add(effective);
-                continue;
-            }
+                case JobOutcome.Ready:
+                    jobs.Add(verdict.Effective!);
+                    break;
 
-            jobs.Add(effective);
+                default:
+                    break;
+            }
         }
 
         if (jobs.Count == 0 && !diagnostics.HasErrors)
@@ -313,6 +302,74 @@ public static class ConfigLoader
 
         return fallback;
     }
+
+    /// <summary>
+    /// What a run would make of one job file - the loader's own per-file pass, on its own.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// Extracted rather than reimplemented, and <see cref="Load"/> now calls it. Anything that
+    /// wants to judge a single proposed job before writing it - the <c>job</c> verbs, and the
+    /// editor above them - must reach the same verdict as the loader, and two spellings of
+    /// "what does this product make of a job file" is exactly the defect
+    /// <see cref="JobFiles"/> was created to close one level down.
+    /// </para>
+    /// <para>
+    /// The two things it cannot see for itself arrive as arguments: <c>[defaults]</c>, which
+    /// <see cref="SettingsMerge"/> needs as its middle layer, and the names already taken, which
+    /// live in other files. Both come from <see cref="JobIndex"/> for a caller that is not the
+    /// loader.
+    /// </para>
+    /// </remarks>
+    /// <param name="namesInUse">Job name to the file that has it. A name found here is a refusal.</param>
+    public static JobVerdict Judge(
+        TomlFile file,
+        string path,
+        JobSettings? defaults,
+        PathGuard guard,
+        IReadOnlyDictionary<string, string> namesInUse)
+    {
+        var bag = new DiagnosticBag();
+
+        var job = ConfigBinder.BindJob(file, bag);
+        if (job is null)
+        {
+            return new JobVerdict { Outcome = JobOutcome.NotBound, Diagnostics = bag.Items };
+        }
+
+        // Two jobs with one name make the journal and every diagnostic ambiguous. It is also not
+        // file-scoped, so it stops every job on the machine - which is why a verb that writes a
+        // job has to ask before it writes rather than after.
+        if (namesInUse.TryGetValue(job.Name, out var firstFile))
+        {
+            bag.Error(path, DiagnosticCode.ConfigInvalid,
+                $"A job called '{job.Name}' is already defined in {Path.GetFileName(firstFile)}.",
+                remedy: "Job names appear in the journal and in every diagnostic, so they have to be unique.");
+
+            return new JobVerdict { Job = job, Outcome = JobOutcome.Duplicate, Diagnostics = bag.Items };
+        }
+
+        var effective = SettingsMerge.Resolve(job, defaults);
+
+        // Into a bag of its own, so what validation says about this job can be attributed to
+        // it and weighed separately from a fault with the configuration as a whole.
+        var jobBag = new DiagnosticBag();
+        ConfigValidator.Validate(effective, guard, jobBag);
+
+        foreach (var item in jobBag.Items)
+        {
+            bag.Add(item with { Job = effective.Name });
+        }
+
+        return new JobVerdict
+        {
+            Job = job,
+            Effective = effective,
+            Outcome = jobBag.HasErrors ? JobOutcome.Invalid : JobOutcome.Ready,
+            Diagnostics = bag.Items,
+        };
+    }
+
     /// <summary>
     /// Runs every configured notification target through the parser.
     /// </summary>
