@@ -206,6 +206,32 @@ config language nobody writes bare, and indefensible behind a GUI where a half-f
 a normal intermediate state. The differences are set out in
 [logrotate compatibility](logrotate-compatibility.md).
 
+## Editing a job without opening it
+
+Every key on this page can be set from the command line, and the value's type comes from this
+table rather than from what you typed — so `rotate=30` is written as a number and
+`dateformat=20240101` as a string, which is what the reader expects in each case.
+
+```
+winlogrotate job add iis --paths "C:/inetpub/logs/**/*.log" --set rotate=14
+winlogrotate job set iis --set compress=true --unset maxage
+winlogrotate job show iis
+winlogrotate job disable iis          # reversible; 'job remove' is not
+```
+
+An edit changes only the keys you name. Comments survive, including the one on the line being
+changed; the line endings stay the file's own; and every other key is left byte for byte. Add
+`--dry-run` to any of them to see what would happen and have nothing happen.
+
+**`--unset` is how you say "inherit again".** Removing a key is not the same as setting it to
+zero, and not the same as setting it to nothing: the job goes back to taking that value from
+`[defaults]`, or from the built-in default if `[defaults]` is silent. `--set olddir=` writes
+`olddir = ""`, which is a value — an empty one — and stops the job inheriting just as firmly as
+any other.
+
+Repeat `--paths` for more than one pattern. Nothing is split on a separator, because a Windows
+path may contain any of them.
+
 ## Other tables
 
 `[defaults]` takes any key from this page except `name`, `paths`, `kind`, `enabled` and

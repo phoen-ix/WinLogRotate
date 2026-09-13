@@ -120,7 +120,9 @@ winlogrotate doctor                   # paths, permissions, schedule — in one 
 ```
 
 `--dry-run` is the same code path as a real run, stopped one step earlier — not a separate
-description that can drift from what the executor does.
+description that can drift from what the executor does. `job set --dry-run` works the same way:
+validate and save differ by that one flag, so a form cannot show a green tick through one route
+and then fail through another.
 
 Everything speaks `--json` for scripting — one envelope on stdout, a stable diagnostic code on
 every finding, and five exit codes that mean five different things. See

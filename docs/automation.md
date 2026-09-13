@@ -104,6 +104,64 @@ A script that wants to be strict should compare `schema` for equality and stop i
 The shape of every verb's envelope is pinned by a snapshot test in this repository, so a change
 to any of them is a deliberate act with a diff attached.
 
+## Editing jobs, and the one thing not to do
+
+The `job` verbs create and change jobs without anyone opening Notepad:
+
+```
+job add    NAME --paths GLOB [--paths GLOB ...] [--kind rotate|manage] [--disabled]
+                [--set KEY=VALUE ...] [--dry-run]
+job set    NAME [--paths GLOB ...] [--kind ...] [--enabled|--disabled]
+                [--set KEY=VALUE ...] [--unset KEY ...] [--dry-run]
+job show   NAME
+job enable NAME [--dry-run]    job disable NAME [--dry-run]    job remove NAME [--dry-run]
+```
+
+**Do not read `config show` and write it back.** `config show` publishes `EffectiveJob` — every
+default and every `[defaults]` value already merged in. It is the right answer to *what will
+happen tonight* and the wrong one to *what does this file say*. A tool that reads a job from it
+and saves it severs that job from `[defaults]` on the first save, permanently and without
+saying anything: the job stops inheriting, and next year's change to `[defaults]` silently skips
+it.
+
+`job show` is what to read instead. It reports each key the file actually writes, with the file's
+own source text and line, and nothing resolved — `"100M"` stays `"100M"`. Feeding those keys back
+through `job set` changes no byte of the file, and that round trip is pinned by a test.
+
+Each key carries `known`, which says whether this product reads it. A key with `known: false` can
+be removed with `--unset` but not written: writing one would put something in the file that does
+nothing.
+
+### Validating without writing
+
+`--dry-run` builds the proposal, judges it with the loader's own pass, reports, and writes
+nothing. **Validate and save differ by exactly that one flag** — same arguments, same code path,
+same verdict — so a form cannot report a green tick through one route and then fail through
+another. `--dry-run` also needs no administrator rights, so a UI can validate on every field
+without a UAC prompt; everything that writes needs them, and says so with `LR1001` rather than
+letting an access error escape as a defect.
+
+### What the exit codes mean here
+
+| | |
+|---|---|
+| `0` | Written. Also "nothing to change", with `changes: []` and a line saying so |
+| `2` | Refused, and **nothing was attempted**: an unusable value, an unknown key, a missing job, a name already taken, or a proposal the validator rejects |
+| `1` | The proposal was valid and the write itself failed — `LR1010`, or `LR1001` if it was not elevated |
+
+Every bad value is reported at once rather than one per round trip, so a form can mark every
+field in a single pass.
+
+### Things the verbs will not do
+
+- **Rename.** A job's name is its identity: the file is named after it and the journal is keyed
+  by it, so half a rename is a job that quietly stops being the job whose history you have. Add
+  the new one and remove the old one.
+- **Take a whole job as JSON.** There is no `--from-json`. It is the hazard above wearing a
+  different hat, and it is the shape a tool author reaches for first.
+- **Notice that someone else edited the file.** Two windows, or a window and Notepad, are still
+  last-writer-wins.
+
 ## Examples
 
 PowerShell, checking a configuration:
@@ -132,4 +190,27 @@ if ! winlogrotate run --json > run.json; then
     jq -r '.diagnostics[] | "\(.severity) \(.code): \(.message)"' run.json
     exit 1
 fi
+```
+
+Creating a job from a script, and checking it before it is written:
+
+```powershell
+$dry = winlogrotate job add iis --paths "C:/inetpub/logs/**/*.log" `
+                               --set rotate=14 --set compress=true --dry-run --json |
+       ConvertFrom-Json
+
+if ($dry.exitCode -ne 0) {
+    $dry.diagnostics | ForEach-Object { Write-Warning "$($_.code): $($_.message)" }
+    throw "Not writing a job the loader would refuse."
+}
+
+winlogrotate job add iis --paths "C:/inetpub/logs/**/*.log" `
+                        --set rotate=14 --set compress=true | Out-Null
+```
+
+Reading a job and changing one key, leaving the rest of its file alone:
+
+```bash
+winlogrotate job show iis --json | jq -r '.result.keys[] | select(.known | not) | .key'
+winlogrotate job set iis --set rotate=30 --json | jq '.result.changes'
 ```
