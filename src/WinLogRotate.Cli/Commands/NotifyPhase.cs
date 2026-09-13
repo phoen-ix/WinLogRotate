@@ -247,6 +247,7 @@ internal static class NotifyPhase
                 ctx.Output.Line(channel.Skipped
                     ? $"notify: {channel.Display} skipped - suppressed after repeated failures"
                     : $"notify: {channel.Display} - {channel.Sent} sent, {channel.Failed} failed"
+                      + (channel.Refused > 0 ? $", {channel.Refused} refused" : string.Empty)
                       + (channel.Unattempted > 0 ? $", {channel.Unattempted} never tried" : string.Empty));
             }
         }

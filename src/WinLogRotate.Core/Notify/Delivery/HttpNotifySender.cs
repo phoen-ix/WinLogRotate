@@ -68,7 +68,18 @@ public sealed class HttpNotifySender : INotifySender, IDisposable
                 return SendResult.Delivered(status);
             }
 
-            return SendResult.Failed(status, Describe(status), RetryAfter(response));
+            return status switch
+            {
+                // About the message, and the next one may well go: the digest is bigger than this
+                // endpoint takes, or a templated body was not what the endpoint could parse -
+                // which depends on what was substituted, so only a provider with a template gets
+                // that reading. The same 400 against the default flat object is the endpoint
+                // saying it does not want our payload at all, and no message will change that.
+                413 => SendResult.Refused(status, Describe(status)),
+                400 or 422 when provider?.Body is { Length: > 0 } => SendResult.Refused(status, Describe(status)),
+
+                _ => SendResult.Failed(status, Describe(status), RetryAfter(response)),
+            };
         }
         catch (OperationCanceledException)
         {
@@ -125,6 +136,7 @@ public sealed class HttpNotifySender : INotifySender, IDisposable
         404 => "there is nothing at that URL (404)",
         408 => "the endpoint timed out (408)",
         413 => "the message was too large (413)",
+        422 => "the endpoint could not use the request body (422)",
         429 => "rate limited (429)",
         _ => $"the endpoint answered {status.ToString(CultureInfo.InvariantCulture)}",
     };

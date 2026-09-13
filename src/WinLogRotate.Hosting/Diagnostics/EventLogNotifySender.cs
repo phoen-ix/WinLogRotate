@@ -59,8 +59,10 @@ public sealed class EventLogNotifySender(string source) : INotifySender
 
             // An answer, not a silence - which is what 0 is for. The body is already fitted to
             // the Event Log's insertion-string limit, so a refusal is most plausibly about this
-            // one message rather than about the channel, and 4xx is where that belongs.
-            EventLogOutcome.Refused => SendResult.Failed(400, "the Event Log refused the entry"),
+            // one message rather than about the channel, and the result says so: the dispatcher
+            // no longer reads scope off the status, because most 4xx from the other transports
+            // are about the channel.
+            EventLogOutcome.Refused => SendResult.Refused(400, "the Event Log refused the entry"),
 
             // Unreachable today - the digests have no ceiling - and kept honest rather than
             // folded into the refusal, so that giving them one later cannot quietly resurrect

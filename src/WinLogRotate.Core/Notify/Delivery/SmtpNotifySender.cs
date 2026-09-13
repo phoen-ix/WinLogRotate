@@ -246,6 +246,11 @@ public sealed class SmtpNotifySender : INotifySender
     /// </remarks>
     private static SendResult Classify(SmtpException e) => e.StatusCode switch
     {
+        // 552: this message is bigger than the relay takes. The next one may not be, so it is the
+        // one SMTP answer that is about the message rather than the relay.
+        SmtpStatusCode.ExceededStorageAllocation =>
+            SendResult.Refused(413, "the relay refused the message as too large"),
+
         SmtpStatusCode.MailboxBusy or SmtpStatusCode.TransactionFailed
             or SmtpStatusCode.LocalErrorInProcessing or SmtpStatusCode.InsufficientStorage =>
             SendResult.Failed(503, "the relay is temporarily refusing mail"),

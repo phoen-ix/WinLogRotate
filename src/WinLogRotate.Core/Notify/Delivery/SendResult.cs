@@ -16,6 +16,15 @@ namespace WinLogRotate.Core.Notify.Delivery;
 /// published binary sets <c>UseSystemResourceKeys=true</c>, so a framework exception's Message is a
 /// bare resource key like <c>net_io_connectionclosed</c> rather than a sentence.
 /// </para>
+/// <para>
+/// <see cref="MessageScoped"/> is the transport saying <i>which thing</i> was refused. The
+/// dispatcher used to infer it from the status - any 4xx was "about the message" - and most 4xx
+/// the transports produce are about the channel: a revoked webhook, a rejected token, a relay
+/// that will not take the recipient, an Event Log source that is not registered. Read as
+/// message refusals, those were recorded as reported, never re-sent, and invisible to the
+/// breaker. Only the transport knows whether the next message would fare any better, so only the
+/// transport gets to say so, through <see cref="Refused"/>.
+/// </para>
 /// </remarks>
 public readonly record struct SendResult
 {
@@ -32,6 +41,16 @@ public readonly record struct SendResult
 
     /// <summary>The underlying Win32/socket error, where the transport surfaced one.</summary>
     public int? NativeError { get; init; }
+
+    /// <summary>
+    /// True when the destination refused <i>this message</i> and would take another.
+    /// </summary>
+    /// <remarks>
+    /// A digest larger than the endpoint accepts, a body a templated webhook cannot parse, an Event
+    /// Log entry it will not write. The channel is healthy; the message is not going, tonight or
+    /// tomorrow. False for every failure that is about the channel, which is everything else.
+    /// </remarks>
+    public bool MessageScoped { get; init; }
 
     /// <summary>
     /// Something the operator should know even though the send worked.
@@ -51,6 +70,18 @@ public readonly record struct SendResult
     /// <summary>The request never completed. Retryable, and the channel is presumed down.</summary>
     public static SendResult Unreachable(string error, int? nativeError = null) =>
         new() { Ok = false, Status = 0, Error = error, NativeError = nativeError };
+
+    /// <summary>
+    /// The destination answered, and refused this one message.
+    /// </summary>
+    /// <remarks>
+    /// For a transport to use only when it knows the refusal is about the message rather than the
+    /// channel. The dispatcher still checks the status: a retryable one can never be a refusal,
+    /// whatever the transport says, because recording an outage as delivered is the silence this
+    /// whole feature exists to prevent.
+    /// </remarks>
+    public static SendResult Refused(int status, string error) =>
+        new() { Ok = false, Status = status, Error = error, MessageScoped = true };
 }
 
 /// <summary>

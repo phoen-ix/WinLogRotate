@@ -326,16 +326,109 @@ public sealed class NotifyDeliveryTests : IDisposable
     }
 
     [Fact]
-    public void AFourOhFourDoesNotAbandonTheChannel()
+    public void ARefusedMessageDoesNotAbandonTheChannel()
     {
-        // A 4xx is about this one message. The next one still goes - a single oversized or
-        // malformed message must not silence the rest of the run.
-        var picky = new FakeSender(_clock) { Answer = _ => SendResult.Failed(404, "no such hook") };
+        // A refusal is about this one message. The next one still goes - a single oversized
+        // message must not silence the rest of the run. This used to be asserted with a 404,
+        // which is not about the message at all: see the test below.
+        var picky = new FakeSender(_clock) { Answer = _ => SendResult.Refused(413, "too large") };
 
-        Dispatch(Plan("a", "b", "c"), State(), [(Channel("hook", HookScheme.Http), picky)],
+        var state = State();
+        var report = Dispatch(Plan("a", "b", "c"), state, [(Channel("hook", HookScheme.Http), picky)],
             NotifySettings.Default with { Retries = 0 });
 
         picky.Attempts.ShouldBe(3);
+        report.Diagnostics.ShouldContain(d => d.Code == DiagnosticCode.NotifyMessageRefused);
+        state.ChannelOrDefault("hook").ConsecutiveFailures.ShouldBe(0, "the channel answered; it is not broken");
+    }
+
+    /// <summary>
+    /// A channel that answers 404 to everything is broken, and is recorded as broken.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// Every 4xx used to be read as "about this one message": the message was recorded as
+    /// reported, the channel was not told it had failed, and the breaker never counted. A revoked
+    /// Slack hook therefore produced LR5006 - "the channel itself is working and the other messages
+    /// went" - when nothing had gone, marked the incident as old news, and showed nothing wrong in
+    /// notify status. Silence, with a reassuring diagnostic beside it.
+    /// </para>
+    /// <para>
+    /// The senders now say which answers are about the message. Everything else is about the
+    /// channel: it will not accept the next message either, so it is abandoned for the run like a
+    /// dead relay, nothing is recorded as reported, and the breaker learns.
+    /// </para>
+    /// </remarks>
+    [Fact]
+    public void AChannelAnsweringFourOhFourIsAFailureNotARefusal()
+    {
+        var gone = new FakeSender(_clock) { Answer = _ => SendResult.Failed(404, "no such hook") };
+
+        var state = State();
+        var report = Dispatch(Plan("a", "b", "c"), state, [(Channel("hook", HookScheme.Http), gone)],
+            NotifySettings.Default with { Retries = 0 });
+
+        report.Delivered.ShouldBeEmpty("a message a channel would not take has not been reported");
+        report.Diagnostics.ShouldContain(d => d.Code == DiagnosticCode.NotifyFailed);
+        report.Diagnostics.ShouldNotContain(d => d.Code == DiagnosticCode.NotifyMessageRefused);
+
+        state.ChannelOrDefault("hook").ConsecutiveFailures.ShouldBe(1, "the breaker must be told");
+
+        // Abandoned, not retried per message: a hook that is gone is gone for the next two as well.
+        gone.Attempts.ShouldBe(1);
+        report.Channels.ShouldHaveSingleItem().Unattempted.ShouldBe(2);
+    }
+
+    /// <summary>A rate limit that outlives the retries is a channel failure, not a refused message.</summary>
+    [Fact]
+    public void ARateLimitThatOutlivesItsRetriesIsAChannelFailure()
+    {
+        // 429 is retryable, so with retries = 0 it lands in the dispatcher as a final answer. It
+        // used to fall through to the refusal path - recorded as reported, invisible to the
+        // breaker - because the split was "0 or 5xx" against "everything else".
+        var limited = new FakeSender(_clock) { Answer = _ => SendResult.Failed(429, "quota spent") };
+
+        var state = State();
+        var report = Dispatch(Plan("iis"), state, [(Channel("push", HookScheme.Pushover), limited)],
+            NotifySettings.Default with { Retries = 0 });
+
+        report.Delivered.ShouldBeEmpty();
+        report.Diagnostics.ShouldNotContain(d => d.Code == DiagnosticCode.NotifyMessageRefused);
+        state.ChannelOrDefault("push").ConsecutiveFailures.ShouldBe(1);
+    }
+
+    /// <summary>A transport cannot mark a retryable status as a refusal, even by mistake.</summary>
+    [Fact]
+    public void ARetryableStatusIsNeverReadAsARefusal()
+    {
+        // The dispatcher checks the status itself rather than trusting the flag: a sender that
+        // tagged a 503 as message-scoped would otherwise record an outage as delivered.
+        var confused = new FakeSender(_clock) { Answer = _ => SendResult.Refused(503, "busy") };
+
+        var state = State();
+        var report = Dispatch(Plan("iis"), state, [(Channel("hook", HookScheme.Http), confused)],
+            NotifySettings.Default with { Retries = 0 });
+
+        report.Delivered.ShouldBeEmpty();
+        state.ChannelOrDefault("hook").ConsecutiveFailures.ShouldBe(1);
+    }
+
+    /// <summary>When every message was refused, the diagnostic must not say the others went.</summary>
+    [Fact]
+    public void ARefusalOfEveryMessageDoesNotClaimTheOthersWent()
+    {
+        var picky = new FakeSender(_clock) { Answer = _ => SendResult.Refused(413, "too large") };
+
+        var report = Dispatch(Plan("a", "b"), State(), [(Channel("hook", HookScheme.Http), picky)],
+            NotifySettings.Default with { Retries = 0 });
+
+        var refused = report.Diagnostics.Single(d => d.Code == DiagnosticCode.NotifyMessageRefused);
+        refused.Remedy.ShouldNotBeNull().ShouldNotContain("other messages went");
+
+        // And the channel's own line does not read as a success: nothing it was given arrived.
+        var outcome = report.Channels.ShouldHaveSingleItem();
+        outcome.Refused.ShouldBe(2);
+        outcome.Result.ShouldBe(OpResult.Failed);
     }
 
     [Fact]
@@ -503,17 +596,21 @@ public sealed class NotifyDeliveryTests : IDisposable
         report.Diagnostics.ShouldNotContain(d => d.Code == DiagnosticCode.NotifyBudgetClamped);
     }
 
-    /// <summary>The four outcomes a channel can report, and the order they are decided in.</summary>
+    /// <summary>The outcomes a channel can report, and the order they are decided in.</summary>
     [Theory]
-    [InlineData(2, 0, 0, false, OpResult.Ok)]
-    [InlineData(0, 0, 0, true, OpResult.Skipped)]
-    [InlineData(1, 0, 1, false, OpResult.Skipped)]
-    [InlineData(0, 1, 0, false, OpResult.Failed)]
+    [InlineData(2, 0, 0, 0, false, OpResult.Ok)]
+    [InlineData(0, 0, 0, 0, true, OpResult.Skipped)]
+    [InlineData(1, 0, 1, 0, false, OpResult.Skipped)]
+    [InlineData(0, 1, 0, 0, false, OpResult.Failed)]
 
     // The one that matters: abandoned after a dead relay, so both are set. It is a failure.
-    [InlineData(0, 1, 1, false, OpResult.Failed)]
+    [InlineData(0, 1, 1, 0, false, OpResult.Failed)]
+
+    // One refused beside one sent is the channel working; every message refused is not.
+    [InlineData(1, 0, 0, 1, false, OpResult.Ok)]
+    [InlineData(0, 0, 0, 2, false, OpResult.Failed)]
     public void AChannelReportsTheOutcomeItActuallyHad(
-        int sent, int failed, int unattempted, bool skipped, string expected)
+        int sent, int failed, int unattempted, int refused, bool skipped, string expected)
     {
         new ChannelOutcome
         {
@@ -522,6 +619,7 @@ public sealed class NotifyDeliveryTests : IDisposable
             Sent = sent,
             Failed = failed,
             Unattempted = unattempted,
+            Refused = refused,
             Skipped = skipped,
         }.Result.ShouldBe(expected);
     }
@@ -668,8 +766,9 @@ public sealed class NotifyDeliveryTests : IDisposable
             var good = new FakeSender(_clock);
 
             // 413: the digest is larger than this endpoint will take. It will be larger tomorrow
-            // too, which is exactly what makes it not the channel's fault.
-            var picky = new FakeSender(_clock) { Answer = _ => SendResult.Failed(413, "too large") };
+            // too, which is exactly what makes it not the channel's fault - and the sender says
+            // so, because the dispatcher no longer guesses scope from the status alone.
+            var picky = new FakeSender(_clock) { Answer = _ => SendResult.Refused(413, "too large") };
 
             var plan = NotificationPlanner.PlanFor(
                 Run(), failing, settings, state, _clock.GetUtcNow());

@@ -276,11 +276,20 @@ time, and a **suppressed channel no longer blocks**. In practice one broken dest
 five duplicate alerts on the healthy ones, then everything converges. `notify status` shows which
 channels are suppressed; `notify reset` clears one.
 
-**A refused message is not a broken channel**, and it converges differently. A non-retryable `4xx`
-— a digest larger than the endpoint accepts, a job name a template will not take — is about that
-one message: the channel is healthy, the run's other messages go through it, and this one will be
-refused again tomorrow. So it is counted against the message, reported as **`LR5006`**, and not
-queued.
+**A refused message is not a broken channel**, and it converges differently. A destination can
+answer that *this message* is unacceptable — a digest larger than it takes (HTTP `413`, SMTP `552`),
+a body a webhook with a `body` template could not parse (`400`, `422`), an Event Log entry it would
+not write. That is about the message: the channel is healthy, the run's other messages go through
+it, and this one would be refused again tomorrow. So it is counted against the message, reported as
+**`LR5006`**, and not queued.
+
+Every other answer is about the channel. A revoked webhook (`404`), a rejected token or credential
+(`401`, `403`), a relay that will not take the recipient, a spent Pushover quota, an Event Log source
+that is not registered — none of these will accept the next message either. So the channel is
+abandoned for the rest of the run, nothing sent to it is recorded as reported, and the failure counts
+toward the breaker exactly as a connection that was never answered does (**`LR5002`**). Before this
+distinction every `4xx` was read as a refusal, and a revoked hook was therefore "reported" every
+night with a diagnostic saying the channel was working.
 
 > **Fixed in v0.12.0.** Before it, a channel that refused one message and delivered the rest
 > recorded a success every run — one message through counted as the channel working — so its
@@ -376,6 +385,7 @@ the file rather than stored (`LR9006`) is readable by that account too.
 | `LR5004` | 153 | Notification history was unreadable; change detection restarts |
 | `LR5005` | 154 | The phase was cut short to protect the run's deadline |
 | — | 155 | **The digest itself**, delivered to an `eventlog:` target |
+| `LR5006` | 156 | A channel refused one message and will refuse it again; it is not queued |
 
 Alert on **155**. The rest report on the notification machinery; 155 carries the thing you asked to
 be told. Full table in [diagnostics](diagnostics.md).

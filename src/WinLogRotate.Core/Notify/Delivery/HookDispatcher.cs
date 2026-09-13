@@ -29,6 +29,16 @@ public sealed record ChannelOutcome
     /// </remarks>
     public int Unattempted { get; init; }
 
+    /// <summary>
+    /// Messages this channel answered and would not take, and will not take tomorrow either.
+    /// </summary>
+    /// <remarks>
+    /// Not a failure of the channel - the transport said so, see <see cref="SendResult.Refused"/> -
+    /// so it does not reach the breaker. Counted so the verbose line and <see cref="Result"/> can
+    /// tell "everything went" from "everything was refused", which used to read identically.
+    /// </remarks>
+    public int Refused { get; init; }
+
     /// <summary>Already redacted.</summary>
     public string? Error { get; init; }
 
@@ -47,13 +57,16 @@ public sealed record ChannelOutcome
     /// <para>
     /// And a channel that dropped messages is never "ok". Reporting it as ok is what kept the
     /// budget defect invisible: the event said ok, --verbose said "1 sent, 0 failed", and the
-    /// messages that were never tried went unreported every night.
+    /// messages that were never tried went unreported every night. The same goes for a channel that
+    /// refused every message it was given: one refusal beside a delivery is the channel working,
+    /// nothing but refusals is not.
     /// </para>
     /// </remarks>
     public string Result =>
         Skipped ? OpResult.Skipped
         : Failed > 0 ? OpResult.Failed
         : Unattempted > 0 ? OpResult.Skipped
+        : Sent == 0 && Refused > 0 ? OpResult.Failed
         : OpResult.Ok;
 }
 
@@ -208,6 +221,8 @@ public static class HookDispatcher
             var unattempted = 0;
             var starved = 0;
             string? lastError = null;
+            string? lastRefusal = null;
+            var lastStatus = 0;
             var abandoned = false;
 
             for (var m = 0; m < messages.Count; m++)
@@ -240,31 +255,38 @@ public static class HookDispatcher
                     continue;
                 }
 
-                lastError = result.Error;
-
-                // A dead relay is dead. Retrying it once per message multiplies the spend by the
-                // message count and reaches nobody either way; a 4xx is about this one message,
-                // so the next one still goes.
-                if (result.Status == 0 || result.Status >= 500)
+                // A refusal is about the message: the destination answered, would not take this
+                // one, and will not take it tomorrow either. It is counted against the message and
+                // not against the channel, and the next message still goes. Only the transport can
+                // say so - see SendResult.MessageScoped for why the status alone cannot - and a
+                // retryable status is never a refusal whatever the transport says, because
+                // recording an outage as delivered is the silence this feature exists to prevent.
+                //
+                // Refusals and failures both used to land in `failed` and `blocked`, which made
+                // the documented convergence impossible: the refused message never advanced its
+                // job's state, so the planner re-sent the incident to every healthy channel every
+                // run, while the channel recorded `succeeded: sent > 0` and its breaker never
+                // counted past zero. Then every 4xx was made a refusal, which was the opposite
+                // mistake: a revoked webhook was "reported", and the breaker was never told.
+                if (result.MessageScoped && !RetrySchedule.IsRetryable(result.Status))
                 {
-                    failed++;
-                    blocked[m] = true;
-                    abandoned = true;
+                    lastRefusal = result.Error;
+                    refused[m]++;
+                    refusedHere++;
                     continue;
                 }
 
-                // And because a 4xx is about the message, it is counted against the message and
-                // not against the channel. Both used to land in `failed` and `blocked`, which had
-                // two consequences that between them made the documented convergence impossible.
-                //
-                // The message never advanced its job's state, so the planner called the same
-                // incident new every run and re-sent it to every healthy channel. And the channel
-                // recorded `succeeded: sent > 0` - one message through counting as the channel
-                // working - so its breaker never counted past zero and never opened. The comment
-                // above HookDispatcher and docs/notifications.md both said the breaker resolved
-                // exactly this. It could not: it was never told.
-                refused[m]++;
-                refusedHere++;
+                // Everything else is about the channel, and a channel that has just failed will
+                // fail the next message too. A dead relay is the obvious case - retrying it once
+                // per message multiplies the spend by the message count and reaches nobody - but a
+                // rejected credential, a revoked hook or an exhausted quota is no different: the
+                // answer does not depend on the message. So the channel is abandoned for the run,
+                // nothing sent to it counts as told, and the breaker hears about it.
+                lastError = result.Error;
+                lastStatus = result.Status;
+                failed++;
+                blocked[m] = true;
+                abandoned = true;
             }
 
             outcomes.Add(new ChannelOutcome
@@ -274,7 +296,8 @@ public static class HookDispatcher
                 Sent = sent,
                 Failed = failed,
                 Unattempted = unattempted,
-                Error = lastError,
+                Refused = refusedHere,
+                Error = lastError ?? lastRefusal,
             });
 
             if (starved > 0)
@@ -295,30 +318,48 @@ public static class HookDispatcher
                 {
                     Severity = Severity.Warning,
                     Code = DiagnosticCode.NotifyMessageRefused,
-                    Message = $"{channel.Display} refused {refusedHere} message(s) outright: {lastError}",
-                    Remedy = "The channel itself is working and the other messages went. "
-                           + "This one will be refused again, so it is not queued: check the "
-                           + "message size limit and anything the destination templates on.",
+                    Message = $"{channel.Display} refused {refusedHere} message(s) outright: {lastRefusal}",
+
+                    // "The other messages went" is only true when some did. A channel that refused
+                    // everything it was given may be misconfigured rather than picky, and telling
+                    // the operator it is working sends them to look at the wrong thing.
+                    Remedy = sent > 0
+                        ? "The channel itself is working and the other messages went. "
+                          + "This one will be refused again, so it is not queued: check the "
+                          + "message size limit and anything the destination templates on."
+                        : "Nothing went through this channel this run. The messages will be "
+                          + "refused again, so they are not queued: check max_message, the body "
+                          + "template and the endpoint's own limits.",
                 });
             }
 
             if (sent + failed == 0)
             {
-                // Never attempted, so the breaker learns nothing. Recording a failure here would
-                // let a tight budget open a breaker on a perfectly healthy channel.
+                // Never attempted, or only refused, so the breaker learns nothing. Recording a
+                // failure here would let a tight budget open a breaker on a perfectly healthy
+                // channel.
                 continue;
             }
 
             if (failed > 0)
             {
+                // A connection that never completed and a relay that answered "no" are the same
+                // outcome for the run - nobody was told - and different remedies. The status
+                // says which: retryable means the destination was not there, anything else means
+                // it was there and said no.
+                var unreachable = RetrySchedule.IsRetryable(lastStatus);
+
                 diagnostics.Add(new CliDiagnostic
                 {
                     Severity = Severity.Warning,
                     Code = DiagnosticCode.NotifyFailed,
-                    Message = $"{channel.Display} could not be reached: {lastError}",
-                    Remedy = abandoned
+                    Message = unreachable
+                        ? $"{channel.Display} could not be reached: {lastError}"
+                        : $"{channel.Display} did not accept the run's messages: {lastError}",
+                    Remedy = unreachable
                         ? "The rotation itself is unaffected. Run 'winlogrotate notify test' once it is reachable."
-                        : "The rotation itself is unaffected. Check the target and the message size.",
+                        : "The rotation itself is unaffected. Check the target and its credential, then "
+                          + "run 'winlogrotate notify test'.",
                 });
             }
 
