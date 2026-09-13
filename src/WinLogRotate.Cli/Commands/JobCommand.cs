@@ -452,7 +452,11 @@ internal static class JobCommand
                 Severity = Severity.Error,
                 Code = DiagnosticCode.NeedsAdministrator,
                 Message = "Changing the configuration needs administrator rights.",
-                Remedy = "Run this from an elevated prompt, or use the Jobs page in the GUI.",
+                // Deliberately not "or use the GUI": the Jobs page cannot create or change a
+                // job yet, and pointing somebody at a capability that is not there is the whole
+                // defect this milestone exists to fix. It will say so when it is true.
+                Remedy = "Run this from an elevated prompt. Add --dry-run to check the change "
+                    + "without writing it, which needs no rights at all.",
             });
 
             return ctx.Output.Complete<JobEditResult>(verb, ExitCode.Errors, null);
