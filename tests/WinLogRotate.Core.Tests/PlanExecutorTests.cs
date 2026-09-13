@@ -77,6 +77,90 @@ public sealed class PlanExecutorTests : IDisposable
         AllowDangerous = [],
     };
 
+    /// <summary>A rotate job over <c>C:\logs\app.log</c>, compressing to zip.</summary>
+    private static EffectiveJob RotateJob(int rotate, bool delayCompress = false) => Job() with
+    {
+        Name = "app",
+        Kind = JobKind.Rotate,
+        Paths = [@"C:\logs\*.log"],
+        Rotate = rotate,
+        DelayCompress = delayCompress,
+        MissingOk = false,
+    };
+
+    /// <summary>The plan the runner would make for the live log in <paramref name="files"/>, due tonight.</summary>
+    private JobPlan PlanOver(EffectiveJob job, FakeFiles files)
+    {
+        var live = files.Find(@"C:\logs\app.log")!;
+
+        var verdicts = new Dictionary<string, DueVerdict>
+        {
+            [live.Path] = new() { Due = true, Reason = DueReason.Scheduled, Explanation = "a new day has begun" },
+        };
+
+        return RotateJobPlanner.Plan(job, LogSeries.Discover(job, [live], files), verdicts, _clock.GetUtcNow());
+    }
+
+    private ExecutionResult Execute(EffectiveJob job, FakeFiles files, FakeApplier applier) =>
+        new PlanExecutor(_journal, new PathGuard(new GuardOptions()), _clock, applier: applier)
+            .Execute(PlanOver(job, files), job, dryRun: false);
+
+    /// <summary>
+    /// A failed delete stops the chain writing over the generation it left behind.
+    /// </summary>
+    /// <remarks>
+    /// The shift is a rename that replaces silently. With <c>app.log.3.zip</c> held open, the
+    /// delete failed, <c>.2 -> .3</c> failed against the same lock, and <c>.1 -> .2</c> then
+    /// replaced a <c>.2</c> that had never moved - generation 2 gone, reported as one failed
+    /// operation and five successful ones. The live log still rotates: <c>.1</c> really is free.
+    /// </remarks>
+    [Fact]
+    public void AFailedDeleteStopsTheChainWritingOverWhatItLeftBehind()
+    {
+        var files = new FakeFiles(
+            @"C:\logs\app.log", @"C:\logs\app.log.1.zip", @"C:\logs\app.log.2.zip", @"C:\logs\app.log.3.zip");
+        var applier = new FakeApplier(files).Fail(op => op.Action == PlannedAction.Delete);
+
+        var result = Execute(RotateJob(rotate: 3), files, applier);
+
+        applier.Clobbered.ShouldBeEmpty("no generation may be written over");
+        files.Exists(@"C:\logs\app.log.2.zip").ShouldBeTrue();
+        files.Exists(@"C:\logs\app.log.3.zip").ShouldBeTrue();
+        files.Exists(@"C:\logs\app.log.1").ShouldBeTrue("the live log rotated into the slot that was free");
+
+        result.Rotated.ShouldBe([@"C:\logs\app.log"]);
+
+        // The delete, the two shifts behind it, and the compress that would have landed on the
+        // .1.zip that never moved.
+        result.Failed.ShouldBe(4);
+        result.Diagnostics.Count(d => d.Message.Contains("still holds a file", StringComparison.Ordinal)).ShouldBe(3);
+        result.Diagnostics.ShouldAllBe(d => d.Code == DiagnosticCode.RotationFailed);
+    }
+
+    /// <summary>
+    /// A failed delayed compression does not let the live log write over yesterday's archive.
+    /// </summary>
+    /// <remarks>
+    /// delaycompress compresses yesterday's <c>.1</c> first, shifts the name the compress
+    /// produced, and only then renames the live log to <c>.1</c>. A full disk - the condition a
+    /// rotator most often runs into - fails the compress; the shift then fails on a name that was
+    /// never produced; and the live log's rename landed on yesterday's <c>.1</c>, replacing it.
+    /// </remarks>
+    [Fact]
+    public void AFailedDelayedCompressionDoesNotLetTheLiveLogWriteOverYesterdaysArchive()
+    {
+        var files = new FakeFiles(@"C:\logs\app.log", @"C:\logs\app.log.1");
+        var applier = new FakeApplier(files).Fail(op => op.Action == PlannedAction.Compress, "disk full");
+
+        var result = Execute(RotateJob(rotate: 3, delayCompress: true), files, applier);
+
+        applier.Clobbered.ShouldBeEmpty();
+        files.Exists(@"C:\logs\app.log.1").ShouldBeTrue("yesterday's archive is untouched");
+        files.Exists(@"C:\logs\app.log").ShouldBeTrue("the live log stayed where it was");
+        result.Rotated.ShouldBeEmpty("nothing moved, so nothing is due again tomorrow");
+        result.Failed.ShouldBe(3);
+    }
+
     private JobPlan PlanDeleting(params string[] names)
     {
         var ops = names.Select(n => new PlannedOp

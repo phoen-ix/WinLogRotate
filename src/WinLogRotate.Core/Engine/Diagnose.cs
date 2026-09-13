@@ -64,6 +64,29 @@ public static class Diagnose
         };
     }
 
+    /// <summary>
+    /// An operation not attempted, because its destination still holds a file an earlier
+    /// operation in the same plan failed to move.
+    /// </summary>
+    /// <remarks>
+    /// The rename that carries out a shift replaces its destination silently - that is how a
+    /// numbered rotation overwrites, and upstream does the same - so it is only safe while every
+    /// operation before it did what the plan assumed. logrotate stops a log's chain at the first
+    /// error for exactly this reason; the executor refuses the dependent operations instead, and
+    /// this is how it says so.
+    /// </remarks>
+    public static CliDiagnostic WouldOverwrite(PlannedOp op, string? job = null) => new()
+    {
+        Severity = Severity.Error,
+        Code = DiagnosticCode.RotationFailed,
+        Message = $"{op.Action} {op.Source} -> {op.Destination}: not done, because "
+                + $"'{op.Destination}' still holds a file an earlier operation in this plan failed to move.",
+        Path = op.Source,
+        Job = job,
+        Remedy = "Nothing was written over. Fix the failure reported before this one; the chain "
+               + "picks up where it stopped on the next run.",
+    };
+
     /// <summary>A file operation that threw.</summary>
     /// <param name="destination">
     /// Where it was writing, when it was writing somewhere. Named in the message because the

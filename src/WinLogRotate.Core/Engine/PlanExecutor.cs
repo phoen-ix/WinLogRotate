@@ -108,6 +108,22 @@ public sealed class PlanExecutor(
         // For the life of this call. A plan touches a handful of directories and dozens of files.
         var resolved = new Dictionary<string, string?>(StringComparer.OrdinalIgnoreCase);
 
+        // Every source this plan expected to have vacated and did not: a delete, rename or
+        // compress that failed or was refused. Nothing later may write over one of them.
+        //
+        // A plan is reasoned about against the directory as it is, and each operation assumes the
+        // ones before it did what they said. FileOps.Rename replaces its destination silently -
+        // that is how a numbered rotation overwrites, and upstream does the same - so with
+        // rotate = 3 and app.log.3.zip held open, the delete failed, .2 -> .3 failed against the
+        // same lock, and .1 -> .2 then replaced a .2 that had never moved. Under delaycompress
+        // the same shape cost the newest generation: the compress of .1 failed on a full disk,
+        // its shift failed on the name the compress never produced, and the live log's rename
+        // landed on yesterday's .1. Both were reported as one failed operation and several
+        // successful ones. logrotate stops a log's chain at the first error; this refuses only
+        // the operations that would write over what the error left behind, so a live log still
+        // rotates into a slot that really is free.
+        var stillThere = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+
         foreach (var op in plan.Operations)
         {
             if (op.Action == PlannedAction.Skip)
@@ -136,6 +152,22 @@ public sealed class PlanExecutor(
             // so forty archives into one olddir still cost one open.
             if (Refused(op.Source) || (op.Destination is { } to && Refused(to)))
             {
+                stillThere.Add(op.Source);
+                continue;
+            }
+
+            // Create is exempt: it opens with CreateNew and leaves an existing file alone, which
+            // is the behaviour a writer that recreated its own log already relies on.
+            if (op.Destination is { } target
+                && op.Action != PlannedAction.Create
+                && stillThere.Contains(target))
+            {
+                failed++;
+                stillThere.Add(op.Source);
+                var blocked = Diagnose.WouldOverwrite(op, plan.JobName);
+                errors.Add(blocked.Message);
+                diagnostics.Add(blocked);
+                Emit(plan, op, Phase.Apply, OpResult.Failed, blocked.Message, 0);
                 continue;
             }
 
@@ -201,6 +233,7 @@ public sealed class PlanExecutor(
                 e is IOException or UnauthorizedAccessException or System.Runtime.InteropServices.ExternalException)
             {
                 failed++;
+                stillThere.Add(op.Source);
                 var failure = Diagnose.Failure(op.Action, op.Source, e, plan.JobName, op.Destination);
                 errors.Add(failure.Message);
                 diagnostics.Add(failure);
