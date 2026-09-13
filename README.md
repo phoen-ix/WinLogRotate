@@ -137,6 +137,8 @@ doesn't run on Server Core and that's where IIS usually lives.
 | `glob <pattern>` | Resolve a pattern, or explain why it was refused |
 | `config check` / `show` | Validate; print with every default resolved |
 | `job add <name>` | Create a job, without writing TOML by hand |
+| `job set <name>` | Change keys in place — comments and every other key survive |
+| `job enable` / `disable` | Switch a job off and back on, reversibly |
 | `host use task\|service\|none` | Choose what runs rotations — switch freely, any time |
 | `host status` / `repair` / `pause` | Reality vs config; re-apply permissions; suspend |
 | `host export-task` | Scheduled Task XML, for GPO or DSC |

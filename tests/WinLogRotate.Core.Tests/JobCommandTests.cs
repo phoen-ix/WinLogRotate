@@ -701,6 +701,128 @@ public sealed class JobCommandTests : IDisposable
             .ShouldContain("does not have it either");
     }
 
+    // ---- job enable / disable ------------------------------------------------------------
+
+    /// <summary>
+    /// Enable is a byte-exact undo of disable.
+    /// </summary>
+    /// <remarks>
+    /// <c>enabled</c> is a per-job key with no <c>[defaults]</c> layer beneath it, so absent and
+    /// true are the same state and enable removes the key rather than writing the second spelling
+    /// of a state the file already had. Otherwise a job's file would accumulate a line after every
+    /// off-and-on, and the file would slowly record somebody's afternoon.
+    /// </remarks>
+    [Fact]
+    public void EnableIsAByteExactUndoOfDisable()
+    {
+        var path = WriteHandWritten();
+        var (sink, ctx) = Context();
+
+        JobCommand.Switch(ctx, "iis", Root, on: false, dryRun: false, Elevated)
+            .ShouldBe(ExitCode.Ok, Why(sink));
+
+        File.ReadAllText(path).ShouldContain("enabled = false");
+        Load().Jobs.ShouldHaveSingleItem().Enabled.ShouldBeFalse();
+
+        var (back, again) = Context();
+
+        JobCommand.Switch(again, "iis", Root, on: true, dryRun: false, Elevated)
+            .ShouldBe(ExitCode.Ok, Why(back));
+
+        File.ReadAllText(path).ShouldBe(HandWritten);
+        Load().Jobs.ShouldHaveSingleItem().Enabled.ShouldBeTrue();
+    }
+
+    /// <summary>
+    /// A disabled job is still there to be edited and enabled again.
+    /// </summary>
+    /// <remarks>
+    /// Which is what makes disabling the reversible alternative <c>job remove</c> points at.
+    /// The verbs resolve a name through <c>JobIndex</c>, which reads the files rather than the
+    /// loaded configuration, so nothing about a job's state can make it unreachable to them.
+    /// </remarks>
+    [Fact]
+    public void ADisabledJobCanStillBeFoundByName()
+    {
+        WriteHandWritten();
+        var (_, off) = Context();
+        JobCommand.Switch(off, "iis", Root, on: false, dryRun: false, Elevated).ShouldBe(ExitCode.Ok);
+
+        var (sink, ctx) = Context();
+        JobCommand.Set(ctx, "iis", Root, Edits(("rotate", "14")), dryRun: false, Elevated)
+            .ShouldBe(ExitCode.Ok, Why(sink));
+    }
+
+    /// <summary>Enabling a job that is already on changes nothing and says so.</summary>
+    [Fact]
+    public void EnablingAJobThatIsAlreadyOnChangesNothing()
+    {
+        var path = WriteHandWritten();
+        var stamp = new DateTime(2020, 1, 1, 0, 0, 0, DateTimeKind.Utc);
+        File.SetLastWriteTimeUtc(path, stamp);
+
+        var (sink, ctx) = Context();
+
+        JobCommand.Switch(ctx, "iis", Root, on: true, dryRun: false, Elevated)
+            .ShouldBe(ExitCode.Ok, Why(sink));
+
+        File.GetLastWriteTimeUtc(path).ShouldBe(stamp);
+        sink.Result.ShouldBeOfType<JobEditResult>().Written.ShouldBeFalse();
+    }
+
+    /// <summary>
+    /// Disabling writes a bare false, not a quoted one.
+    /// </summary>
+    /// <remarks>
+    /// The outage this milestone opened with, in the verb that would have caused it:
+    /// <c>enabled = "false"</c> is a string where the binder wants a bool, so the job would not
+    /// be disabled - and because that error is raised against the whole configuration rather than
+    /// one file, every job on the machine would stop rotating. Two wrong answers from one
+    /// keystroke.
+    /// </remarks>
+    [Fact]
+    public void DisablingWritesABareFalse()
+    {
+        var path = WriteHandWritten();
+        var (_, ctx) = Context();
+
+        JobCommand.Switch(ctx, "iis", Root, on: false, dryRun: false, Elevated).ShouldBe(ExitCode.Ok);
+
+        File.ReadAllText(path).ShouldContain("enabled = false", Case.Sensitive);
+        File.ReadAllText(path).ShouldNotContain("\"false\"");
+
+        var loaded = Load();
+        loaded.Diagnostics.Where(d => d.Severity >= Severity.Error).ShouldBeEmpty();
+        loaded.HasErrors.ShouldBeFalse("a disabled job must not stop the machine");
+    }
+
+    /// <summary>Switching a job that is not there is refused like any other verb.</summary>
+    [Fact]
+    public void SwitchingAJobThatIsNotThereIsRefused()
+    {
+        WriteHandWritten();
+        var (sink, ctx) = Context();
+
+        JobCommand.Switch(ctx, "nginx", Root, on: false, dryRun: false, Elevated)
+            .ShouldBe(ExitCode.ConfigInvalid);
+
+        sink.Diagnostics.ShouldHaveSingleItem().Remedy.ShouldNotBeNull().ShouldContain("iis");
+    }
+
+    /// <summary>A dry run reports the switch and writes nothing.</summary>
+    [Fact]
+    public void ADryRunSwitchWritesNothing()
+    {
+        var path = WriteHandWritten();
+        var (sink, ctx) = Context();
+
+        JobCommand.Switch(ctx, "iis", Root, on: false, dryRun: true, Elevated)
+            .ShouldBe(ExitCode.Ok, Why(sink));
+
+        File.ReadAllText(path).ShouldBe(HandWritten);
+        sink.Result.ShouldBeOfType<JobEditResult>().Changes.ShouldHaveSingleItem().Key.ShouldBe("enabled");
+    }
+
     /// <summary>What the verb said, for an assertion that would otherwise only report a number.</summary>
     private static string Why(Capturing sink) =>
         sink.Diagnostics.Count == 0

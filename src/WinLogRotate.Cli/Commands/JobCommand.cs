@@ -137,6 +137,52 @@ internal static class JobCommand
     }
 
     /// <summary>
+    /// Switches a job off, or back on, without touching anything else in its file.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// <c>enable</c> removes the key rather than writing <c>enabled = true</c>, and that is what
+    /// makes it a byte-exact undo of <c>disable</c>: <c>enabled</c> is a per-job key with no
+    /// <c>[defaults]</c> layer beneath it, so absent and true are the same state. Writing the
+    /// second spelling of a state the file already had would leave a line behind after every
+    /// off-and-on, and a job's file would slowly accumulate the history of somebody's afternoon.
+    /// </para>
+    /// <para>
+    /// This is also the verb <c>remove</c>'s refusal points at. Deleting a job destroys its
+    /// configuration; disabling it is the reversible one, and it has to actually be reversible
+    /// for that to be honest advice.
+    /// </para>
+    /// </remarks>
+    public static int Switch(
+        CommandContext ctx, string name, string? configDir, bool on, bool dryRun,
+        Func<bool>? elevated = null)
+    {
+        var verb = on ? "job enable" : "job disable";
+
+        if (Refuse(ctx, verb, name, [], dryRun, elevated) is { } refused)
+        {
+            return refused;
+        }
+
+        var (_, guard, index) = Open(configDir);
+
+        if (Find(ctx, verb, name, index) is not { } path)
+        {
+            return ExitCode.ConfigInvalid;
+        }
+
+        var proposal = JobDocument.Apply(
+            TomlFile.Load(path),
+            path,
+            [new JobEdit("enabled", on ? null : "false")],
+            index.Defaults,
+            guard,
+            index.NamesInUse(excludingFile: path));
+
+        return Finish(ctx, verb, name, path, proposal, dryRun, isNew: false);
+    }
+
+    /// <summary>
     /// The file a named job lives in, or a refusal that says which names exist.
     /// </summary>
     /// <remarks>

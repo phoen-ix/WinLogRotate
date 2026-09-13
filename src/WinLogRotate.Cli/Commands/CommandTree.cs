@@ -326,7 +326,38 @@ internal static class CommandTree
                     parse.GetValue(dryRun));
         }));
 
-        return new Command("job", "Create and change jobs.") { add, edit };
+        return new Command("job", "Create and change jobs.") { add, edit, Switch("enable", true), Switch("disable", false) };
+    }
+
+    /// <summary>
+    /// <c>job enable</c> and <c>job disable</c>, which differ by one bool.
+    /// </summary>
+    /// <remarks>
+    /// Two verbs rather than <c>job enabled &lt;name&gt; true|false</c>, because the pair a person
+    /// types under pressure at two in the morning should not have a positional argument whose two
+    /// values are opposites.
+    /// </remarks>
+    private static Command Switch(string word, bool on)
+    {
+        var name = new Argument<string>("name") { Description = "The job to switch." };
+        var dryRun = new Option<bool>("--dry-run") { Description = "Report what would change, without writing." };
+
+        var command = new Command(word, on
+            ? "Switch a job back on."
+            : "Switch a job off, keeping its file. This is the reversible alternative to 'job remove'.")
+        {
+            name, dryRun,
+        };
+
+        GlobalOptions.AddTo(command);
+        command.SetAction(parse => CommandContext.Guarded(parse, ctx => JobCommand.Switch(
+            ctx,
+            parse.GetRequiredValue(name),
+            parse.GetValue(GlobalOptions.ConfigDir)?.FullName,
+            on,
+            parse.GetValue(dryRun))));
+
+        return command;
     }
 
     /// <summary>
