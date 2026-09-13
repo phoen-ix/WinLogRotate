@@ -326,7 +326,26 @@ internal static class CommandTree
                     parse.GetValue(dryRun));
         }));
 
-        return new Command("job", "Create and change jobs.") { add, edit, Switch("enable", true), Switch("disable", false) };
+        var gone = new Argument<string>("name") { Description = "The job to remove." };
+        var goneDry = new Option<bool>("--dry-run") { Description = "Say what would be deleted, and delete nothing." };
+
+        var remove = new Command("remove",
+            "Delete a job and its file. Use 'job disable' instead if you may want it back.")
+        {
+            gone, goneDry,
+        };
+
+        GlobalOptions.AddTo(remove);
+        remove.SetAction(parse => CommandContext.Guarded(parse, ctx => JobCommand.Remove(
+            ctx,
+            parse.GetRequiredValue(gone),
+            parse.GetValue(GlobalOptions.ConfigDir)?.FullName,
+            parse.GetValue(goneDry))));
+
+        return new Command("job", "Create and change jobs.")
+        {
+            add, edit, Switch("enable", true), Switch("disable", false), remove,
+        };
     }
 
     /// <summary>

@@ -139,6 +139,7 @@ doesn't run on Server Core and that's where IIS usually lives.
 | `job add <name>` | Create a job, without writing TOML by hand |
 | `job set <name>` | Change keys in place — comments and every other key survive |
 | `job enable` / `disable` | Switch a job off and back on, reversibly |
+| `job remove <name>` | Delete a job and its file |
 | `host use task\|service\|none` | Choose what runs rotations — switch freely, any time |
 | `host status` / `repair` / `pause` | Reality vs config; re-apply permissions; suspend |
 | `host export-task` | Scheduled Task XML, for GPO or DSC |

@@ -83,6 +83,56 @@ public partial class ArchitectureTests
     }
 
     /// <summary>
+    /// Only <c>ConfigWrites</c> changes what conf.d holds.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// One chokepoint, so that "and leave it owned by Administrators" and "and write it
+    /// atomically" are said once rather than remembered at each call site. The gate judges the
+    /// owner of every file it would execute a hook from, so a writer that forgets turns hooks off
+    /// on a healthy machine - silently, until somebody runs the repair, and then again on the
+    /// next edit.
+    /// </para>
+    /// <para>
+    /// Enforced now rather than earlier because deletion is new surface. Up to this milestone
+    /// every path into conf.d added or replaced a file, and the worst a mistake could do was
+    /// leave one that would not load. A verb that removes things is the moment the chokepoint
+    /// stops being tidiness.
+    /// </para>
+    /// <para>
+    /// Scoped to the CLI, which is where the verbs are. <c>ConfigLoader</c> quarantines a file it
+    /// cannot parse and is deliberately outside this: it is not a writer acting on somebody's
+    /// instruction, it is the reader refusing to keep reading.
+    /// </para>
+    /// </remarks>
+    [Fact]
+    public void OnlyConfigWritesChangesWhatConfDHolds()
+    {
+        var commands = Path.Combine(
+            RepoRoot.Find().FullName, "src", "WinLogRotate.Cli", "Commands");
+
+        string[] mutations = ["File.WriteAllText", "File.Delete", "File.Move", "File.Copy"];
+
+        var offenders = Directory
+            .EnumerateFiles(commands, "*.cs", SearchOption.AllDirectories)
+            .Where(f => Path.GetFileName(f) != "ConfigWrites.cs")
+            .Select(f => (Name: Path.GetFileName(f), Text: Code(f)))
+            .Where(f => f.Text.Contains("ConfigDirectory", StringComparison.Ordinal)
+                && mutations.Any(m => f.Text.Contains(m, StringComparison.Ordinal)))
+            .Select(f => f.Name)
+            .ToArray();
+
+        offenders.ShouldBeEmpty(
+            "write and delete job files through ConfigWrites, so ownership and atomicity are "
+            + "decided once rather than remembered at each call site");
+
+        // Self-check: the rule is worthless if it is looking in an empty directory or for a
+        // spelling nothing uses.
+        Code(Path.Combine(commands, "ConfigWrites.cs"))
+            .ShouldContain("File.Delete", customMessage: "the rule is looking for the wrong spelling");
+    }
+
+    /// <summary>
     /// A file's code, without its comments.
     /// </summary>
     /// <remarks>

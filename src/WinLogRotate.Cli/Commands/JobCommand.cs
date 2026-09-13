@@ -183,6 +183,102 @@ internal static class JobCommand
     }
 
     /// <summary>
+    /// Deletes a job's file, having said what it held.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// It deletes rather than renaming aside. A kept-aside <c>iis.toml.removed</c> renamed back
+    /// beside a live job of the same name is a duplicate name, and a duplicate name is not
+    /// file-scoped: it stops every rotation on the machine. Keeping a copy would trade a loss the
+    /// operator chose for an outage they did not.
+    /// </para>
+    /// <para>
+    /// So the output says what was in the file before it goes, and names <c>job disable</c> -
+    /// which is the reversible one, and is reversible byte for byte.
+    /// </para>
+    /// </remarks>
+    public static int Remove(
+        CommandContext ctx, string name, string? configDir, bool dryRun, Func<bool>? elevated = null)
+    {
+        if (Refuse(ctx, "job remove", name, [], dryRun, elevated) is { } refused)
+        {
+            return refused;
+        }
+
+        var (_, _, index) = Open(configDir);
+
+        if (Find(ctx, "job remove", name, index) is not { } path)
+        {
+            return ExitCode.ConfigInvalid;
+        }
+
+        // Read before deleting, so the record of what was lost is the file's own and not a
+        // reconstruction. Every key is reported as unset, because that is what removal does to
+        // all of them at once.
+        var held = Held(path);
+
+        if (dryRun)
+        {
+            ctx.Output.Line($"{name} would be removed, and {Path.GetFileName(path)} deleted.");
+            Recite(ctx, held);
+            ctx.Output.Line("Nothing was removed. Run without --dry-run to do it, or 'job disable' to keep the file.");
+
+            return Complete(ctx, "job remove", name, path, held, written: false, ExitCode.Ok);
+        }
+
+        try
+        {
+            ConfigWrites.RemoveJob(path);
+        }
+        catch (Exception e) when (e is IOException or UnauthorizedAccessException)
+        {
+            ctx.Output.Diagnostic(new CliDiagnostic
+            {
+                Severity = Severity.Error,
+                Code = DiagnosticCode.ConfigUnwritable,
+                Message = $"{path} could not be deleted: {e.Message}",
+                Path = path,
+                Remedy = "Check the permissions on the conf.d directory, and that nothing has the file open.",
+            });
+
+            return Complete(ctx, "job remove", name, path, held, written: false, ExitCode.Errors);
+        }
+
+        ctx.Output.Line($"{name} removed. {Path.GetFileName(path)} is gone.");
+        Recite(ctx, held);
+        ctx.Output.Line("'winlogrotate job disable' keeps the file next time.");
+
+        return Complete(ctx, "job remove", name, path, held, written: true, ExitCode.Ok);
+    }
+
+    /// <summary>What a job file said, as the changes deleting it amounts to.</summary>
+    private static JobProposal Held(string path)
+    {
+        var file = TomlFile.Load(path);
+
+        return new JobProposal
+        {
+            File = file,
+            Problems = [],
+            Changes = [.. JobSchema.Keys
+                .Where(k => TomlEditor.TryRead(file, JobDocument.Table, k.Key, out _, out _))
+                .Select(k =>
+                {
+                    TomlEditor.TryRead(file, JobDocument.Table, k.Key, out var was, out _);
+                    return new JobChange { Key = k.Key, Kind = JobChangeKind.Unset, Before = was };
+                })],
+        };
+    }
+
+    private static void Recite(CommandContext ctx, JobProposal held)
+    {
+        foreach (var change in held.Changes)
+        {
+            ctx.Output.Line($"    {change.Key} = {change.Before}");
+        }
+    }
+
+    /// <summary>
     /// The file a named job lives in, or a refusal that says which names exist.
     /// </summary>
     /// <remarks>

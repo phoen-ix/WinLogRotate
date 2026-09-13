@@ -823,6 +823,118 @@ public sealed class JobCommandTests : IDisposable
         sink.Result.ShouldBeOfType<JobEditResult>().Changes.ShouldHaveSingleItem().Key.ShouldBe("enabled");
     }
 
+    // ---- job remove ------------------------------------------------------------------------
+
+    /// <summary>
+    /// Removal deletes the file, and says what was in it first.
+    /// </summary>
+    /// <remarks>
+    /// It deletes rather than renaming aside. A kept-aside <c>iis.toml.removed</c> renamed back
+    /// beside a live job of the same name is a duplicate name, and a duplicate name is not
+    /// file-scoped: it stops every rotation on the machine. That would trade a loss the operator
+    /// chose for an outage they did not.
+    /// </remarks>
+    [Fact]
+    public void RemovalDeletesTheFileAndRecitesWhatItHeld()
+    {
+        var path = WriteHandWritten();
+        var (sink, ctx) = Context();
+
+        JobCommand.Remove(ctx, "iis", Root, dryRun: false, Elevated).ShouldBe(ExitCode.Ok, Why(sink));
+
+        File.Exists(path).ShouldBeFalse();
+        Directory.GetFiles(ConfD).ShouldBeEmpty();
+
+        var result = sink.Result.ShouldBeOfType<JobEditResult>();
+        result.Written.ShouldBeTrue();
+        result.Changes.Select(c => c.Key).ShouldBe(["name", "paths", "rotate", "maxage", "allowdangerous"], ignoreOrder: true);
+        result.Changes.ShouldAllBe(c => c.Kind == "Unset");
+        result.Changes.First(c => c.Key == "rotate").Before.ShouldBe("7");
+    }
+
+    /// <summary>And it names the reversible alternative, because it has one.</summary>
+    [Fact]
+    public void RemovalNamesTheReversibleAlternative()
+    {
+        WriteHandWritten();
+        var (sink, ctx) = Context();
+
+        JobCommand.Remove(ctx, "iis", Root, dryRun: false, Elevated).ShouldBe(ExitCode.Ok);
+
+        sink.Lines.ShouldContain(l => l.Contains("job disable", StringComparison.Ordinal));
+    }
+
+    /// <summary>A dry run deletes nothing.</summary>
+    [Fact]
+    public void ADryRunRemovalDeletesNothing()
+    {
+        var path = WriteHandWritten();
+        var (sink, ctx) = Context();
+
+        JobCommand.Remove(ctx, "iis", Root, dryRun: true, Elevated).ShouldBe(ExitCode.Ok, Why(sink));
+
+        File.ReadAllText(path).ShouldBe(HandWritten);
+        sink.Result.ShouldBeOfType<JobEditResult>().Written.ShouldBeFalse();
+    }
+
+    /// <summary>
+    /// A job it cannot identify is refused, and nothing in the directory is touched.
+    /// </summary>
+    /// <remarks>
+    /// The filename is not the job's name. A verb that fell back to deleting
+    /// <c>&lt;name&gt;.toml</c> when it could not find the job would delete a file belonging to a
+    /// job with a different name - which is exactly the case <c>JobFiles.NameFor</c> creates,
+    /// since two names can sanitise to one filename.
+    /// </remarks>
+    [Fact]
+    public void AJobItCannotIdentifyIsRefusedAndNothingIsTouched()
+    {
+        WriteHandWritten();
+        var (sink, ctx) = Context();
+
+        JobCommand.Remove(ctx, "nginx", Root, dryRun: false, Elevated).ShouldBe(ExitCode.ConfigInvalid);
+
+        sink.Diagnostics.ShouldHaveSingleItem().Remedy.ShouldNotBeNull().ShouldContain("iis");
+        Directory.GetFiles(ConfD).Select(Path.GetFileName).ShouldBe(["iis.toml"]);
+    }
+
+    /// <summary>
+    /// A quarantined file is not a job, so no verb can name one.
+    /// </summary>
+    /// <remarks>
+    /// <c>ConfigLoader</c> renames a file it cannot parse to <c>.toml.bad</c> and leaves it as
+    /// forensic evidence. Deleting one because a job of that name used to live in it would
+    /// destroy the only copy of what went wrong - and <c>JobFiles.In</c> is the single place that
+    /// decides what a job file is, so this holds for every verb at once rather than for this one.
+    /// </remarks>
+    [Fact]
+    public void AQuarantinedFileIsNotAJob()
+    {
+        Directory.CreateDirectory(ConfD);
+        var bad = Path.Combine(ConfD, "iis.toml.bad");
+        File.WriteAllText(bad, "schema = 1\n\n[job]\nname = \"iis\"\npaths = [\"C:/logs/*.log\"]\n");
+
+        var (sink, ctx) = Context();
+
+        JobCommand.Remove(ctx, "iis", Root, dryRun: false, Elevated).ShouldBe(ExitCode.ConfigInvalid);
+
+        File.Exists(bad).ShouldBeTrue("the evidence is still there");
+        sink.Diagnostics.ShouldHaveSingleItem().Remedy.ShouldNotBeNull().ShouldContain("no jobs");
+    }
+
+    /// <summary>An unelevated removal is refused before anything is deleted.</summary>
+    [Fact]
+    public void AnUnelevatedRemovalIsRefused()
+    {
+        var path = WriteHandWritten();
+        var (sink, ctx) = Context();
+
+        JobCommand.Remove(ctx, "iis", Root, dryRun: false, NotElevated).ShouldBe(ExitCode.Errors);
+
+        sink.Diagnostics.ShouldHaveSingleItem().Code.ShouldBe(DiagnosticCode.NeedsAdministrator);
+        File.Exists(path).ShouldBeTrue();
+    }
+
     /// <summary>What the verb said, for an assertion that would otherwise only report a number.</summary>
     private static string Why(Capturing sink) =>
         sink.Diagnostics.Count == 0

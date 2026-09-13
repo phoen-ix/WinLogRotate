@@ -55,6 +55,17 @@ internal static class ConfigWrites
         (claim ?? Owner)(path);
     }
 
+    /// <summary>
+    /// Deletes a job file.
+    /// </summary>
+    /// <remarks>
+    /// Here rather than at the call site because this type's whole claim is to be the only place
+    /// that changes what conf.d holds, and a deletion changes that as surely as a write does.
+    /// <c>OnlyConfigWritesChangesWhatConfDHolds</c> is what keeps that true now that there is a
+    /// verb which removes things.
+    /// </remarks>
+    internal static void RemoveJob(string path) => File.Delete(path);
+
     /// <summary>Saves config.toml back over itself.</summary>
     /// <remarks>
     /// <see cref="TomlFile.Save"/> writes a temporary sibling and moves it over the target, so
