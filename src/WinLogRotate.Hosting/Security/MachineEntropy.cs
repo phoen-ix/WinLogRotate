@@ -58,10 +58,25 @@ public static class MachineEntropy
     private const int Bytes = 32;
 
     /// <summary>The entropy, or null if it has not been provisioned or cannot be read.</summary>
+    /// <remarks>
+    /// "Cannot be read" is the ordinary state for an unelevated caller, and it has to come back
+    /// as null: <see cref="Sddl.EntropyKey"/> grants SYSTEM and Administrators only, and
+    /// <c>OpenSubKey</c> answers a denial with <c>SecurityException</c> rather than null. Hardening
+    /// the key therefore turned <c>secret list</c> and <c>secret test</c> from an ordinary prompt
+    /// into exit 4 - the documented Info "not readable from this account" was never reached,
+    /// because the exception left this method before the store was even opened.
+    /// </remarks>
     public static byte[]? Read(string keyPath = KeyPath)
     {
-        using var key = Registry.LocalMachine.OpenSubKey(keyPath, writable: false);
-        return key?.GetValue(ValueName) as byte[] is { Length: Bytes } value ? value : null;
+        try
+        {
+            using var key = Registry.LocalMachine.OpenSubKey(keyPath, writable: false);
+            return key?.GetValue(ValueName) as byte[] is { Length: Bytes } value ? value : null;
+        }
+        catch (Exception e) when (e is System.Security.SecurityException or UnauthorizedAccessException or IOException)
+        {
+            return null;
+        }
     }
 
     /// <summary>
@@ -185,13 +200,22 @@ public static class MachineEntropy
     /// </remarks>
     public static string? MachineFingerprint()
     {
-        using var key = Registry.LocalMachine.OpenSubKey(@"SOFTWARE\Microsoft\Cryptography", writable: false);
-        if (key?.GetValue("MachineGuid") is not string guid || guid.Length == 0)
+        try
         {
+            using var key = Registry.LocalMachine.OpenSubKey(@"SOFTWARE\Microsoft\Cryptography", writable: false);
+            if (key?.GetValue("MachineGuid") is not string guid || guid.Length == 0)
+            {
+                return null;
+            }
+
+            var salted = Encoding.UTF8.GetBytes("WinLogRotate\0" + guid);
+            return Convert.ToHexStringLower(SHA256.HashData(salted).AsSpan(0, 8));
+        }
+        catch (Exception e) when (e is System.Security.SecurityException or UnauthorizedAccessException or IOException)
+        {
+            // A machine whose Cryptography key has been locked down is unusual, but "no
+            // fingerprint" is an answer the store understands and an exception here is not.
             return null;
         }
-
-        var salted = Encoding.UTF8.GetBytes("WinLogRotate\0" + guid);
-        return Convert.ToHexStringLower(SHA256.HashData(salted).AsSpan(0, 8));
     }
 }

@@ -65,7 +65,14 @@ public sealed class SecretResolver(ISecretPlatform platform, string storePath) :
 
         if (store is null)
         {
-            return SecretResolution.Failed("the secret store needs Windows");
+            // Two reasons no protector exists, and they send an operator to different places.
+            // Off Windows there is nothing to do; on Windows the key protecting the store grants
+            // SYSTEM and Administrators only, so an unelevated caller cannot read it - and telling
+            // that caller the store "needs Windows" sent them looking for a build that had it.
+            return SecretResolution.Failed(platform.IsSupported
+                ? "the key protecting the secret store is not readable from this account; "
+                  + "administrator rights are needed to read a stored credential"
+                : "the secret store needs Windows");
         }
 
         return store.TryGet(name, out var value, out var error)

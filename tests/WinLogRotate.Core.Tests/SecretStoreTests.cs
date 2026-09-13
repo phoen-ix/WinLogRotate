@@ -335,7 +335,10 @@ public sealed class SecretStoreTests : IDisposable
         var store = SecretStore.Load(Path, protector: null);
 
         store.TryGet("k", out _, out var error).ShouldBeFalse();
-        error.ShouldNotBeNull().ShouldContain("Windows");
+
+        // The store cannot tell "not Windows" from "not this account"; SecretResolver can, and
+        // does. What the store says is that the key is not available.
+        error.ShouldNotBeNull().ShouldContain("key");
         Should.Throw<PlatformNotSupportedException>(
             () => store.Set("k", SecretString.From("y"), null, _clock));
     }

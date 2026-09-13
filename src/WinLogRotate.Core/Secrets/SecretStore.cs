@@ -251,7 +251,9 @@ public sealed class SecretStore
 
         if (_protector is null)
         {
-            error = "The secret store needs Windows.";
+            // Off Windows, or on Windows from an account that may not read the key protecting the
+            // store. The store cannot tell which; SecretResolver can, and says so.
+            error = "The key protecting the secret store is not available to this account or platform.";
             return false;
         }
 
