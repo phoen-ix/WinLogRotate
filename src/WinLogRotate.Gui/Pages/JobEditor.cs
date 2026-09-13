@@ -326,12 +326,19 @@ public sealed class JobEditor : Form
         _paths.Text = Field("paths")?.Value ?? string.Empty;
 
         _kind.Items.Clear();
+
+        // The empty entry first, and it is what an unset key selects. Defaulting the combo to
+        // "rotate" instead would mean a job that never said kind acquired `kind = "rotate"` on
+        // the first Save - semantically identical, and a line nobody asked for in a file whose
+        // whole promise is that keys nobody named are untouched.
+        _kind.Items.Add(string.Empty);
+
         foreach (var choice in Field("kind")?.Choices ?? [])
         {
             _kind.Items.Add(choice);
         }
 
-        _kind.SelectedItem = Field("kind")?.Value ?? "rotate";
+        _kind.SelectedItem = Field("kind")?.Value ?? string.Empty;
         _enabled.Checked = !string.Equals(Field("enabled")?.Value, "false", StringComparison.OrdinalIgnoreCase);
 
         foreach (var (key, control) in _editors)
@@ -426,6 +433,7 @@ public sealed class JobEditor : Form
         {
             ["name"] = _name.Text.Trim(),
             ["paths"] = _paths.Text,
+            // Empty means the job does not say it, which is not the same as saying "rotate".
             ["kind"] = _kind.SelectedItem as string,
 
             // Absent means enabled, so the box being ticked says nothing rather than "true".

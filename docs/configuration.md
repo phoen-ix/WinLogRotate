@@ -232,6 +232,11 @@ any other.
 Repeat `--paths` for more than one pattern. Nothing is split on a separator, because a Windows
 path may contain any of them.
 
+The GUI's Jobs page does the same thing through a form — New, Edit, Enable/Disable, Remove — and
+sends exactly the keys you changed. A field it shows as **inherited** stays inherited unless you
+type in it, and the Source column says which is which while you edit. Check validates without
+writing and without asking for administrator rights; Save asks once.
+
 ## Other tables
 
 `[defaults]` takes any key from this page except `name`, `paths`, `kind`, `enabled` and

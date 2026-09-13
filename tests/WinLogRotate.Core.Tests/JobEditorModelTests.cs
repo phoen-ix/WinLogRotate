@@ -194,6 +194,37 @@ public sealed class JobEditorModelTests
         ShouldParse(args);
     }
 
+    /// <summary>
+    /// Showing a default does not write it.
+    /// </summary>
+    /// <remarks>
+    /// The form has to pick something to display for a key the file does not set, and whatever it
+    /// picks is what comes back when Save is pressed. If that is the default rather than nothing,
+    /// every Save writes a line the operator never asked for - identical in meaning, and a
+    /// permanent change to a file whose whole promise is that keys nobody named are untouched.
+    /// The form says nothing for an unset key; this is what says that is the right thing for it
+    /// to say.
+    /// </remarks>
+    [Fact]
+    public void ShowingADefaultDoesNotWriteIt()
+    {
+        var view = Loaded();
+
+        view.Fields.Single(f => f.Key == "kind").IsSet.ShouldBeFalse("the fixture does not set it");
+
+        var untouched = JobEditorModel.SaveArgs(
+            null, "iis", isNew: false, view,
+            new Dictionary<string, string?> { ["kind"] = null, ["enabled"] = null });
+
+        untouched.ShouldBe(["job", "set", "iis"]);
+
+        // And choosing it deliberately does write it, or the field would do nothing at all.
+        JobEditorModel.SaveArgs(
+            null, "iis", isNew: false, view,
+            new Dictionary<string, string?> { ["kind"] = "manage" })
+            .ShouldBe(["job", "set", "iis", "--set", "kind=manage"]);
+    }
+
     /// <summary>Clearing a field means inherit again, not set to nothing.</summary>
     [Fact]
     public void ClearingAFieldMeansInheritAgain()
