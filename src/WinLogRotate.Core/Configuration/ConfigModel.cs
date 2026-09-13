@@ -122,8 +122,9 @@ public record JobSettings
     /// <summary>Name archives by date rather than by an incrementing number.</summary>
     public bool? DateExt { get; init; }
 
-    /// <summary>strftime-style, and it must sort lexicographically - year, then month, then
-    /// day - or retention cannot order the archives.</summary>
+    /// <summary>A .NET custom format - runs of <c>y M d H m s</c> separated by <c>-</c>, <c>_</c>
+    /// or <c>.</c> - not strftime. <c>ConfigValidator</c> refuses anything else, because archives
+    /// are found again by the name this produces.</summary>
     public string? DateFormat { get; init; }
 
     /// <summary>Skip a missing log silently instead of reporting it.</summary>

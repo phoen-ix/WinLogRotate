@@ -252,6 +252,26 @@ public sealed class LogSeriesTests
     }
 
     /// <summary>
+    /// A dated archive whose format uses dots is found again.
+    /// </summary>
+    /// <remarks>
+    /// The stamp parser accepted digits, dashes and underscores in a candidate and nothing else,
+    /// so every archive a <c>-yyyy.MM.dd</c> job wrote parsed as nothing, was found by nothing,
+    /// and was retained for ever - on a format the validator now says is fine.
+    /// </remarks>
+    [Fact]
+    public void ADatedArchiveWithDotsInItsFormatIsFoundAgain()
+    {
+        var files = new FakeFiles(
+            @"C:\logs\app.log", @"C:\logs\app.log-2026.09.08", @"C:\logs\app.log-2026.09.07.gz");
+
+        var job = Job(dateExt: true) with { DateFormat = "-yyyy.MM.dd" };
+
+        Found(LogSeries.Discover(job, [Live()], files))
+            .ShouldBe([@"C:\logs\app.log-2026.09.08", @"C:\logs\app.log-2026.09.07.gz"]);
+    }
+
+    /// <summary>
     /// An archive written under the other compression extension is still this job's.
     /// </summary>
     /// <remarks>

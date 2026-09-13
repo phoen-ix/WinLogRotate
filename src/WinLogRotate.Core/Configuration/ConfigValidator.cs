@@ -106,6 +106,11 @@ public static class ConfigValidator
                 remedy: "Leave livefiles at 1 unless you are certain the producer has finished with every matched file.");
         }
 
+        if (job.DateExt)
+        {
+            CheckDateFormat(job.DateFormat, file, d);
+        }
+
         // dateext refuses to overwrite an existing dated archive, by design. If the date
         // format is coarser than the schedule, the second rotation of every period therefore
         // fails - forever. Catching it here turns a recurring runtime error into one message.
@@ -213,6 +218,79 @@ public static class ConfigValidator
                 "hook_timeout is not positive, so no hook could ever run.",
                 remedy: "Give it a duration, e.g. hook_timeout = \"60s\".");
         }
+    }
+
+    /// <summary>
+    /// Refuses a <c>dateformat</c> the engine could not format, or could not find again.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// Nothing checked the format at all. One .NET rejects - a stray quote, a trailing
+    /// <c>%</c> - threw <c>FormatException</c> out of <c>ArchiveNaming.FirstRotation</c> at plan
+    /// time, where no catch filter names it, and ended the whole run at exit 4. One .NET accepts
+    /// but this product cannot rediscover was worse, because it was silent: archives are found
+    /// again by turning the format into a glob of digit classes and parsing the stamp back, and
+    /// both steps assume every specifier renders as digits and every literal is one of the three
+    /// separators. <c>-%Y%m%d</c> - what every logrotate user writes first, and what this key's
+    /// own doc comment called "strftime-style" - rendered as <c>-Y09m13d</c>-shaped names that
+    /// retention never counted or deleted again.
+    /// </para>
+    /// <para>
+    /// The rule is therefore the discovery rule, stated: runs of <c>y M d H m s</c>, separated by
+    /// <c>-</c>, <c>_</c> or <c>.</c>, at least two characters long so .NET reads a custom pattern
+    /// rather than a standard one, and never a month or weekday spelled as a name.
+    /// </para>
+    /// </remarks>
+    private static void CheckDateFormat(string format, string file, DiagnosticBag d)
+    {
+        if (format.Contains('%'))
+        {
+            d.Error(file, DiagnosticCode.ConfigInvalid,
+                $"dateformat '{format}' is written in strftime's grammar, which this product does not use.",
+                remedy: "Write .NET specifiers instead: %Y is yyyy, %m is MM, %d is dd, and %H %M %S "
+                      + "are HH mm ss - so -%Y%m%d is -yyyyMMdd.");
+            return;
+        }
+
+        if (format.Length < 2)
+        {
+            d.Error(file, DiagnosticCode.ConfigInvalid,
+                $"dateformat '{format}' is too short: .NET reads a single character as one of its standard "
+                + "patterns, which contain separators no file name can carry.",
+                remedy: "Use a pattern of at least two characters, such as -yyyyMMdd.");
+            return;
+        }
+
+        var stray = format.FirstOrDefault(c => c is not ('y' or 'M' or 'd' or 'H' or 'm' or 's' or '-' or '_' or '.'));
+        if (stray != default)
+        {
+            d.Error(file, DiagnosticCode.ConfigInvalid,
+                $"dateformat '{format}' contains '{stray}', and an archive named with it could not be found again.",
+                remedy: "Archives are rediscovered by their name, which works for runs of y, M, d, H, m and s "
+                      + "separated by -, _ or . and for nothing else. Anything else stops them being counted or deleted.");
+            return;
+        }
+
+        if (LongestRun(format, 'M') > 2 || LongestRun(format, 'd') > 2)
+        {
+            d.Error(file, DiagnosticCode.ConfigInvalid,
+                $"dateformat '{format}' spells a month or a weekday as a name, and a name is not a number an archive can be found by.",
+                remedy: "MM and dd are the numeric forms; MMM, MMMM, ddd and dddd are names.");
+        }
+    }
+
+    private static int LongestRun(string text, char c)
+    {
+        var longest = 0;
+        var run = 0;
+
+        foreach (var ch in text)
+        {
+            run = ch == c ? run + 1 : 0;
+            longest = Math.Max(longest, run);
+        }
+
+        return longest;
     }
 
     /// <summary>

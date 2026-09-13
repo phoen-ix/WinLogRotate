@@ -147,8 +147,11 @@ public static class FileSeries
 
             for (var start = stem.Length - length; start >= 0; start--)
             {
+                // The three separators ConfigValidator allows in a dateformat, and digits. This
+                // used to omit '.', so an archive written with dateformat = "-yyyy.MM.dd" was
+                // never parsed, never found again, and never counted or deleted.
                 var slice = stem.Substring(start, length);
-                if (!slice.All(c => char.IsAsciiDigit(c) || c is '-' or '_'))
+                if (!slice.All(c => char.IsAsciiDigit(c) || c is '-' or '_' or '.'))
                 {
                     continue;
                 }

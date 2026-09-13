@@ -111,7 +111,7 @@ nothing.
 | `compresstype` | `"zip"` \| `"gzip"` \| `"none"` | `"zip"` | `compress = false` and `compresstype = "none"` mean the same thing. |
 | `delaycompress` | bool | `false` | Leave the newest archive uncompressed for one cycle, for a writer that has not let go of it yet. Does nothing without `compress`. |
 | `dateext` | bool | `false` | Name archives by date rather than by number. |
-| `dateformat` | string | `"-yyyyMMdd"` | The .NET format string appended when `dateext` is set. |
+| `dateformat` | string | `"-yyyyMMdd"` | The .NET format string appended when `dateext` is set: runs of `y`, `M`, `d`, `H`, `m` and `s`, separated by `-`, `_` or `.`, and nothing else. Not strftime — `-%Y%m%d` is refused with the .NET spelling. |
 | `olddir` | path | *(beside the log)* | Where archives go. A relative path resolves against each log's own directory, matching logrotate. |
 | `createolddir` | bool | `false` | Create `olddir` if it does not exist. Without this, a missing `olddir` refuses the job and says so. |
 

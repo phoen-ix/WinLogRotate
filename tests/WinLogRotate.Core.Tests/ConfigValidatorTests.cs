@@ -75,4 +75,41 @@ public sealed class ConfigValidatorTests
     {
         Errors(Validate(Fixtures.Job() with { Start = 0 })).ShouldBeEmpty();
     }
+
+    /// <summary>
+    /// A dateformat the engine could not format, or could not find again, is refused.
+    /// </summary>
+    /// <remarks>
+    /// <c>-%Y%m%d</c> is what a logrotate user writes first; <c>d</c> is a .NET standard pattern
+    /// full of slashes; a slash or a colon cannot be in a file name; <c>MMM</c> is a month's name.
+    /// Every one was accepted, and the first two took the run down at plan time.
+    /// </remarks>
+    [Theory]
+    [InlineData("-%Y%m%d", "strftime")]
+    [InlineData("d", "too short")]
+    [InlineData("", "too short")]
+    [InlineData("-yyyy/MM/dd", "'/'")]
+    [InlineData("-yyyyMMddTHHmmss", "'T'")]
+    [InlineData("-HH:mm", "':'")]
+    [InlineData("-dd-MMM-yyyy", "as a name")]
+    [InlineData("-dddd", "as a name")]
+    public void ADateFormatThatCannotBeFoundAgainIsRefused(string format, string saying)
+    {
+        var bag = Validate(Fixtures.Job() with { DateExt = true, DateFormat = format });
+
+        Errors(bag).ShouldContain(d => d.Message.StartsWith("dateformat", StringComparison.Ordinal)
+                                       && d.Message.Contains(saying, StringComparison.Ordinal));
+    }
+
+    [Theory]
+    [InlineData("-yyyyMMdd")]
+    [InlineData("-yyyy.MM.dd")]
+    [InlineData("_yyyy-MM-dd_HHmmss")]
+    [InlineData("-yyyyMMddHH")]
+    public void ADateFormatMadeOfDigitsAndSeparatorsIsAccepted(string format)
+    {
+        var bag = Validate(Fixtures.Job() with { DateExt = true, DateFormat = format });
+
+        Errors(bag).ShouldNotContain(d => d.Message.StartsWith("dateformat", StringComparison.Ordinal));
+    }
 }
