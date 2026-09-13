@@ -1,4 +1,5 @@
 using Shouldly;
+using WinLogRotate.Contracts;
 using WinLogRotate.Core.Configuration;
 using Xunit;
 
@@ -409,4 +410,201 @@ public sealed class TomlEditorTests
 
         file.ToString().ShouldContain("\"new\"");
     }
+
+    // ---- typed values ---------------------------------------------------------------------
+    //
+    // This editor could write only quoted strings, and every caller it had wanted one. The first
+    // caller that did not - `job disable`, writing `enabled = false` - would have written
+    // `enabled = "false"`, which ConfigBinder.GetBool rejects. That error is raised against the
+    // whole configuration rather than against one file, so LoadedConfig.HasErrors is true and a
+    // run exits 2 having rotated nothing on the machine. The job is not disabled either.
+    //
+    // WhatIsWrittenParsesBackThroughTheRealBinder sets `password`, a string key, through a
+    // string-only writer: its name promises the general property and it exercises the one case
+    // that cannot fail. These are the rows it was missing.
+
+    /// <summary>An integer is written as an integer, not as a quoted number.</summary>
+    [Fact]
+    public void AnIntegerIsWrittenAsAnIntegerAndNotAsAQuotedNumber()
+    {
+        var file = TomlFile.Parse("schema = 1\n\n[job]\nname = \"iis\"\n", "iis.toml");
+
+        TomlEditor.TrySet(file, ["job"], "rotate", TomlValue.Of(30), out _, out _).ShouldBeTrue();
+
+        file.ToString().ShouldContain("rotate = 30");
+        file.ToString().ShouldNotContain("\"30\"");
+    }
+
+    /// <summary>A bool is written bare, which is the difference between disabled and not.</summary>
+    [Fact]
+    public void ABoolIsWrittenBare()
+    {
+        var file = TomlFile.Parse("schema = 1\n\n[job]\nname = \"iis\"\n", "iis.toml");
+
+        TomlEditor.TrySet(file, ["job"], "enabled", TomlValue.Of(false), out _, out _).ShouldBeTrue();
+
+        file.ToString().ShouldContain("enabled = false");
+        file.ToString().ShouldNotContain("\"false\"");
+    }
+
+    /// <summary>A list is written as an array of quoted strings.</summary>
+    [Fact]
+    public void AListIsWrittenAsAnArrayOfQuotedStrings()
+    {
+        var file = TomlFile.Parse("schema = 1\n\n[job]\nname = \"iis\"\n", "iis.toml");
+
+        TomlEditor.TrySet(
+            file, ["job"], "paths", TomlValue.List(["C:/logs/*.log", "D:/logs/*.log"]),
+            out _, out _).ShouldBeTrue();
+
+        file.ToString().ShouldContain("""paths = ["C:/logs/*.log", "D:/logs/*.log"]""");
+    }
+
+    /// <summary>A single-item list is still an array, and carries no trailing comma.</summary>
+    [Fact]
+    public void AOneItemListIsStillAnArray()
+    {
+        var file = TomlFile.Parse("schema = 1\n\n[job]\nname = \"iis\"\n", "iis.toml");
+
+        TomlEditor.TrySet(file, ["job"], "paths", TomlValue.List(["C:/logs/*.log"]), out _, out _)
+            .ShouldBeTrue();
+
+        file.ToString().ShouldContain("""paths = ["C:/logs/*.log"]""");
+    }
+
+    /// <summary>
+    /// What is written is read back as what was asked for, for every one of the four shapes.
+    /// </summary>
+    /// <remarks>
+    /// Through the real binder, because the question is never "is this valid TOML" - it always
+    /// was - but "does <c>ConfigBinder</c> accept the type". A quoted number is valid TOML and an
+    /// outage.
+    /// </remarks>
+    [Fact]
+    public void EveryShapeIsReadBackAsWhatWasAskedFor()
+    {
+        var file = TomlFile.Parse("schema = 1\n\n[job]\nname = \"iis\"\n", "iis.toml");
+
+        TomlEditor.TrySet(file, ["job"], "paths", TomlValue.List(["C:/logs/*.log"]), out _, out _);
+        TomlEditor.TrySet(file, ["job"], "rotate", TomlValue.Of(30), out _, out _);
+        TomlEditor.TrySet(file, ["job"], "enabled", TomlValue.Of(false), out _, out _);
+        TomlEditor.TrySet(file, ["job"], "compresstype", TomlValue.Of("gzip"), out _, out _);
+
+        var bag = new DiagnosticBag();
+        var job = ConfigBinder.BindJob(TomlFile.Parse(file.ToString(), "iis.toml"), bag);
+
+        bag.Items.Where(d => d.Severity >= Severity.Error).ShouldBeEmpty();
+
+        job.ShouldNotBeNull();
+        job.Paths.ShouldBe(["C:/logs/*.log"]);
+        job.Rotate.ShouldBe(30);
+        job.Enabled.ShouldBeFalse("this is the one that was an outage");
+        job.CompressType.ShouldBe(CompressType.Gzip);
+    }
+
+    /// <summary>A quote or a backslash in a list item is escaped, as it is in a plain string.</summary>
+    [Fact]
+    public void AListItemIsEscapedToo()
+    {
+        var file = TomlFile.Parse("schema = 1\n\n[job]\nname = \"iis\"\n", "iis.toml");
+
+        TomlEditor.TrySet(
+            file, ["job"], "paths", TomlValue.List([@"C:\logs\a""b\*.log"]), out _, out _);
+
+        var bag = new DiagnosticBag();
+        ConfigBinder.BindJob(TomlFile.Parse(file.ToString(), "iis.toml"), bag)
+            .ShouldNotBeNull()
+            .Paths.ShouldBe([@"C:\logs\a""b\*.log"], "what went in comes back out");
+    }
+
+    // ---- removal --------------------------------------------------------------------------
+
+    /// <summary>Removing a key changes exactly one line.</summary>
+    [Fact]
+    public void RemovingAKeyChangesExactlyOneLine()
+    {
+        const string before = "schema = 1\n\n[job]\nname = \"iis\"\nrotate = 7\ncompress = true\n";
+        var file = TomlFile.Parse(before, "iis.toml");
+
+        TomlEditor.TryRemove(file, ["job"], "rotate", out _, out _).ShouldBeTrue();
+
+        file.ToString().ShouldBe("schema = 1\n\n[job]\nname = \"iis\"\ncompress = true\n");
+    }
+
+    /// <summary>
+    /// Removing the last key in a table does not join it to the next one.
+    /// </summary>
+    /// <remarks>
+    /// The blank line between two tables is trailing trivia on the last key's end-of-line token,
+    /// so removing that key takes the blank line with it - the mirror image of what appending is
+    /// careful about, and a one-line edit that reads as a two-line diff.
+    /// </remarks>
+    [Fact]
+    public void RemovingTheLastKeyDoesNotJoinTwoTables()
+    {
+        const string before = "[job]\nname = \"iis\"\nrotate = 7\n\n[notify]\nto = [\"eventlog:\"]\n";
+        var file = TomlFile.Parse(before, "config.toml");
+
+        TomlEditor.TryRemove(file, ["job"], "rotate", out _, out _).ShouldBeTrue();
+
+        file.ToString().ShouldBe("[job]\nname = \"iis\"\n\n[notify]\nto = [\"eventlog:\"]\n");
+    }
+
+    /// <summary>A key that is not there is said so, rather than silently succeeding.</summary>
+    [Fact]
+    public void RemovingAKeyThatIsNotThereSaysSo()
+    {
+        var file = TomlFile.Parse("[job]\nname = \"iis\"\n", "iis.toml");
+
+        TomlEditor.TryRemove(file, ["job"], "rotate", out var error, out var detail).ShouldBeFalse();
+
+        error.ShouldBe(TomlEditError.NoSuchKey);
+        detail.ShouldNotBeNull().ShouldContain("rotate");
+    }
+
+    /// <summary>
+    /// A comment above a removed key stays, deliberately.
+    /// </summary>
+    /// <remarks>
+    /// Deleting a line somebody wrote, because of a different line you removed, is worse than
+    /// leaving a comment with nothing under it.
+    /// </remarks>
+    [Fact]
+    public void ACommentAboveARemovedKeyStays()
+    {
+        const string before = "[job]\nname = \"iis\"\n# keep a week\nrotate = 7\n";
+        var file = TomlFile.Parse(before, "iis.toml");
+
+        TomlEditor.TryRemove(file, ["job"], "rotate", out _, out _).ShouldBeTrue();
+
+        file.ToString().ShouldContain("# keep a week");
+    }
+
+    // ---- reading --------------------------------------------------------------------------
+
+    /// <summary>
+    /// A value is read back as the file writes it, not as a re-rendering of it.
+    /// </summary>
+    /// <remarks>
+    /// An editor showing an operator what their file says has to show what it says: <c>"100M"</c>
+    /// is not <c>104857600</c>, even though the binder reads them the same.
+    /// </remarks>
+    [Fact]
+    public void AValueIsReadBackAsTheFileWritesIt()
+    {
+        var file = TomlFile.Parse("[job]\nname = \"iis\"\nmaxsize = \"100M\"\n", "iis.toml");
+
+        TomlEditor.TryRead(file, ["job"], "maxsize", out var source, out var line).ShouldBeTrue();
+
+        source.ShouldBe("\"100M\"");
+        line.ShouldBe(3);
+    }
+
+    /// <summary>A key that is not written is not read.</summary>
+    [Fact]
+    public void AKeyThatIsNotWrittenIsNotRead() =>
+        TomlEditor.TryRead(
+                TomlFile.Parse("[job]\nname = \"iis\"\n", "iis.toml"),
+                ["job"], "rotate", out _, out _)
+            .ShouldBeFalse();
 }

@@ -12,6 +12,9 @@ public enum TomlEditError
 
     /// <summary>The key would need quoting to be written back, so it is refused instead.</summary>
     UnusableKey,
+
+    /// <summary>The table is there and the key is not, which only removing and reading mind.</summary>
+    NoSuchKey,
 }
 
 /// <summary>
@@ -34,10 +37,17 @@ public enum TomlEditError
 /// files get mangled.
 /// </para>
 /// <para>
-/// Values are written through <see cref="StringValueSyntax"/>, which escapes them. Deliberately
-/// not the <c>LogrotateImporter</c> pattern of interpolating into <c>$"key = \"{value}\""</c>: an
-/// imported file is written disabled and reviewed by a human, whereas a value here comes from a
-/// text box and may contain a quote or a backslash.
+/// Values are written through <see cref="TomlValue"/>, which carries the type the binder will
+/// read back and renders through Tomlyn's own nodes, so they are escaped. Deliberately not the
+/// <c>LogrotateImporter</c> pattern of interpolating into <c>$"key = \"{value}\""</c>: an imported
+/// file is written disabled and reviewed by a human, whereas a value here comes from a text box
+/// and may contain a quote or a backslash.
+/// </para>
+/// <para>
+/// It writes a string, an integer, a bool or an array of strings, because those are the four
+/// shapes this product's configuration has. It wrote only the first until a caller needed to set
+/// <c>enabled = false</c> and got <c>enabled = "false"</c> - see <see cref="TomlValue"/> for what
+/// that costs.
 /// </para>
 /// </remarks>
 public static class TomlEditor
@@ -48,8 +58,13 @@ public static class TomlEditor
     public static bool TrySet(
         TomlFile file, string tablePath, string key, string value,
         out TomlEditError error, out string? detail) =>
-        TrySet(file, tablePath.Split('.', StringSplitOptions.RemoveEmptyEntries),
-            key, value, out error, out detail);
+        TrySet(file, Split(tablePath), key, TomlValue.Of(value), out error, out detail);
+
+    /// <summary>Sets <paramref name="key"/> to a value of the type the binder expects.</summary>
+    public static bool TrySet(
+        TomlFile file, string tablePath, string key, TomlValue value,
+        out TomlEditError error, out string? detail) =>
+        TrySet(file, Split(tablePath), key, value, out error, out detail);
 
     /// <summary>
     /// The same, for a caller that already knows the header's parts.
@@ -61,10 +76,143 @@ public static class TomlEditor
     /// </remarks>
     public static bool TrySet(
         TomlFile file, string[] tableParts, string key, string value,
+        out TomlEditError error, out string? detail) =>
+        TrySet(file, tableParts, key, TomlValue.Of(value), out error, out detail);
+
+    /// <summary>The same, typed, which is the one every other overload ends up in.</summary>
+    public static bool TrySet(
+        TomlFile file, string[] tableParts, string key, TomlValue value,
+        out TomlEditError error, out string? detail)
+    {
+        if (!Locate(file, tableParts, key, out var table, out var existing, out error, out detail))
+        {
+            return false;
+        }
+
+        if (existing is not null)
+        {
+            // The whole point: only the value node is replaced, so the key's spacing, any inline
+            // comment after it, and every other line in the file are untouched.
+            var replacement = value.ToSyntax();
+
+            // An inline comment after the value is trailing trivia on the value's own token, so
+            // replacing the node alone deletes it.
+            if (LastTokenOf(existing.Value) is { TrailingTrivia: { Count: > 0 } after }
+                && LastTokenOf(replacement) is { } into)
+            {
+                into.TrailingTrivia = [.. after];
+            }
+
+            existing.Value = replacement;
+            return true;
+        }
+
+        Append(file, table!, key, value);
+        return true;
+    }
+
+    /// <summary>
+    /// Removes <paramref name="key"/> from a table, leaving its neighbours and their spacing.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// This is how "inherit again" is said. A form cannot express it by writing: <c>""</c>, <c>0</c>
+    /// and <c>false</c> are all <i>set</i> to <see cref="SettingsMerge"/>, which asks
+    /// <c>job ?? defaults ?? built-in</c> - so clearing a text box and writing the empty string
+    /// severs that key from <c>[defaults]</c> for ever while looking like nothing happened.
+    /// </para>
+    /// <para>
+    /// A full-line comment above the removed key stays, and that is deliberate: deleting a line
+    /// somebody wrote, because of a different line you removed, is worse than leaving a comment
+    /// with nothing under it.
+    /// </para>
+    /// </remarks>
+    public static bool TryRemove(
+        TomlFile file, string[] tableParts, string key,
+        out TomlEditError error, out string? detail)
+    {
+        if (!Locate(file, tableParts, key, out var table, out var existing, out error, out detail))
+        {
+            return false;
+        }
+
+        if (existing is null)
+        {
+            error = TomlEditError.NoSuchKey;
+            detail = $"There is no '{key}' in [{string.Join('.', tableParts)}] to remove.";
+            return false;
+        }
+
+        // The blank line separating this table from the next is trailing trivia on the LAST key's
+        // end-of-line token. Removing that key takes the blank line with it and the two tables
+        // run together - the mirror image of what Append is careful about, and the reason this
+        // cannot be a bare Remove.
+        var keys = table!.Items.OfType<KeyValueSyntax>().ToList();
+
+        if (keys.Count > 1
+            && ReferenceEquals(keys[^1], existing)
+            && existing.EndOfLineToken is { TrailingTrivia: { Count: > 0 } trivia }
+            && keys[^2].EndOfLineToken is { } previous)
+        {
+            previous.TrailingTrivia = [.. trivia];
+        }
+
+        for (var i = 0; i < table.Items.ChildrenCount; i++)
+        {
+            if (ReferenceEquals(table.Items.GetChild(i), existing))
+            {
+                table.Items.RemoveChildAt(i);
+                break;
+            }
+        }
+
+        return true;
+    }
+
+    /// <summary>
+    /// The value's source text and 1-based line, exactly as the file writes them.
+    /// </summary>
+    /// <remarks>
+    /// The source text and not a re-rendering, so <c>"100M"</c> comes back as <c>"100M"</c> and
+    /// <c>1_000</c> as <c>1_000</c>. An editor showing an operator what their file says must show
+    /// what it says.
+    /// </remarks>
+    public static bool TryRead(
+        TomlFile file, string[] tableParts, string key, out string? source, out int line)
+    {
+        source = null;
+        line = 0;
+
+        if (!Locate(file, tableParts, key, out _, out var existing, out _, out _)
+            || existing?.Value is null)
+        {
+            return false;
+        }
+
+        source = existing.Value.ToString()!.Trim();
+        line = existing.Span.Start.Line + 1;
+        return true;
+    }
+
+    private static string[] Split(string tablePath) =>
+        tablePath.Split('.', StringSplitOptions.RemoveEmptyEntries);
+
+    /// <summary>
+    /// Finds the table, and the key inside it if it is there.
+    /// </summary>
+    /// <remarks>
+    /// Shared by every operation, so setting, removing and reading cannot come to disagree about
+    /// which table they are looking at or which key they found.
+    /// </remarks>
+    private static bool Locate(
+        TomlFile file, string[] tableParts, string key,
+        out TableSyntaxBase? table, out KeyValueSyntax? existing,
         out TomlEditError error, out string? detail)
     {
         error = TomlEditError.None;
         detail = null;
+        table = null;
+        existing = null;
 
         if (!IsBareKey(key))
         {
@@ -80,7 +228,6 @@ public static class TomlEditor
         // same table and neither survives a string comparison. ConfigBinder.KeyParts is the
         // binder's own reader, used here so the writer cannot disagree with it about which
         // table it is looking at.
-        TableSyntaxBase? table = null;
         foreach (var candidate in file.Document.Tables)
         {
             // [[notify.email.relay]] is an array of tables, not a table. ConfigBinder refuses
@@ -111,8 +258,6 @@ public static class TomlEditor
         // rendered text appends a SECOND password instead - TOML then rejects the duplicate or
         // the binder takes the first, and the plaintext credential this exists to remove is still
         // sitting in the file.
-        KeyValueSyntax? existing = null;
-
         foreach (var candidate in table.Items.OfType<KeyValueSyntax>())
         {
             var parts = NameParts(candidate);
@@ -136,24 +281,6 @@ public static class TomlEditor
             break;
         }
 
-        if (existing is not null)
-        {
-            // The whole point: only the value node is replaced, so the key's spacing, any inline
-            // comment after it, and every other line in the file are untouched.
-            var replacement = new StringValueSyntax(value);
-
-            // An inline comment after the value is trailing trivia on the value's own token, so
-            // replacing the node alone deletes it.
-            if (LastTokenOf(existing.Value) is { TrailingTrivia: { Count: > 0 } after })
-            {
-                replacement.Token!.TrailingTrivia = [.. after];
-            }
-
-            existing.Value = replacement;
-            return true;
-        }
-
-        Append(file, table, key, value);
         return true;
     }
 
@@ -191,7 +318,7 @@ public static class TomlEditor
     /// which is invisible in an editor and shows up as a whole-file diff in git.
     /// </para>
     /// </remarks>
-    private static void Append(TomlFile file, TableSyntaxBase table, string key, string value)
+    private static void Append(TomlFile file, TableSyntaxBase table, string key, TomlValue value)
     {
         var last = table.Items.OfType<KeyValueSyntax>().LastOrDefault();
 
@@ -209,7 +336,7 @@ public static class TomlEditor
         // next diff.
         var eol = last?.EndOfLineToken?.Text ?? NewlineOf(file);
 
-        var added = new KeyValueSyntax(key, new StringValueSyntax(value))
+        var added = new KeyValueSyntax(key, value.ToSyntax())
         {
             EndOfLineToken = new SyntaxToken(TokenKind.NewLine, eol),
         };
