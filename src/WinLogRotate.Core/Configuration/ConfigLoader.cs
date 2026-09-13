@@ -159,7 +159,11 @@ public static class ConfigLoader
                 Code = DiagnosticCode.NoJobsConfigured,
                 Message = $"No job directory at {paths.ConfigDirectory}.",
                 File = paths.ConfigDirectory,
-                Remedy = "Create it and add one .toml file per job, or use the GUI to add one.",
+                // Names a capability that exists. This said "or use the GUI to add one" for
+                // twenty-eight milestones, and there was no such capability - nor a command-line
+                // one. The operator who met this message first met it as a dead end.
+                Remedy = "Run 'winlogrotate job add <name> --paths <glob>' to create the first job, "
+                    + "or create the directory and add one .toml file per job by hand.",
             });
 
             return new LoadedConfig
@@ -236,6 +240,7 @@ public static class ConfigLoader
                 Code = DiagnosticCode.NoJobsConfigured,
                 Message = "No jobs are configured, so nothing will be rotated.",
                 File = paths.ConfigDirectory,
+                Remedy = "Add one with 'winlogrotate job add <name> --paths <glob>'.",
             });
         }
 

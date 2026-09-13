@@ -1,7 +1,9 @@
+using System.CommandLine;
 using System.Globalization;
 using System.Reflection;
 using System.Text.RegularExpressions;
 using Shouldly;
+using WinLogRotate.Cli.Commands;
 using WinLogRotate.Cli.Output;
 using WinLogRotate.Contracts;
 using WinLogRotate.Core.Configuration;
@@ -180,6 +182,93 @@ public partial class ArchitectureTests
         || type == typeof(JobSettings)
         || (type.IsGenericType && type.GetGenericArguments().Any(Resolved))
         || (type.IsArray && Resolved(type.GetElementType()!));
+
+    /// <summary>
+    /// Every verb a remedy tells somebody to run exists.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// <c>ConfigLoader</c> met an operator with an empty configuration directory and told them to
+    /// "use the GUI to add one" for twenty-eight milestones. There was no such capability, and no
+    /// command-line one either - so the first message this product ever showed a new user was a
+    /// dead end, and nothing in the build or the suite had any opinion about that.
+    /// </para>
+    /// <para>
+    /// The text is the product's contract with the person reading it just as much as an envelope
+    /// is with a script, and it is the half nothing was checking. A remedy that names a verb is
+    /// now checked against the tree that verb would have to be in.
+    /// </para>
+    /// </remarks>
+    [Fact]
+    public void EveryVerbARemedyNamesExists()
+    {
+        var src = Path.Combine(RepoRoot.Find().FullName, "src");
+
+        // "winlogrotate job add", "winlogrotate config check" - the words after the product name,
+        // up to the first that is not a plain lowercase word.
+        var quoted = new Regex(@"winlogrotate((?:\s+[a-z][a-z-]*)+)", RegexOptions.Compiled);
+
+        var named = Directory
+            .EnumerateFiles(src, "*.cs", SearchOption.AllDirectories)
+            .Where(f => !f.Contains(Path.Combine("obj", ""), StringComparison.Ordinal))
+            .Where(f => !f.Contains(Path.Combine("bin", ""), StringComparison.Ordinal))
+            .SelectMany(f => quoted.Matches(File.ReadAllText(f))
+                .Select(m => (File: Path.GetFileName(f), Path: m.Groups[1].Value.Split(
+                    ' ', StringSplitOptions.RemoveEmptyEntries))))
+            .Where(x => x.Path.Length > 0)
+            .ToArray();
+
+        var tree = CommandTree.Build();
+
+        var missing = named
+            .Where(x => !Reachable(tree, x.Path))
+            .Select(x => $"{x.File} names 'winlogrotate {string.Join(' ', x.Path)}'")
+            .Distinct()
+            .ToArray();
+
+        missing.ShouldBeEmpty(
+            "a remedy that names a verb this product does not have is a dead end, which is what "
+            + "the empty-configuration message was for twenty-eight milestones");
+
+        // Self-check: the scan has to be finding remedies at all, and the matcher has to be able
+        // to say no.
+        named.Length.ShouldBeGreaterThan(5);
+        Reachable(tree, ["job", "invent"]).ShouldBeFalse();
+        Reachable(tree, ["job", "add"]).ShouldBeTrue();
+    }
+
+    /// <summary>Whether a sequence of words walks down to a real command.</summary>
+    /// <remarks>
+    /// A remedy reads as a sentence - "run 'winlogrotate job add name' to create the first job" -
+    /// so the walk has to stop somewhere and call the rest arguments. It stops where the tree
+    /// does: at a command with no subcommands. A word that is not a subcommand of something that
+    /// <i>has</i> them is a verb this product does not have, which is the whole point.
+    /// </remarks>
+    private static bool Reachable(Command command, string[] words)
+    {
+        var at = command;
+
+        foreach (var word in words)
+        {
+            if (at.Subcommands.Count == 0)
+            {
+                // A leaf verb. Everything from here is an argument.
+                return true;
+            }
+
+            var next = at.Subcommands.FirstOrDefault(
+                c => string.Equals(c.Name, word, StringComparison.Ordinal));
+
+            if (next is null)
+            {
+                return false;
+            }
+
+            at = next;
+        }
+
+        return true;
+    }
 
     /// <summary>
     /// A file's code, without its comments.
