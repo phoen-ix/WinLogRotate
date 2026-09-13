@@ -102,6 +102,81 @@ public sealed class JobEditorModelTests
         view.Fields.Single(f => f.Key == "paths").Value.ShouldBe("C:/logs/*.log\nD:/b/*.log");
     }
 
+    /// <summary>A <c>job show</c> response whose keys are the ones given, for one case.</summary>
+    private static string ShownWith(params (string Key, string Source)[] keys) =>
+        """{"schema":1,"ok":true,"exitCode":0,"result":{"job":"iis","path":"C:\\pd\\conf.d\\iis.toml","diagnostics":[],"keys":["""
+        + string.Join(',', keys.Select((k, i) =>
+            $$$"""{"key":"{{{k.Key}}}","source":{{{System.Text.Json.JsonSerializer.Serialize(k.Source)}}},"line":{{{i + 4}}},"known":true}"""))
+        + "]}}";
+
+    /// <summary>
+    /// A validly cased enum value is shown in the spelling the form offers.
+    /// </summary>
+    /// <remarks>
+    /// The binder accepts <c>schedule = "Daily"</c>, and so does the form's combo list - but the
+    /// list holds "daily", the match was case-sensitive, and a value that matched nothing left the
+    /// combo on no entry at all. Reading that back gave null, null differed from "Daily", and an
+    /// untouched Save sent <c>--unset schedule</c>: Check said the change would be accepted, Save
+    /// prompted for elevation, and a valid line was deleted from the file.
+    /// </remarks>
+    [Theory]
+    [InlineData("\"Daily\"")]
+    [InlineData("\"DAILY\"")]
+    [InlineData("'daily'")]
+    public void AValidlyCasedEnumValueIsShownInTheSpellingTheFormOffers(string source)
+    {
+        var view = JobEditorModel.From(ShownWith(("schedule", source), ("kind", "\"Manage\"")));
+
+        view.Fields.Single(f => f.Key == "schedule").Value.ShouldBe("daily");
+        view.Fields.Single(f => f.Key == "kind").Value.ShouldBe("manage");
+
+        // What the form hands back is the spelling it offered, and that is not a change.
+        var untouched = JobEditorModel.SaveArgs(
+            null, "iis", isNew: false, view,
+            new Dictionary<string, string?> { ["schedule"] = "daily", ["kind"] = "manage" });
+
+        untouched.ShouldBe(["job", "set", "iis"]);
+    }
+
+    /// <summary>
+    /// An enum value this build does not know is kept as written, and an untouched Save keeps it.
+    /// </summary>
+    /// <remarks>
+    /// A newer CLI may accept a value this window has no entry for. The form adds it to the list
+    /// so it can be selected and handed back; what this pins is that the model neither rewrites
+    /// it nor treats its return as a change.
+    /// </remarks>
+    [Fact]
+    public void AnEnumValueThisBuildDoesNotKnowSurvivesUntouched()
+    {
+        var view = JobEditorModel.From(ShownWith(("schedule", "\"fortnightly\"")));
+
+        view.Fields.Single(f => f.Key == "schedule").Value.ShouldBe("fortnightly");
+
+        JobEditorModel.SaveArgs(
+                null, "iis", isNew: false, view,
+                new Dictionary<string, string?> { ["schedule"] = "fortnightly" })
+            .ShouldBe(["job", "set", "iis"]);
+    }
+
+    /// <summary>
+    /// A quoted value is decoded the way the binder reads it, whichever quotes it wears.
+    /// </summary>
+    /// <remarks>
+    /// TOML has two string spellings. A literal <c>'D:\archive'</c> was shown with its quotes on,
+    /// because only <c>"…"</c> was stripped; and a basic string's escapes were shown raw, so
+    /// <c>"D:\\archive"</c> appeared with two backslashes and a person who "fixed" it to one
+    /// would have written a change to a file that already said that.
+    /// </remarks>
+    [Theory]
+    [InlineData("'D:\\archive'", "D:\\archive")]
+    [InlineData("\"D:\\\\archive\"", "D:\\archive")]
+    [InlineData("\"say \\\"hi\\\"\"", "say \"hi\"")]
+    [InlineData("\"100M\"", "100M")]
+    public void AQuotedValueIsDecodedAsTheBinderReadsIt(string source, string shown) =>
+        JobEditorModel.From(ShownWith(("olddir", source)))
+            .Fields.Single(f => f.Key == "olddir").Value.ShouldBe(shown);
+
     /// <summary>A key this build does not know is shown, not dropped.</summary>
     /// <remarks>
     /// The operator is being warned about it, and <c>--unset</c> is the only way to act on that

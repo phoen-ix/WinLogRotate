@@ -1,4 +1,5 @@
 using System.Text.Json;
+using Tomlyn.Syntax;
 using WinLogRotate.Core.Configuration;
 
 namespace WinLogRotate.Gui.Cli;
@@ -198,7 +199,7 @@ public static class JobEditorModel
                         Group = row.Group,
                         Choices = row.Choices,
                         Sample = row.Sample,
-                        Value = Display(row.Kind, found.Source),
+                        Value = Display(row, found.Source),
                         Line = found.Line,
                         Known = true,
                     }
@@ -210,14 +211,22 @@ public static class JobEditorModel
             // 'job set --unset' is the only way to act on that warning.
             foreach (var (key, found) in written.Where(w => !w.Value.Known))
             {
-                fields.Add(new JobField
+                var unknown = new JobKey
                 {
                     Key = key,
                     Kind = JobKeyKind.Text,
                     Group = JobKeyGroup.Behaviour,
+                    Sample = string.Empty,
+                };
+
+                fields.Add(new JobField
+                {
+                    Key = key,
+                    Kind = unknown.Kind,
+                    Group = unknown.Group,
                     Choices = [],
                     Sample = string.Empty,
-                    Value = Display(JobKeyKind.Text, found.Source),
+                    Value = Display(unknown, found.Source),
                     Line = found.Line,
                     Known = false,
                 });
@@ -382,16 +391,53 @@ public static class JobEditorModel
         return int.MaxValue;
     }
 
-    /// <summary>A source value as a person should see it in a box.</summary>
-    private static string Display(JobKeyKind kind, string source) =>
-        kind == JobKeyKind.TextList
-            ? string.Join('\n', JobSchema.ListItems(source))
-            : Unquote(source);
+    /// <summary>
+    /// A source value as a person should see it in a box.
+    /// </summary>
+    /// <remarks>
+    /// An enum value is shown in the spelling the form's list offers. The binder accepts
+    /// <c>schedule = "Daily"</c>, and a combo holding "daily" matched it case-sensitively against
+    /// nothing - so the box showed no selection, read back null, and an untouched Save sent
+    /// <c>--unset schedule</c> for a line that was valid. A value not in the list at all is kept
+    /// as written, for a CLI newer than this window; the form adds it to the list so it can be
+    /// handed straight back.
+    /// </remarks>
+    private static string Display(JobKey row, string source) => row.Kind switch
+    {
+        JobKeyKind.TextList => string.Join('\n', JobSchema.ListItems(source)),
+        JobKeyKind.Enum => Canonical(row.Choices, Scalar(source)),
+        _ => Scalar(source),
+    };
 
-    private static string Unquote(string source) =>
-        source.Length > 1 && source[0] == '"' && source[^1] == '"'
-            ? source[1..^1]
-            : source;
+    private static string Canonical(IReadOnlyList<string> choices, string value) =>
+        choices.FirstOrDefault(c => string.Equals(c, value, StringComparison.OrdinalIgnoreCase)) ?? value;
+
+    /// <summary>
+    /// A quoted TOML scalar as the binder reads it, or anything else as it was written.
+    /// </summary>
+    /// <remarks>
+    /// Through the product's own parser rather than by stripping quotes. TOML has two string
+    /// spellings, and only the basic one was being unquoted: a literal <c>'D:\archive'</c> kept
+    /// its quotes in the box, and a basic string's escapes were shown raw, so <c>"D:\\archive"</c>
+    /// appeared with two backslashes. Somebody "fixing" that to one would have written a change
+    /// to a file that already said it.
+    /// </remarks>
+    private static string Scalar(string source)
+    {
+        var trimmed = source.Trim();
+
+        if (trimmed.Length < 2 || trimmed[0] is not ('"' or '\''))
+        {
+            return source;
+        }
+
+        var document = TomlFile.Parse($"x = {trimmed}", "<value>");
+
+        return !document.HasErrors
+            && document.Document.KeyValues.GetChild(0) is KeyValueSyntax { Value: StringValueSyntax { Value: { } text } }
+                ? text
+                : source;
+    }
 
     /// <summary>What one field's text names, which for a list is one item per line.</summary>
     private static IReadOnlyList<string> Items(JobKeyKind kind, string value) =>

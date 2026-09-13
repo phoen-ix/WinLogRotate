@@ -342,7 +342,7 @@ public sealed class JobEditor : Form
             _kind.Items.Add(choice);
         }
 
-        _kind.SelectedItem = Field("kind")?.Value ?? string.Empty;
+        Select(_kind, Field("kind")?.Value ?? string.Empty);
         _enabled.Checked = !string.Equals(Field("enabled")?.Value, "false", StringComparison.OrdinalIgnoreCase);
 
         foreach (var (key, control) in _editors)
@@ -605,11 +605,31 @@ public sealed class JobEditor : Form
     {
         if (control is ComboBox combo)
         {
-            combo.SelectedItem = value;
+            Select(combo, value);
             return;
         }
 
         control.Text = value;
+    }
+
+    /// <summary>
+    /// Selects a value, adding it to the list first if the list does not have it.
+    /// </summary>
+    /// <remarks>
+    /// <c>SelectedItem</c> set to something the list lacks selects nothing, silently. The model
+    /// shows a known value in the list's own spelling, so what arrives here and is missing is a
+    /// value this build does not know - from a newer CLI, or a hand-written file - and the only
+    /// way to hand it back unchanged is to make it selectable. Without this, reading the combo
+    /// gave null, and null differed from the file, and an untouched Save deleted the line.
+    /// </remarks>
+    private static void Select(ComboBox combo, string value)
+    {
+        if (!combo.Items.Contains(value))
+        {
+            combo.Items.Add(value);
+        }
+
+        combo.SelectedItem = value;
     }
 
     private static string? Read(Control control) =>
