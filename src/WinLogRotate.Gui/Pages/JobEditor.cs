@@ -50,6 +50,9 @@ public sealed class JobEditor : Form
     private readonly string? _hookWarning;
     private readonly Dictionary<string, Control> _editors = new(StringComparer.OrdinalIgnoreCase);
 
+    /// <summary>What the save wrote, in the verb's words, for the page that opened this.</summary>
+    private string? _said;
+
     private readonly TextBox _name = new() { Bounds = new Rectangle(120, 16, 260, 24) };
     private readonly TextBox _paths = new()
     {
@@ -119,11 +122,12 @@ public sealed class JobEditor : Form
     /// Opens the editor for a job, or for one that does not exist yet.
     /// </summary>
     /// <remarks>
-    /// Returns true when something was written, which is the only thing the caller needs: it
-    /// refreshes on true and leaves its grid alone on false, so a cancelled edit does not look
-    /// like a change.
+    /// Returns what the save wrote, in the verb's own words, or null when nothing was: the caller
+    /// refreshes and shows the sentence on a value, and leaves its grid alone on null, so a
+    /// cancelled edit does not look like a change. It used to return a bare true, and the "2
+    /// changes in iis.toml" the verb had counted was discarded on the way.
     /// </remarks>
-    public static async Task<bool> ShowAsync(
+    public static async Task<string?> ShowAsync(
         IWin32Window owner, CliRunner cli, string? configDir, string? job)
     {
         var view = JobEditorModel.Blank();
@@ -138,7 +142,7 @@ public sealed class JobEditor : Form
             if (read.IsDefect)
             {
                 LrDialog.Error(owner, "Job", read.Describe(), read.Details);
-                return false;
+                return null;
             }
 
             view = JobEditorModel.From(read.StdOut);
@@ -148,7 +152,7 @@ public sealed class JobEditor : Form
                 LrDialog.Error(owner, "Unexpected response",
                     "winlogrotate.exe returned something this window could not read. "
                     + "This usually means the two are different versions.", read.StdOut);
-                return false;
+                return null;
             }
         }
 
@@ -165,7 +169,7 @@ public sealed class JobEditor : Form
             : JobEditorModel.HookWarning(JobEditorModel.HooksAllowed(doctor.StdOut));
 
         using var form = new JobEditor(cli, configDir, view, job is null, warning);
-        return form.ShowDialog(owner) == DialogResult.OK;
+        return form.ShowDialog(owner) == DialogResult.OK ? form._said : null;
     }
 
     private void Build()
@@ -530,12 +534,16 @@ public sealed class JobEditor : Form
             return;
         }
 
-        if (!result.Ok)
+        var written = Report(result, checking: false);
+
+        if (written is null)
         {
-            Report(result, checking: false);
+            // Refused, or already what the file said. Either way the form stays open with the
+            // verb's sentence in the status line, and nothing is reported as a change.
             return;
         }
 
+        _said = written;
         DialogResult = DialogResult.OK;
         Close();
     }
@@ -558,26 +566,33 @@ public sealed class JobEditor : Form
             : null;
     }
 
-    private void Report(CliResult result, bool checking)
+    /// <summary>
+    /// Says what the verb answered, and returns the sentence when something was written.
+    /// </summary>
+    /// <remarks>
+    /// Through <see cref="JobEditProjection"/>, not <c>ConfigCheckProjection</c>: a job verb's
+    /// payload has no <c>errors</c> or <c>warnings</c> count, and a refusal has no payload at
+    /// all, so the check projection reported every one of them as an unreadable response. The
+    /// verb's own words - which key, which value, and an example that works - go in the status
+    /// line; a refusal with more to say also opens the dialog, because a status line is one line.
+    /// </remarks>
+    private string? Report(CliResult result, bool checking)
     {
-        var view = ConfigCheckProjection.From(result, Core.ExitCode.ConfigInvalid);
+        var view = JobEditProjection.From(result);
 
-        if (result.Ok && checking)
+        Say(view.Message, view.Tone switch
         {
-            Say(JobEditorModel.Changes(Args(dryRun: false))
-                ? "This would be accepted. Nothing has been written."
-                : "This is already what the file says. Nothing to change.",
-                Theme.Current.Muted);
+            CheckTone.Error => Theme.Current.Danger,
+            CheckTone.Warning => Theme.Current.Warning,
+            _ => Theme.Current.Muted,
+        });
 
-            return;
-        }
-
-        Say(view.Message, Theme.Current.Danger);
-
-        if (view.Details is { Length: > 0 })
+        if (view.Tone == CheckTone.Error && view.Details.Length > 0)
         {
             LrDialog.Show(this, DialogKind.Error, checking ? "Check" : "Save", view.Message, view.Details);
         }
+
+        return view.Written ? view.Message : null;
     }
 
     private void Say(string text, Color colour)

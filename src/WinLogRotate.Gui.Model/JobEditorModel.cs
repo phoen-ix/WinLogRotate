@@ -322,10 +322,19 @@ public static class JobEditorModel
     /// The same command line, with the flag that makes it write nothing.
     /// </summary>
     /// <remarks>
-    /// Validate and save differ by exactly this, and by nothing else. A form that validated
-    /// through one route and saved through another would show a green tick and then fail - and
-    /// <c>--dry-run</c> needs no administrator rights, so this can run on every blur without a
-    /// UAC prompt.
+    /// <para>
+    /// Validate and save differ by exactly this, and by nothing that changes what is judged. A
+    /// form that validated through one route and saved through another would show a green tick
+    /// and then fail - and <c>--dry-run</c> needs no administrator rights, so this can run on
+    /// every blur without a UAC prompt.
+    /// </para>
+    /// <para>
+    /// <c>--json</c> as well, because this runs unelevated and the answer comes back on stdout.
+    /// Without it the verb answers in prose, with its diagnostics on standard error, and
+    /// <see cref="JobEditProjection"/> has no envelope to read: every Check then said "could not
+    /// read the response" with the actual reason under an expander. The elevated save needs no
+    /// such flag - the runner adds <c>--json-stream</c>, which implies it.
+    /// </para>
     /// </remarks>
     public static IReadOnlyList<string> ValidateArgs(
         string? configDir,
@@ -333,7 +342,7 @@ public static class JobEditorModel
         bool isNew,
         JobEditorView original,
         IReadOnlyDictionary<string, string?> edited) =>
-        [.. SaveArgs(configDir, job, isNew, original, edited), "--dry-run"];
+        [.. SaveArgs(configDir, job, isNew, original, edited), "--dry-run", "--json"];
 
     /// <summary>Whether a Save would send anything at all.</summary>
     /// <remarks>

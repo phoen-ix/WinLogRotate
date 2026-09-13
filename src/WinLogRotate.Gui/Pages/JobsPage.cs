@@ -80,7 +80,11 @@ public sealed class JobsPage : UserControl
         Load += async (_, _) => await LoadAsync().ConfigureAwait(true);
     }
 
-    private async Task LoadAsync()
+    /// <param name="said">
+    /// What a write just did, in the verb's words, to show beside the count. Null on a plain
+    /// refresh.
+    /// </param>
+    private async Task LoadAsync(string? said = null)
     {
         _status.Text = "Loading...";
         var result = await _cli.RunAsync(CliArgs.For(_configDir, "config", "show", "--json"))
@@ -119,7 +123,7 @@ public sealed class JobsPage : UserControl
             }
         }
 
-        _status.Text = view.Summary;
+        _status.Text = said is null ? view.Summary : $"{said}  {view.Summary}";
         _status.ForeColor = view.Unreadable ? Theme.Current.Danger : Theme.Current.Muted;
 
         if (view.Unreadable)
@@ -191,13 +195,14 @@ public sealed class JobsPage : UserControl
     /// <summary>Opens the editor, and reloads only if it wrote something.</summary>
     /// <remarks>
     /// A null name is a new job. Reloading unconditionally would be harmless but slower and, on a
-    /// cancelled edit, would look to somebody watching like their cancel did something.
+    /// cancelled edit, would look to somebody watching like their cancel did something. What was
+    /// written is said under the grid, because the editor that said it has just closed.
     /// </remarks>
     private async Task EditAsync(string? job)
     {
-        if (await JobEditor.ShowAsync(this, _cli, _configDir, job).ConfigureAwait(true))
+        if (await JobEditor.ShowAsync(this, _cli, _configDir, job).ConfigureAwait(true) is { } said)
         {
-            await LoadAsync().ConfigureAwait(true);
+            await LoadAsync(said).ConfigureAwait(true);
         }
     }
 
@@ -258,8 +263,16 @@ public sealed class JobsPage : UserControl
 
     /// <summary>What every elevated write here does with its answer.</summary>
     /// <remarks>
+    /// <para>
     /// One place, because the three of them differ only in the word in the title - and a guard
     /// copied three times is a guard that will be copied a fourth.
+    /// </para>
+    /// <para>
+    /// Read with <see cref="JobEditProjection"/>. These verbs answer with a <c>JobEditResult</c>,
+    /// or with no payload at all when they refuse, and the check projection this used to call
+    /// reported both as an unreadable response - so a refusal to remove a job that is not there
+    /// said nothing about which jobs are.
+    /// </para>
     /// </remarks>
     private async Task AfterWriteAsync(CliResult result, string what)
     {
@@ -276,13 +289,14 @@ public sealed class JobsPage : UserControl
             return;
         }
 
+        var view = JobEditProjection.From(result);
+
         if (!result.Ok)
         {
-            var view = ConfigCheckProjection.From(result, Core.ExitCode.ConfigInvalid);
             LrDialog.Show(this, DialogKind.Error, what, view.Message, view.Details);
             return;
         }
 
-        await LoadAsync().ConfigureAwait(true);
+        await LoadAsync(view.Message).ConfigureAwait(true);
     }
 }

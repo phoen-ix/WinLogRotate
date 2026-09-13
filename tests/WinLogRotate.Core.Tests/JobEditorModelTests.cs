@@ -333,15 +333,23 @@ public sealed class JobEditorModelTests
     }
 
     /// <summary>
-    /// Validate and save differ by exactly one flag.
+    /// Validate is save with the flag that writes nothing, and the one that answers in JSON.
     /// </summary>
     /// <remarks>
+    /// <para>
     /// Same arguments, same code path, same verdict. A form that validated through one route and
     /// saved through another would report a green tick and then fail - which is the failure mode
     /// an operator has no way to diagnose.
+    /// </para>
+    /// <para>
+    /// <c>--json</c> is the second flag, and it changes the channel rather than the judgement:
+    /// the dry run is unelevated and read from stdout, and without it the verb answered in prose
+    /// with its diagnostics on standard error - so every Check read "could not read the
+    /// response". The elevated save gets <c>--json-stream</c> from the runner instead.
+    /// </para>
     /// </remarks>
     [Fact]
-    public void ValidateAndSaveDifferByExactlyOneFlag()
+    public void ValidateIsSaveWithTheFlagsThatWriteNothingAndAnswerInJson()
     {
         var view = Loaded();
         var edited = view.Fields.ToDictionary(f => f.Key, f => f.Value);
@@ -350,7 +358,7 @@ public sealed class JobEditorModelTests
         var save = JobEditorModel.SaveArgs(null, "iis", isNew: false, view, edited);
         var check = JobEditorModel.ValidateArgs(null, "iis", isNew: false, view, edited);
 
-        check.ShouldBe([.. save, "--dry-run"]);
+        check.ShouldBe([.. save, "--dry-run", "--json"]);
         ShouldParse(check);
     }
 

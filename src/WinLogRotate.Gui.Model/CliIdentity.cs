@@ -219,40 +219,12 @@ public sealed record CliIdentity
     /// The last envelope in the output, or null if there is none.
     /// </summary>
     /// <remarks>
-    /// The last, and keyed on a numeric <c>schema</c>, which is the rule <c>JsonStreamTests</c>
-    /// already uses. <c>--version --json</c> writes exactly one line today; the rule costs
-    /// nothing and means this also reads a file written by <c>--json-stream</c>, which is how the
-    /// tests feed it.
+    /// <see cref="EnvelopeReader"/> decides which line that is. <c>--version --json</c> writes
+    /// exactly one line today; the shared rule costs nothing and means this also reads a file
+    /// written by <c>--json-stream</c>, which is how the tests feed it.
     /// </remarks>
-    private static JsonElement? Envelope(string output)
-    {
-        JsonElement? found = null;
-
-        foreach (var line in output.Split('\n'))
-        {
-            var text = line.TrimEnd('\r');
-            if (text.Length == 0 || !text.StartsWith('{'))
-            {
-                continue;
-            }
-
-            try
-            {
-                var root = JsonDocument.Parse(text).RootElement;
-
-                if (root.ValueKind == JsonValueKind.Object
-                    && root.TryGetProperty("schema", out var schema)
-                    && schema.ValueKind == JsonValueKind.Number)
-                {
-                    found = root.Clone();
-                }
-            }
-            catch (JsonException)
-            {
-                // Not an envelope. A torn line, or a verb that printed something shaped like one.
-            }
-        }
-
-        return found;
-    }
+    private static JsonElement? Envelope(string output) =>
+        EnvelopeReader.Last(output) is { } line
+            ? JsonDocument.Parse(line).RootElement.Clone()
+            : null;
 }
