@@ -37,10 +37,16 @@ public static class SecretPrompt
     };
 
     /// <summary>Null if the operator cancelled, or if the two entries differed.</summary>
+    /// <remarks>
+    /// Every position comes from <see cref="SecretPromptLayout"/>. The form used to size itself
+    /// first and place its buttons last, from a <c>y</c> that had grown past the height it had
+    /// chosen - so for a provider with two fields, Store and Cancel had four visible pixels.
+    /// </remarks>
     public static SecretRequest? Ask(IWin32Window owner, string provider, string kind)
     {
         var fields = FieldsFor(kind);
         var colors = Theme.Current;
+        var layout = SecretPromptLayout.Compute(fields.Length);
 
         using var form = new Form
         {
@@ -49,62 +55,59 @@ public static class SecretPrompt
             StartPosition = FormStartPosition.CenterParent,
             MinimizeBox = false,
             MaximizeBox = false,
-            ClientSize = new Size(420, 150 + (fields.Length * 24)),
+            ClientSize = new Size(layout.ClientWidth, layout.ClientHeight),
             BackColor = colors.Window,
             ForeColor = colors.Text,
         };
 
         var picked = new List<RadioButton>();
-        var y = 14;
 
-        if (fields.Length > 1)
+        if (layout.Which is { } which)
         {
             form.Controls.Add(new Label
             {
                 Text = "Which credential:",
-                Bounds = new Rectangle(16, y, 380, 18),
+                Bounds = which.ToRectangle(),
                 ForeColor = colors.Muted,
             });
-
-            y += 22;
         }
 
-        foreach (var field in fields)
+        // One radio per field when there is a choice, and none when there is not: a single
+        // radio for a single field is a question with one answer.
+        for (var i = 0; i < layout.Radios.Count; i++)
         {
             var radio = new RadioButton
             {
-                Text = field,
-                Bounds = new Rectangle(20, y, 380, 22),
-                Checked = picked.Count == 0,
-                Visible = fields.Length > 1,
+                Text = fields[i],
+                Bounds = layout.Radios[i].ToRectangle(),
+                Checked = i == 0,
             };
 
             picked.Add(radio);
             form.Controls.Add(radio);
-            y += fields.Length > 1 ? 24 : 0;
         }
 
         var value = new TextBox
         {
-            Bounds = new Rectangle(16, y + 20, 388, 24),
+            Bounds = layout.Value.ToRectangle(),
             UseSystemPasswordChar = true,
         };
 
         var again = new TextBox
         {
-            Bounds = new Rectangle(16, y + 74, 388, 24),
+            Bounds = layout.Again.ToRectangle(),
             UseSystemPasswordChar = true,
         };
 
-        form.Controls.Add(new Label { Text = "Value", Bounds = new Rectangle(16, y + 2, 200, 16), ForeColor = colors.Muted });
+        form.Controls.Add(new Label { Text = "Value", Bounds = layout.ValueCaption.ToRectangle(), ForeColor = colors.Muted });
         form.Controls.Add(value);
-        form.Controls.Add(new Label { Text = "Repeat it", Bounds = new Rectangle(16, y + 56, 200, 16), ForeColor = colors.Muted });
+        form.Controls.Add(new Label { Text = "Repeat it", Bounds = layout.RepeatCaption.ToRectangle(), ForeColor = colors.Muted });
         form.Controls.Add(again);
 
         var ok = new Button
         {
             Text = "Store",
-            Bounds = new Rectangle(228, y + 110, 84, 26),
+            Bounds = layout.Store.ToRectangle(),
             FlatStyle = FlatStyle.System,
             DialogResult = DialogResult.OK,
         };
@@ -112,7 +115,7 @@ public static class SecretPrompt
         var cancel = new Button
         {
             Text = "Cancel",
-            Bounds = new Rectangle(320, y + 110, 84, 26),
+            Bounds = layout.Cancel.ToRectangle(),
             FlatStyle = FlatStyle.System,
             DialogResult = DialogResult.Cancel,
         };

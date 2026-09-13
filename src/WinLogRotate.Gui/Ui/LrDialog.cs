@@ -1,6 +1,7 @@
 using System.Runtime.InteropServices;
 
 using WinLogRotate.Core;
+using WinLogRotate.Gui.Cli;
 
 namespace WinLogRotate.Gui.Ui;
 
@@ -64,11 +65,22 @@ public static partial class LrDialog
     /// </remarks>
     private static bool Absent(string? details) => string.IsNullOrWhiteSpace(details);
 
+    /// <summary>
+    /// Builds the dialog, with every position taken from <see cref="DialogLayout"/>.
+    /// </summary>
+    /// <remarks>
+    /// The layout is computed twice - collapsed and expanded - and applied whole each time the
+    /// expander is clicked. The old code grew the form and the details box by hand and left the
+    /// buttons where the collapsed state had put them, so the details were painted over the OK
+    /// button of every error dialog in the product.
+    /// </remarks>
     private static Form Build(
         DialogKind kind, string title, string message, string? details,
         MessageBoxButtons buttons, bool affirmativeNeedsAdmin)
     {
         var colors = Theme.Current;
+        var hasDetails = !Absent(details);
+        var yesNo = buttons == MessageBoxButtons.YesNo;
 
         var form = new Form
         {
@@ -77,7 +89,6 @@ public static partial class LrDialog
             StartPosition = FormStartPosition.CenterParent,
             MinimizeBox = false,
             MaximizeBox = false,
-            ClientSize = new Size(460, Absent(details) ? 150 : 180),
             BackColor = colors.Window,
             ForeColor = colors.Text,
         };
@@ -86,7 +97,6 @@ public static partial class LrDialog
         {
             Text = message,
             AutoSize = false,
-            Bounds = new Rectangle(16, 16, 428, 70),
             ForeColor = kind == DialogKind.Error ? colors.Danger
                 : kind == DialogKind.Warning ? colors.Warning
                 : colors.Text,
@@ -94,7 +104,10 @@ public static partial class LrDialog
         form.Controls.Add(label);
 
         TextBox? detailBox = null;
-        if (!Absent(details))
+        LinkLabel? expander = null;
+        Button? copy = null;
+
+        if (hasDetails)
         {
             detailBox = new TextBox
             {
@@ -103,33 +116,22 @@ public static partial class LrDialog
                 ScrollBars = ScrollBars.Vertical,
                 Font = new Font(FontFamily.GenericMonospace, 8.25f),
                 Text = details,
-                Bounds = new Rectangle(16, 92, 428, 0),
                 Visible = false,
                 BackColor = colors.Surface,
                 ForeColor = colors.Text,
             };
             form.Controls.Add(detailBox);
 
-            var expander = new LinkLabel
+            expander = new LinkLabel
             {
                 Text = "Show details",
-                Bounds = new Rectangle(16, 92, 120, 20),
                 LinkColor = colors.Accent,
-            };
-            expander.LinkClicked += (_, _) =>
-            {
-                var showing = !detailBox.Visible;
-                detailBox.Visible = showing;
-                detailBox.Bounds = new Rectangle(16, 116, 428, showing ? 140 : 0);
-                expander.Text = showing ? "Hide details" : "Show details";
-                form.ClientSize = new Size(460, showing ? 330 : 180);
             };
             form.Controls.Add(expander);
 
-            var copy = new Button
+            copy = new Button
             {
                 Text = "Copy",
-                Bounds = new Rectangle(150, 90, 70, 24),
                 FlatStyle = FlatStyle.System,
             };
             copy.Click += (_, _) =>
@@ -149,12 +151,10 @@ public static partial class LrDialog
 
         var affirmative = new Button
         {
-            Text = buttons == MessageBoxButtons.YesNo ? "Yes" : "OK",
-            DialogResult = buttons == MessageBoxButtons.YesNo ? DialogResult.Yes : DialogResult.OK,
-            Bounds = new Rectangle(buttons == MessageBoxButtons.YesNo ? 260 : 344, 0, 90, 28),
+            Text = yesNo ? "Yes" : "OK",
+            DialogResult = yesNo ? DialogResult.Yes : DialogResult.OK,
             FlatStyle = FlatStyle.System,
         };
-        affirmative.Top = form.ClientSize.Height - 44;
         form.Controls.Add(affirmative);
         form.AcceptButton = affirmative;
 
@@ -163,13 +163,14 @@ public static partial class LrDialog
             AddShield(affirmative);
         }
 
-        if (buttons == MessageBoxButtons.YesNo)
+        Button? negative = null;
+
+        if (yesNo)
         {
-            var negative = new Button
+            negative = new Button
             {
                 Text = "No",
                 DialogResult = DialogResult.No,
-                Bounds = new Rectangle(356, affirmative.Top, 90, 28),
                 FlatStyle = FlatStyle.System,
             };
             form.Controls.Add(negative);
@@ -178,6 +179,45 @@ public static partial class LrDialog
         else
         {
             form.CancelButton = affirmative;
+        }
+
+        void Arrange(bool showing)
+        {
+            var layout = DialogLayout.Compute(hasDetails, showing, yesNo);
+
+            form.ClientSize = new Size(layout.ClientWidth, layout.ClientHeight);
+            label.Bounds = layout.Message.ToRectangle();
+
+            if (expander is not null && layout.Expander is { } e)
+            {
+                expander.Bounds = e.ToRectangle();
+                expander.Text = showing ? "Hide details" : "Show details";
+            }
+
+            if (copy is not null && layout.Copy is { } c)
+            {
+                copy.Bounds = c.ToRectangle();
+            }
+
+            if (detailBox is not null)
+            {
+                detailBox.Visible = layout.Details is not null;
+                detailBox.Bounds = (layout.Details ?? new Box(layout.Message.X, layout.Message.Bottom, layout.Message.Width, 0)).ToRectangle();
+            }
+
+            affirmative.Bounds = layout.Affirmative.ToRectangle();
+
+            if (negative is not null && layout.Negative is { } n)
+            {
+                negative.Bounds = n.ToRectangle();
+            }
+        }
+
+        Arrange(showing: false);
+
+        if (expander is not null && detailBox is not null)
+        {
+            expander.LinkClicked += (_, _) => Arrange(showing: !detailBox.Visible);
         }
 
         return form;

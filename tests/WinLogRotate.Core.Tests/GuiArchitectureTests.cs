@@ -130,27 +130,44 @@ public sealed partial class GuiArchitectureTests
     }
 
     /// <summary>
-    /// The job editor takes every position from the layout the tests can see.
+    /// Every window takes its positions from a layout the tests can see.
     /// </summary>
     /// <remarks>
     /// <para>
-    /// The form gave its advanced grid the height left over after eight rows of fields, which
-    /// was -52, and nothing could say so: the arithmetic lived beside the controls, in a project
-    /// no test on this leg can load. <c>JobEditorLayout</c> is that arithmetic as a record, and
-    /// <c>JobEditorLayoutTests</c> asserts every box positive, disjoint and inside the window.
+    /// Three windows typed their positions beside their controls, in a project no test on this
+    /// leg can load, and all three were wrong: the job editor gave its grid a height of -52, the
+    /// credential prompt left four pixels of its Store button inside the window, and the message
+    /// dialog painted its details over its OK button. Each has a layout record in Gui.Model now,
+    /// and <c>JobEditorLayoutTests</c> and <c>DialogLayoutTests</c> assert every box positive,
+    /// disjoint and inside the window.
     /// </para>
     /// <para>
-    /// Which is worth nothing if the form types a rectangle of its own beside it. So it may not:
-    /// a position the layout does not know is a position no rule can check.
+    /// Which is worth nothing if a window types a rectangle of its own beside the layout. So no
+    /// file in the project may: a position the layout does not know is a position no rule can
+    /// check. The three windows that have a layout must also ask it.
     /// </para>
     /// </remarks>
     [Fact]
-    public void TheJobEditorTakesEveryPositionFromTheLayout()
+    public void EveryWindowTakesItsPositionsFromALayout()
     {
-        var editor = Code(Path.Combine(Gui, "Pages", "JobEditor.cs"));
+        GuiFiles()
+            .Where(f => Code(f).Contains("new Rectangle(", StringComparison.Ordinal))
+            .Select(Path.GetFileName)
+            .ShouldBeEmpty("a hand-typed position is one the layout tests cannot see");
 
-        editor.ShouldContain("JobEditorLayout.Compute(", customMessage: "the form must ask the layout");
-        editor.ShouldNotContain("new Rectangle(", customMessage: "a hand-typed position is one the layout tests cannot see");
-        editor.ShouldContain("layout.ClientHeight", customMessage: "the client size is the layout's too");
+        var layouts = new Dictionary<string, string>(StringComparer.Ordinal)
+        {
+            [Path.Combine("Pages", "JobEditor.cs")] = "JobEditorLayout.Compute(",
+            [Path.Combine("Ui", "LrDialog.cs")] = "DialogLayout.Compute(",
+            [Path.Combine("Ui", "SecretPrompt.cs")] = "SecretPromptLayout.Compute(",
+        };
+
+        foreach (var (file, layout) in layouts)
+        {
+            var code = Code(Path.Combine(Gui, file));
+
+            code.ShouldContain(layout, customMessage: $"{file} must ask its layout");
+            code.ShouldContain("layout.ClientHeight", customMessage: $"{file}'s client size is the layout's too");
+        }
     }
 }
