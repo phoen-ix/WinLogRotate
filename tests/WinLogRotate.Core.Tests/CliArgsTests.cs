@@ -44,6 +44,7 @@ public sealed class CliArgsTests
     [InlineData("notify test")]
     [InlineData("notify reset")]
     [InlineData("run --dry-run --verbose --no-notify")]
+    [InlineData("run --dry-run --force --catchup --no-notify --job iis --json-stream")]
     public void EveryUnelevatedCommandLineParses(string verb)
     {
         string[] words = verb.Split(' ');
