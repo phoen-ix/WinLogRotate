@@ -79,15 +79,17 @@ public static class JournalHistory
     /// <remarks>
     /// The run and job brackets are scaffolding. Guard verdicts and NUL-fill findings are
     /// decisions rather than things done to a file, and storing a credential did not happen to a
-    /// log at all. A hook is kept: it ran as part of a rotation, and "did the postrotate script
-    /// fire?" is a question people come to a history for.
+    /// log at all - nor did fetching a release, which never reaches a journal in any case. A hook
+    /// is kept: it ran as part of a rotation, and "did the postrotate script fire?" is a question
+    /// people come to a history for.
     /// </remarks>
     private static bool IsBookkeeping(string operation) =>
         operation.StartsWith("run.", StringComparison.Ordinal)
         || operation.StartsWith("job.", StringComparison.Ordinal)
         || operation.StartsWith("guard.", StringComparison.Ordinal)
         || operation == Op.NulFill
-        || operation == Op.Secret;
+        || operation == Op.Secret
+        || operation == Op.Update;
 
     /// <summary>
     /// Reads the response, or reports that it could not be read.

@@ -82,6 +82,10 @@ public static class CliEventText
             Op.Create => $"{verb} create",
             Op.CreateDir => $"{verb} mkdir",
             Op.Hook => $"{verb} run hook",
+
+            // Progress has no result yet, and "did download 12 MB of 47 MB" would claim one.
+            Op.Update when e.Result is null => "downloading",
+            Op.Update => $"{verb} download",
             _ => e.Operation,
         };
     }

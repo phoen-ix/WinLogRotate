@@ -117,6 +117,12 @@ public static class Op
     /// <summary>An operator override of a guardrail was honoured. Always recorded with the
     /// reason, so an override can never be quietly forgotten.</summary>
     public const string GuardOverride = "guard.override";
+
+    /// <summary>A release being fetched by <c>update apply</c>: progress while it downloads,
+    /// with <see cref="CliEvent.Src"/> the file and <see cref="CliEvent.Reason"/> how far, then
+    /// one result. Never in a journal, which records only what happened to logs; the GUI reads
+    /// it from the stream to show the download moving.</summary>
+    public const string Update = "update";
 }
 
 /// <summary>Values for <see cref="CliEvent.Phase"/>.</summary>
