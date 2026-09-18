@@ -136,6 +136,44 @@ internal static class RunCommand
             return ctx.Output.Complete<RunResult>("run", ExitCode.ConfigInvalid, null);
         }
 
+        // Judged here, where the configured names are known, and not left to the runner's
+        // filter. That filter skipped every job whose name did not match and nothing checked
+        // that anything had, so 'run --job <typo>' exited 0, printed "0 job(s)" and raised
+        // nothing - the shape of a log that quietly stops being rotated, produced by a slip at a
+        // prompt. Exit 2, alongside a mistyped flag: nothing was attempted. A job refused at
+        // validation still counts as configured; its own diagnostic says why it will not run.
+        if (options.OnlyJob is { } only)
+        {
+            var configured = config.Jobs.Concat(config.SkippedJobs).ToArray();
+            var named = configured.FirstOrDefault(
+                j => string.Equals(j.Name, only, StringComparison.OrdinalIgnoreCase));
+
+            if (named is null)
+            {
+                var names = configured.Select(j => j.Name).Order(StringComparer.OrdinalIgnoreCase);
+
+                return Refusals.CannotUse<RunResult>(
+                    ctx, "run", only, "a configured job",
+                    configured.Length == 0
+                        ? "No jobs are configured. Add one with 'winlogrotate job add <name> --paths <glob>'."
+                        : $"The configured jobs are: {string.Join(", ", names)}.");
+            }
+
+            if (!named.Enabled)
+            {
+                // Said rather than skipped. A disabled job is a deliberate state, and the person
+                // naming it by hand is the one person who may not know it is in that state.
+                ctx.Output.Diagnostic(new CliDiagnostic
+                {
+                    Severity = Severity.Warning,
+                    Code = DiagnosticCode.JobSkipped,
+                    Message = $"Job '{named.Name}' is disabled, so nothing will be rotated.",
+                    Job = named.Name,
+                    Remedy = $"Run 'winlogrotate job enable {named.Name}' to switch it back on.",
+                });
+            }
+        }
+
         var state = StateStore.Load(stateOverride ?? paths.StateFile, out var problem);
 
         if (problem is { Kind: StateProblemKind.Unsupported or StateProblemKind.Unreadable })
