@@ -105,7 +105,7 @@ internal static class DoctorCommand
 
         if (OperatingSystem.IsWindows())
         {
-            var status = new TaskRunHost().Query();
+            var status = new TaskRunHost(TimeProvider.System).Query();
             hostKind = status.Actual;
             hostDetail = status.Registered ? "registered" : "not registered";
 

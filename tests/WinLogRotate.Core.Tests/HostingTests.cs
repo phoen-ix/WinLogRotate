@@ -1,4 +1,5 @@
 using System.Xml.Linq;
+using Microsoft.Extensions.Time.Testing;
 using Shouldly;
 using WinLogRotate.Hosting;
 using WinLogRotate.Hosting.Hosts;
@@ -16,16 +17,86 @@ public class TaskXmlBuilderTests
 {
     private static readonly XNamespace Ns = "http://schemas.microsoft.com/windows/2004/02/mit/task";
 
-    private static XDocument Build(TaskDefinition? definition = null) =>
+    /// <summary>A clock nowhere near a scheduled run, for the tests that are not about one.</summary>
+    private static FakeTimeProvider Clock() =>
+        new(new DateTimeOffset(2026, 3, 5, 14, 0, 0, TimeSpan.Zero));
+
+    private static XDocument Build(TaskDefinition? definition = null, TimeProvider? clock = null) =>
         XDocument.Parse(TaskXmlBuilder.Build(definition ?? new TaskDefinition
         {
             ExecutablePath = @"C:\Program Files\WinLogRotate\winlogrotate.exe",
             Arguments = "run --lock-held-exit 0",
             Account = RunAccount.System,
-        }));
+        }, clock ?? Clock()));
 
     private static string Setting(XDocument doc, string name) =>
         doc.Root!.Element(Ns + "Settings")!.Element(Ns + name)!.Value;
+
+    private static string StartBoundary(XDocument doc) =>
+        doc.Root!.Element(Ns + "Triggers")!.Element(Ns + "CalendarTrigger")!
+            .Element(Ns + "StartBoundary")!.Value;
+
+    /// <summary>A clock reading <paramref name="local"/> on a machine ten hours east of UTC.</summary>
+    /// <remarks>
+    /// East, and a long way, so that a computation done on the UTC clock lands on a different
+    /// calendar day from one done on the local clock - which is the only way this can tell
+    /// them apart.
+    /// </remarks>
+    private static FakeTimeProvider TenHoursEast(DateTime local)
+    {
+        var zone = TimeZoneInfo.CreateCustomTimeZone("ten-east", TimeSpan.FromHours(10), "ten-east", "ten-east");
+        var clock = new FakeTimeProvider(new DateTimeOffset(local, TimeSpan.FromHours(10)).ToUniversalTime());
+        clock.SetLocalTimeZone(zone);
+        return clock;
+    }
+
+    /// <summary>
+    /// The first run is the next 03:00, not the last one.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// StartBoundary was today at TimeOfDay, whatever the time of day. With StartWhenAvailable
+    /// set - and it is, deliberately - a task registered at 14:00 had a start eleven hours in its
+    /// past, which Task Scheduler treats as a missed run and catches up at once. So
+    /// <c>host use task</c>, and the installer that shells it, rotated the machine's logs there
+    /// and then, in the middle of the working day.
+    /// </para>
+    /// <para>
+    /// A StartBoundary with no offset is read by Task Scheduler as local time, so the next
+    /// occurrence is found on the local clock: at 02:00 today's 03:00 is still ahead; at 04:00 it
+    /// has gone, and the first run is tomorrow's. Exactly 03:00 counts as gone - a start equal to
+    /// now would fire at once, which is the very thing being prevented.
+    /// </para>
+    /// </remarks>
+    [Theory]
+    [InlineData(2, "2026-09-18T03:00:00")]
+    [InlineData(3, "2026-09-19T03:00:00")]
+    [InlineData(4, "2026-09-19T03:00:00")]
+    public void TheFirstRunIsTheNextThreeOClockNotTheLastOne(int localHour, string expected) =>
+        StartBoundary(Build(clock: TenHoursEast(new DateTime(2026, 9, 18, localHour, 0, 0))))
+            .ShouldBe(expected);
+
+    /// <summary>
+    /// An hourly cadence starts at the next slot on its own grid, not at tomorrow's anchor.
+    /// </summary>
+    /// <remarks>
+    /// The hourly task is a daily trigger repeating every hour for a day, so any slot on the grid
+    /// serves as its anchor. Waiting for tomorrow's 03:00 would leave an hourly rotation idle for
+    /// up to twenty-three hours after registration, which is the same defect the other way round.
+    /// </remarks>
+    [Fact]
+    public void AnHourlyCadenceStartsAtTheNextHourOnItsGrid()
+    {
+        var doc = Build(new TaskDefinition
+        {
+            ExecutablePath = @"C:\x\winlogrotate.exe",
+            Arguments = "run",
+            Account = RunAccount.System,
+            Frequency = HostFrequency.Hourly,
+        }, TenHoursEast(new DateTime(2026, 9, 18, 4, 17, 0)));
+
+        StartBoundary(doc).ShouldBe("2026-09-18T05:00:00");
+    }
 
     /// <summary>
     /// The anacron equivalent. Without it a machine that was off at 03:00 skips that day
@@ -192,7 +263,7 @@ public class TaskXmlBuilderTests
             ExecutablePath = @"C:\x\winlogrotate.exe",
             Arguments = "run",
             Account = RunAccount.System,
-        });
+        }, Clock());
 
         xml.ShouldContain("S-1-5-18");
         xml.ShouldNotContain("NT AUTHORITY");
@@ -210,7 +281,7 @@ public class TaskXmlBuilderTests
             ExecutablePath = @"C:\x\winlogrotate.exe",
             Arguments = "run",
             Account = new RunAccount { UserId = @"DOMAIN\svc-logs", ServiceAccount = false },
-        });
+        }, Clock());
 
         var logon = XDocument.Parse(xml).Root!
             .Element(Ns + "Principals")!.Element(Ns + "Principal")!

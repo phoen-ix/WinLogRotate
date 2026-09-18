@@ -13,8 +13,9 @@ namespace WinLogRotate.Hosting.Hosts;
 /// the flag form parses dates and times according to the machine's locale and simply fails on a
 /// German or Turkish system.
 /// </remarks>
+/// <param name="clock">Decides the task's first run; see <see cref="TaskXmlBuilder.NextOccurrence"/>.</param>
 [SupportedOSPlatform("windows")]
-public sealed class TaskRunHost : IRunHost
+public sealed class TaskRunHost(TimeProvider clock) : IRunHost
 {
     public RunHostKind Kind => RunHostKind.Task;
 
@@ -30,7 +31,7 @@ public sealed class TaskRunHost : IRunHost
     /// <exception cref="HostRegistrationException">schtasks refused, or could not be run.</exception>
     public void Install(HostInstallOptions options)
     {
-        var xml = TaskXmlBuilder.Build(options.ToTaskDefinition());
+        var xml = TaskXmlBuilder.Build(options.ToTaskDefinition(), clock);
 
         // Task Scheduler requires UTF-16 for a task XML file; UTF-8 is rejected with an
         // unhelpfully generic error.

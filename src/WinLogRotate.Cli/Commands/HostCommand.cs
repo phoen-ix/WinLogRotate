@@ -90,7 +90,7 @@ internal static class HostCommand
         }
 
         var paths = InstallPaths.Resolve(configDir);
-        var task = host ?? new TaskRunHost();
+        var task = host ?? new TaskRunHost(TimeProvider.System);
 
         try
         {
@@ -162,7 +162,7 @@ internal static class HostCommand
         }
 
         var paths = InstallPaths.Resolve(configDir);
-        var status = new TaskRunHost().Query();
+        var status = new TaskRunHost(TimeProvider.System).Query();
 
         ctx.Output.Line($"run host      {(status.Registered ? "scheduled task" : "none")}");
         ctx.Output.Line($"config        {paths.Root}");

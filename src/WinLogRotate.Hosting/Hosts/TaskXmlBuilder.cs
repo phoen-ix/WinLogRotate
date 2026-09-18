@@ -68,9 +68,12 @@ public static class TaskXmlBuilder
 {
     private static readonly XNamespace Ns = "http://schemas.microsoft.com/windows/2004/02/mit/task";
 
-    public static string Build(TaskDefinition definition)
+    /// <summary>Builds the task, with its first run computed against <paramref name="clock"/>.</summary>
+    public static string Build(TaskDefinition definition, TimeProvider clock)
     {
-        var start = DateTime.Today.Add(definition.TimeOfDay)
+        // No offset, deliberately: Task Scheduler reads a bare StartBoundary as local time, so
+        // it is computed on the local clock and written without one.
+        var start = NextOccurrence(definition.TimeOfDay, definition.Frequency, clock.GetLocalNow())
             .ToString("yyyy-MM-ddTHH:mm:ss", CultureInfo.InvariantCulture);
 
         var trigger = new XElement(Ns + "CalendarTrigger",
@@ -169,6 +172,41 @@ public static class TaskXmlBuilder
         using var writer = new StringWriter(CultureInfo.InvariantCulture);
         document.Save(writer);
         return writer.ToString();
+    }
+
+    /// <summary>
+    /// The first run: the next time the cadence would fire after <paramref name="now"/>.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// This used to be today at <paramref name="timeOfDay"/>, whatever the time of day. With
+    /// StartWhenAvailable set - and it is, deliberately - a task registered at 14:00 had a start
+    /// eleven hours in its past, which Task Scheduler treats as a missed run and catches up at
+    /// once. So <c>host use task</c>, and the installer that shells it, rotated the machine's
+    /// logs there and then, in the middle of the working day.
+    /// </para>
+    /// <para>
+    /// A start equal to <paramref name="now"/> counts as gone, for the same reason. The hourly
+    /// cadence is a daily trigger repeating every hour, so any slot on its hourly grid serves as
+    /// the anchor and the next one is used - tomorrow's 03:00 would leave an hourly rotation idle
+    /// for most of a day. Wall-clock arithmetic throughout: the offset is dropped because the
+    /// boundary is written without one and Task Scheduler reads it as local.
+    /// </para>
+    /// </remarks>
+    internal static DateTime NextOccurrence(TimeSpan timeOfDay, HostFrequency frequency, DateTimeOffset now)
+    {
+        var wall = now.DateTime;
+        var anchor = wall.Date.Add(timeOfDay);
+
+        if (anchor > wall)
+        {
+            return anchor;
+        }
+
+        var interval = frequency == HostFrequency.Hourly ? TimeSpan.FromHours(1) : TimeSpan.FromDays(1);
+        var missed = Math.Floor((wall - anchor) / interval) + 1;
+
+        return anchor.Add(interval * missed);
     }
 
     /// <summary>Formats a duration the way the Task Scheduler schema expects.</summary>

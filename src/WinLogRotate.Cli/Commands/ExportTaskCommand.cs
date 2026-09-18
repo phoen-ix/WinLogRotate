@@ -27,7 +27,7 @@ internal static class ExportTaskCommand
             ExecutablePath = Environment.ProcessPath ?? @"C:\Program Files\WinLogRotate\winlogrotate.exe",
             ConfigDirectory = paths.Root,
             Account = RunAccount.System,
-        }.ToTaskDefinition());
+        }.ToTaskDefinition(), TimeProvider.System);
 
         ctx.Output.Line(xml);
         return ctx.Output.Complete("host export-task", ExitCode.Ok, new ExportTaskResult { Xml = xml });
