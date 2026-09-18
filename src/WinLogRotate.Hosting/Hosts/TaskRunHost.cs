@@ -104,7 +104,7 @@ public sealed class TaskRunHost(TimeProvider clock) : IRunHost
             foreach (var hive in new[] { Registry.LocalMachine, Registry.CurrentUser })
             {
                 using var key = hive.OpenSubKey(Names.UninstallKey);
-                if (key?.GetValue("HostKind") is string kind
+                if (key?.GetValue(Names.HostKindValue) is string kind
                     && Enum.TryParse<RunHostKind>(kind, ignoreCase: true, out var parsed))
                 {
                     return parsed;
@@ -135,7 +135,7 @@ public sealed class TaskRunHost(TimeProvider clock) : IRunHost
                 using var key = hive.OpenSubKey(Names.UninstallKey, writable: true);
                 if (key is not null)
                 {
-                    key.SetValue("HostKind", configured.ToString().ToLowerInvariant(), RegistryValueKind.String);
+                    key.SetValue(Names.HostKindValue, configured.ToString().ToLowerInvariant(), RegistryValueKind.String);
                     return;
                 }
             }

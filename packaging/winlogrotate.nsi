@@ -27,6 +27,7 @@ Unicode true
 ; ---------------------------------------------------------------------------------------
 !define ROTATION_MUTEX  "Global\WinLogRotate.Rotation"
 !define GUI_QUIT_EVENT  "Local\WinLogRotate-quit-7f3a1c"
+!define GUI_INSTANCE_MUTEX "Local\WinLogRotate.Gui"
 !define SERVICE_NAME    "WinLogRotate"
 !define TASK_PATH       "\WinLogRotate\Rotate"
 !define EVENTLOG_KEY    "SYSTEM\CurrentControlSet\Services\EventLog\Application\WinLogRotate"
@@ -34,6 +35,12 @@ Unicode true
 ; SYSTEM and Administrators full control, Users read+execute, inheritance severed.
 ; Duplicated from Sddl.ConfigDirectory and asserted by the installer smoke test.
 !define DATA_SDDL "O:BAG:SYD:PAI(A;OICI;FA;;;SY)(A;OICI;FA;;;BA)(A;OICI;0x1200a9;;;BU)"
+
+; Two values under the uninstall key that the application reads back: which run host this
+; install was set up with, and which GUI build it carries. Both are what `update apply` needs
+; to fetch the matching installer and re-run it with the switches this install was made with.
+!define REG_HOST_KIND     "HostKind"
+!define REG_BUILD_VARIANT "BuildVariant"
 
 !define DOTNET_URL "https://dotnet.microsoft.com/download/dotnet/10.0"
 
@@ -50,6 +57,15 @@ Unicode true
 !ifndef VARIANT
   !define VARIANT   ""
   !define OUTSUFFIX ""
+!endif
+
+; Which GUI build this installer carries, recorded so an in-app update fetches the same kind.
+; Named after the GUI, not the installer file: the unsuffixed installer ships the self-contained
+; GUI exactly as -full does, and an update from either should land on -full.
+!ifdef MINIMAL_ONLY
+  !define BUILD_VARIANT "min"
+!else
+  !define BUILD_VARIANT "full"
 !endif
 
 Name        "${APP} ${VERSION}${VARIANT}"
@@ -95,6 +111,7 @@ SetCompressor /SOLID lzma
 Var RealPrivileges
 Var DataDir
 Var HostChoice          ; task | none
+Var HostGiven           ; 1 when /HOST= was on the command line, so it beats the recorded kind
 Var PurgeData           ; 1 once the uninstaller has decided to remove the data directory
 Var HostPage
 Var HostTask
@@ -209,15 +226,37 @@ mid-file. Press OK to keep waiting, or Cancel to abort this install." \
   Pop $R0
 FunctionEnd
 
-; Asks a running GUI to close, rather than killing it.
+; Asks a running GUI to close, rather than killing it, and waits for it to be gone.
+;
+; The wait is on the GUI's single-instance mutex, which exists exactly as long as the process
+; does, and it stops the moment the mutex can no longer be opened. This replaced a fixed two
+; second sleep: on a loaded server the window took longer than that to unwind, the File below
+; then found winlogrotate-gui.exe still locked, and a silent install aborted at the one step an
+; in-app update exists to make routine. Ten seconds is the ceiling; a GUI that has not closed
+; by then is not going to, and the File error that follows is the right report.
 Function CloseGui
   Push $0
+  Push $1
   System::Call 'kernel32::OpenEventW(i 0x0002, i 0, w "${GUI_QUIT_EVENT}") i .r0'
   ${If} $0 != 0
     System::Call 'kernel32::SetEvent(i r0)'
     System::Call 'kernel32::CloseHandle(i r0)'
-    Sleep 2000
+    StrCpy $1 0
+    close_wait:
+      System::Call 'kernel32::OpenMutexW(i 0x00100000, i 0, w "${GUI_INSTANCE_MUTEX}") i .r0'
+      ${If} $0 == 0
+        Goto close_done
+      ${EndIf}
+      System::Call 'kernel32::CloseHandle(i r0)'
+      IntOp $1 $1 + 1
+      ${If} $1 >= 40
+        Goto close_done
+      ${EndIf}
+      Sleep 250
+      Goto close_wait
+    close_done:
   ${EndIf}
+  Pop $1
   Pop $0
 FunctionEnd
 
@@ -389,7 +428,14 @@ resident, missed runs are caught up after a reboot, and it is visible in Task Sc
   ${NSD_CreateLabel} 12u 70u 100% 10u "Install the tools only. Nothing will run on its own."
   Pop $0
 
-  ${NSD_Check} $HostTask
+  ; What .onInit decided: the switch, else the kind an existing install recorded, else task.
+  ; An upgrade of an install that was set to "none" used to open this page with the task
+  ; pre-selected, and Next registered a task the operator had turned off.
+  ${If} $HostChoice == "none"
+    ${NSD_Check} $HostNone
+  ${Else}
+    ${NSD_Check} $HostTask
+  ${EndIf}
   nsDialogs::Show
 FunctionEnd
 
@@ -545,7 +591,8 @@ Section "-Core" SEC_CORE
   WriteRegStr   SHCTX "${UNINST_KEY}" "DisplayIcon"          "$INSTDIR\winlogrotate.ico"
   WriteRegStr   SHCTX "${UNINST_KEY}" "InstallLocation"      "$INSTDIR"
   WriteRegStr   SHCTX "${UNINST_KEY}" "DataDir"              "$DataDir"
-  WriteRegStr   SHCTX "${UNINST_KEY}" "HostKind"             "$HostChoice"
+  WriteRegStr   SHCTX "${UNINST_KEY}" "${REG_HOST_KIND}"     "$HostChoice"
+  WriteRegStr   SHCTX "${UNINST_KEY}" "${REG_BUILD_VARIANT}" "${BUILD_VARIANT}"
   WriteRegStr   SHCTX "${UNINST_KEY}" "UninstallString"      '"$INSTDIR\uninstall.exe"'
   WriteRegStr   SHCTX "${UNINST_KEY}" "QuietUninstallString" '"$INSTDIR\uninstall.exe" /S'
   ${GetSize} "$INSTDIR" "/S=0K" $0 $1 $2
@@ -602,6 +649,7 @@ SectionEnd
 
 Function .onInit
   StrCpy $HostChoice "task"
+  StrCpy $HostGiven "0"
 
   !insertmacro MULTIUSER_INIT
   StrCpy $RealPrivileges $MultiUser.Privileges
@@ -645,6 +693,7 @@ Function .onInit
     ${If} $R1 == "task"
     ${OrIf} $R1 == "none"
       StrCpy $HostChoice $R1
+      StrCpy $HostGiven "1"
     ${ElseIf} $R1 == "service"
       MessageBox MB_OK|MB_ICONSTOP \
         "The service host is not implemented in this build.$\n$\n\
@@ -660,9 +709,17 @@ resident, and a run missed while the machine was off is caught up afterwards." /
     ${EndIf}
   ${EndIf}
 
-  ; Match an existing install's scope rather than creating a second copy beside it.
+  ; Match an existing install's scope rather than creating a second copy beside it, in both
+  ; directions. This used to switch up to all-users when HKLM held the entry and do nothing
+  ; when HKCU did - and "nothing" for an administrator is all-users, because that is where
+  ; MultiUser puts an elevated token. So a per-user install re-run silently by an administrator,
+  ; which is what an in-app update is, installed a second copy into Program Files and left the
+  ; first one registered and on the user's PATH. An existing install now wins over the switch
+  ; either way; to change scope, uninstall first.
   ReadRegStr $0 HKCU "${UNINST_KEY}" "UninstallString"
-  ${If} $0 == ""
+  ${If} $0 != ""
+    Call MultiUser.InstallMode.CurrentUser
+  ${Else}
     ReadRegStr $0 HKLM "${UNINST_KEY}" "UninstallString"
     ${If} $0 != ""
       Call MultiUser.InstallMode.AllUsers
@@ -674,6 +731,17 @@ resident, and a run missed while the machine was off is caught up afterwards." /
   ${If} $0 != ""
   ${AndIf} ${FileExists} "$0\${CLI}"
     StrCpy $INSTDIR $0
+  ${EndIf}
+
+  ; Keep the run host an existing install was set up with, unless /HOST= said otherwise. The
+  ; default used to be task regardless, so every silent upgrade of an install set to "none" -
+  ; and every in-app update of one - registered the scheduled task its operator had turned off.
+  ${If} $HostGiven == "0"
+    ReadRegStr $0 SHCTX "${UNINST_KEY}" "${REG_HOST_KIND}"
+    ${If} $0 == "task"
+    ${OrIf} $0 == "none"
+      StrCpy $HostChoice $0
+    ${EndIf}
   ${EndIf}
 
   ; A silent per-machine run never sees the mode page, so nothing can elevate it. Failing
@@ -838,11 +906,26 @@ FunctionEnd
 
 Function un.CloseGui
   Push $0
+  Push $1
   System::Call 'kernel32::OpenEventW(i 0x0002, i 0, w "${GUI_QUIT_EVENT}") i .r0'
   ${If} $0 != 0
     System::Call 'kernel32::SetEvent(i r0)'
     System::Call 'kernel32::CloseHandle(i r0)'
-    Sleep 2000
+    StrCpy $1 0
+    un_close_wait:
+      System::Call 'kernel32::OpenMutexW(i 0x00100000, i 0, w "${GUI_INSTANCE_MUTEX}") i .r0'
+      ${If} $0 == 0
+        Goto un_close_done
+      ${EndIf}
+      System::Call 'kernel32::CloseHandle(i r0)'
+      IntOp $1 $1 + 1
+      ${If} $1 >= 40
+        Goto un_close_done
+      ${EndIf}
+      Sleep 250
+      Goto un_close_wait
+    un_close_done:
   ${EndIf}
+  Pop $1
   Pop $0
 FunctionEnd

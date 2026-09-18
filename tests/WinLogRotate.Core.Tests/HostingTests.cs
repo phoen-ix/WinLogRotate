@@ -495,9 +495,12 @@ public class InstallerNamePinningTests
 
         Define(nsi, "ROTATION_MUTEX").ShouldBe(Names.RotationMutex);
         Define(nsi, "GUI_QUIT_EVENT").ShouldBe(Names.GuiQuitEvent);
+        Define(nsi, "GUI_INSTANCE_MUTEX").ShouldBe(Names.GuiInstanceMutex);
         Define(nsi, "SERVICE_NAME").ShouldBe(Names.ServiceName);
         Define(nsi, "TASK_PATH").ShouldBe(Names.TaskPath);
         Define(nsi, "UNINST_KEY").ShouldBe(Names.UninstallKey);
+        Define(nsi, "REG_HOST_KIND").ShouldBe(Names.HostKindValue);
+        Define(nsi, "REG_BUILD_VARIANT").ShouldBe(Names.BuildVariantValue);
     }
 
     /// <summary>

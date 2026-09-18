@@ -46,6 +46,17 @@ public static class Names
     public const string UninstallKey =
         @"Software\Microsoft\Windows\CurrentVersion\Uninstall\WinLogRotate";
 
+    /// <summary>Value under <see cref="UninstallKey"/> naming the run host this install was set
+    /// up with: <c>task</c> or <c>none</c>. Written by the installer and by <c>host use</c>; read
+    /// back by both, so a silent upgrade keeps what the operator chose.</summary>
+    public const string HostKindValue = "HostKind";
+
+    /// <summary>Value under <see cref="UninstallKey"/> naming which GUI build is installed:
+    /// <c>full</c> (self-contained) or <c>min</c> (needs the Desktop Runtime). An in-app update
+    /// fetches the installer that carries the same one. Absent on installs older than this
+    /// value, which is why its reader has a fallback.</summary>
+    public const string BuildVariantValue = "BuildVariant";
+
     /// <summary>Machine policy that disables every update check, including the GUI's.
     /// Enterprises ask for this on day one; shipping it later means shipping it twice.</summary>
     public const string PolicyKey = @"SOFTWARE\Policies\WinLogRotate";

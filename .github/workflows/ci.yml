@@ -345,6 +345,7 @@ jobs:
           if (-not $entry) { throw 'No per-machine Add/Remove entry was registered.' }
           if ($entry.DisplayVersion -ne '9.9.9') { throw "DisplayVersion is '$($entry.DisplayVersion)'." }
           if ($entry.HostKind -ne 'task') { throw "HostKind is '$($entry.HostKind)', expected task." }
+          if ($entry.BuildVariant -ne 'min') { throw "BuildVariant is '$($entry.BuildVariant)', expected min." }
           "  installed to $($entry.InstallLocation)"
           "  data dir     $($entry.DataDir)"
 
@@ -1306,6 +1307,19 @@ jobs:
             throw '/HOST=none still registered a scheduled task.'
           }
 
+          # A silent upgrade that names no host keeps the one this install was set up with. It
+          # used to default to task, so every in-place upgrade - and every in-app update - of an
+          # install set to "none" registered the scheduled task its operator had turned off.
+          $again = Start-Process -FilePath (Resolve-Path setup.exe) -PassThru -Wait `
+            -ArgumentList '/S','/NORUNTIME'
+          if ($again.ExitCode -ne 0) { throw "the silent re-run exited $($again.ExitCode)" }
+          $entry = Get-UninstallEntry -Scope machine
+          if ($entry.HostKind -ne 'none') { throw "A silent re-run changed HostKind to '$($entry.HostKind)'; it was none." }
+          if (Get-ScheduledTask -TaskPath $env:TASK_PATH -TaskName $env:TASK_NAME -ErrorAction SilentlyContinue) {
+            throw 'A silent re-run registered a scheduled task the install was set up without.'
+          }
+          '  a silent re-run kept HostKind = none'
+
           Start-Process -FilePath (Join-Path $entry.InstallLocation 'uninstall.exe') -ArgumentList '/S','/PURGEDATA'
           Wait-Removed -Scope machine -Directory $entry.InstallLocation
           Wait-Until -Because '/PURGEDATA to remove the data directory' -Condition {
@@ -1344,6 +1358,22 @@ jobs:
           # is there once, and whatever was stored before is stored the same way after.
           Assert-PathEntry -Scope User -Contains $entry.InstallLocation `
                            -PreservedRaw $userStoredBefore.Value -PreservedKind $userStoredBefore.Kind
+
+          # A silent re-run that names no scope stays in the scope it finds. This runner is an
+          # administrator, and an elevated token lands in all-users mode unless something says
+          # otherwise - so this used to install a second copy into Program Files beside the
+          # per-user one, which is exactly what an in-app update of a per-user install would do.
+          $again = Start-Process -FilePath (Resolve-Path setup.exe) -PassThru -Wait `
+            -ArgumentList '/S','/NORUNTIME'
+          if ($again.ExitCode -ne 0) { throw "the silent re-run exited $($again.ExitCode)" }
+          if (Get-UninstallEntry -Scope machine) { throw 'A silent re-run of a per-user install registered a per-machine entry.' }
+          $entry = Get-UninstallEntry -Scope user
+          if (-not $entry) { throw 'A silent re-run of a per-user install removed the per-user entry.' }
+          if ($entry.InstallLocation -ne $expected) { throw "A silent re-run relocated the install to '$($entry.InstallLocation)'." }
+          if ([Environment]::GetEnvironmentVariable('PATH', 'Machine') -ne $machineBefore) {
+            throw 'A silent re-run of a per-user install modified the machine PATH.'
+          }
+          '  a silent re-run stayed per-user'
 
           Start-Process -FilePath (Join-Path $entry.InstallLocation 'uninstall.exe') -ArgumentList '/S','/PURGEDATA'
           Wait-Removed -Scope user -Directory $entry.InstallLocation
