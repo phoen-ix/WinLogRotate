@@ -163,7 +163,7 @@ public sealed partial class GuiArchitectureTests
 
         var layouts = new Dictionary<string, string>(StringComparer.Ordinal)
         {
-            [Path.Combine("Pages", "JobEditor.cs")] = "JobEditorLayout.Compute(",
+            [Path.Combine("Pages", "JobEditor.cs")] = "EditorLayout.Compute(",
             [Path.Combine("Ui", "LrDialog.cs")] = "DialogLayout.Compute(",
             [Path.Combine("Ui", "SecretPrompt.cs")] = "SecretPromptLayout.Compute(",
         };

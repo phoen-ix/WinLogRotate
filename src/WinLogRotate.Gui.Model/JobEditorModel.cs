@@ -151,7 +151,7 @@ public sealed record BasicsAnswers(bool Manage, string? Schedule, string? MaxSiz
 /// <para>
 /// Two questions, and they are the whole form: given <c>job show --json</c>, which fields are set
 /// here and which are inherited; and given what somebody typed, what command line says that. The
-/// second is the testable one - <c>JobEditorArgsTests</c> parses what this produces against the
+/// second is the testable one - <c>JobEditorModelTests</c> parses what this produces against the
 /// real <c>CommandTree</c>, so a form that would have built an invocation the CLI refuses fails
 /// here rather than in front of an operator.
 /// </para>
@@ -163,41 +163,6 @@ public sealed record BasicsAnswers(bool Manage, string? Schedule, string? MaxSiz
 /// </remarks>
 public static class JobEditorModel
 {
-    /// <summary>
-    /// The keys with a control of their own on the form.
-    /// </summary>
-    /// <remarks>
-    /// Named rather than derived from <see cref="JobKey.PerJobOnly"/>, which is what the form
-    /// used to skip. That set also holds <c>allowdangerous</c>, which has no control of its own -
-    /// so the only escape hatch from a guard refusal was in neither the form nor the grid, and
-    /// could be neither seen nor edited from the window that promised to edit jobs.
-    /// </remarks>
-    public static IReadOnlyList<string> Carried { get; } = ["name", "paths", "kind", "enabled"];
-
-    /// <summary>
-    /// The keys the form gives a box each, in the order it shows them.
-    /// </summary>
-    /// <remarks>
-    /// Chosen rather than derived: these are the ones somebody opens the editor to change. Here
-    /// rather than on the form so that the layout arithmetic and the reachability rule can both
-    /// be asserted against the same list on the leg that cannot open a window.
-    /// </remarks>
-    public static IReadOnlyList<string> Common { get; } =
-        ["schedule", "rotate", "maxage", "maxsize", "compress", "compresstype", "olddir", "missingok"];
-
-    /// <summary>
-    /// The fields the advanced grid shows: everything the form does not carry or box.
-    /// </summary>
-    /// <remarks>
-    /// Derived from the view rather than from the schema, so a key the file has and this build
-    /// does not know lands here too - it can be seen and cleared, which is the only way to act on
-    /// the warning about it.
-    /// </remarks>
-    public static IReadOnlyList<JobField> GridFields(JobEditorView view) =>
-        [.. view.Fields.Where(f =>
-            !Common.Contains(f.Key, StringComparer.OrdinalIgnoreCase)
-            && !Carried.Contains(f.Key, StringComparer.OrdinalIgnoreCase))];
-
     /// <summary>The keys whose value is a command this product would run.</summary>
     /// <remarks>
     /// Named here rather than derived from <see cref="JobKeyGroup.Hooks"/>, because

@@ -166,4 +166,20 @@ public sealed class EditorLayoutTests
     [Fact]
     public void TheContentLeavesRoomForAScrollbar() =>
         Layout("blank").ContentWidth.ShouldBeLessThan(Layout("blank").Viewport.Width);
+
+    /// <summary>The arithmetic every rule above leans on.</summary>
+    [Fact]
+    public void ABoxKnowsItsEdges()
+    {
+        var box = new Box(10, 20, 30, 40);
+
+        box.Right.ShouldBe(40);
+        box.Bottom.ShouldBe(60);
+
+        box.Overlaps(new Box(40, 20, 5, 5)).ShouldBeFalse("shares an edge, not an area");
+        box.Overlaps(new Box(39, 59, 5, 5)).ShouldBeTrue();
+        box.Within(40, 60).ShouldBeTrue();
+        box.Within(39, 60).ShouldBeFalse();
+    }
 }
+

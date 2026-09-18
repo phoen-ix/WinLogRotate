@@ -5,20 +5,17 @@ using WinLogRotate.Gui.Ui;
 namespace WinLogRotate.Gui.Pages;
 
 /// <summary>
-/// The form that adds and changes a job, which for twenty-nine milestones did not exist.
+/// The form that adds and changes a job.
 /// </summary>
 /// <remarks>
 /// <para>
-/// <c>ConfigLoader</c> told operators to "use the GUI to add one" from the first release, and the
-/// Jobs page offered Refresh, Check configuration, and Open folder - which launches Explorer so
-/// you can go and write the TOML yourself. This is the capability that message was promising.
-/// </para>
-/// <para>
-/// Tiered rather than one long list. The dozen keys people actually change are on the form; the
-/// rest are a grid of key, value, and whether the job sets it here or inherits it. A grid rather
-/// than thirty-three more controls because it can show that third state, which separate controls
-/// cannot, and because the grid <b>is</b> the key list - so a key added to
-/// <see cref="JobSchema"/> appears here without anybody remembering to add it.
+/// Two views of one job. <b>Basics</b> asks the three things somebody adding a log file has to
+/// decide - which files, who rotates them, how much to keep - in their own words, and restates
+/// the answer as one sentence. <b>Advanced</b> is every key the schema knows, each a typed
+/// control with the schema's caption, its default, where its value comes from, and one line
+/// saying what it does; there is no grid of raw keys, and nothing is called by its TOML name
+/// alone. The header - the name and the files - is shared, with a Browse button that turns a
+/// picked file into the line that names its series, and a preview of what that line matches.
 /// </para>
 /// <para>
 /// Under <c>Pages/</c> and not <c>Ui/</c> deliberately, even though it is a dialog: the
@@ -27,58 +24,96 @@ namespace WinLogRotate.Gui.Pages;
 /// place to forget both.
 /// </para>
 /// <para>
-/// Every decision worth testing is in <see cref="JobEditorModel"/>, which is in a project the
-/// Linux leg can build. What is left here is layout and event wiring.
+/// Every decision worth testing is in <see cref="JobEditorModel"/>, <see cref="EditorLayout"/>,
+/// <see cref="GlobPreviewProjection"/>, <see cref="PatternSuggestion"/> and
+/// <see cref="JobSummary"/>, all in a project the Linux leg can build. What is left here is
+/// event wiring.
 /// </para>
 /// </remarks>
 public sealed class JobEditor : Form
 {
+    private const int PreviewLines = 8;
+
     private readonly CliRunner _cli;
     private readonly string? _configDir;
     private readonly bool _isNew;
     private readonly JobEditorView _original;
     private readonly string? _hookWarning;
-    private readonly Dictionary<string, Control> _editors = new(StringComparer.OrdinalIgnoreCase);
+    private readonly EditorLayout _layout;
 
-    /// <summary>What the save wrote, in the verb's words, for the page that opened this.</summary>
+    /// <summary>What the verb said when it wrote, for the Jobs page to show.</summary>
     private string? _said;
 
-    // Fields rather than locals, because Check and Save are disabled for the length of their own
-    // awaits: a double-click on Save was two UAC prompts and two writes.
-    private readonly Button _check = new() { Text = "Check", FlatStyle = FlatStyle.System };
-    private readonly Button _save = new() { Text = "Save", FlatStyle = FlatStyle.System };
-
-    /// <summary>Whether a Check or Save is in flight, so a second click during it does nothing.</summary>
     private bool _busy;
+    private bool _showingAdvanced;
+    private bool _filling;
+    private int _previewSerial;
+    private string _lastSuggestedName = string.Empty;
 
-    // No bounds here. Every position comes from JobEditorLayout in Build, so that the arithmetic
-    // is in one place and that place is one a test can reach.
-    private readonly TextBox _name = new();
-    private readonly TextBox _paths = new()
+    // ---- header ---------------------------------------------------------------------------
+
+    private readonly TextBox _name = new() { PlaceholderText = JobEditorText.NamePlaceholder };
+    private readonly CheckBox _enabled = new() { Text = "Enabled", Checked = true };
+    private readonly TextBox _files = new()
     {
         Multiline = true,
         ScrollBars = ScrollBars.Vertical,
         AcceptsReturn = true,
     };
 
-    private readonly ComboBox _kind = new() { DropDownStyle = ComboBoxStyle.DropDownList };
+    private readonly Button _browse = new() { Text = JobEditorText.Browse, FlatStyle = FlatStyle.System };
+    private readonly Label _preview = new() { ForeColor = Theme.Current.Muted, AutoEllipsis = true };
 
-    private readonly CheckBox _enabled = new() { Text = "Enabled", Checked = true };
+    // ---- the Basics body --------------------------------------------------------------------
 
-    private readonly DataGridView _advanced = new()
-    {
-        AutoSizeColumnsMode = DataGridViewAutoSizeColumnsMode.Fill,
+    private readonly List<Control> _basics = [];
+    private readonly RadioButton _rotateRadio = new() { Text = JobEditorText.RotateRadio, Checked = true };
+    private readonly RadioButton _manageRadio = new() { Text = JobEditorText.ManageRadio };
+    private readonly ComboBox _schedule = new() { DropDownStyle = ComboBoxStyle.DropDownList };
+    private readonly Label _earlyLead = new() { Text = JobEditorText.EarlyLead, ForeColor = Theme.Current.Muted };
+    private readonly TextBox _maxSize = new() { PlaceholderText = "100M" };
+    private readonly Label _whenHint = new() { Text = JobEditorText.WhenHint, ForeColor = Theme.Current.Muted, AutoEllipsis = true };
+    private readonly TextBox _rotate = new() { PlaceholderText = "7" };
+    private readonly Label _keepLead = new() { Text = JobEditorText.KeepLead, ForeColor = Theme.Current.Muted };
+    private readonly TextBox _maxAge = new() { PlaceholderText = "never" };
+    private readonly Label _keepUnit = new() { Text = JobEditorText.KeepUnit, ForeColor = Theme.Current.Muted };
+    private readonly Label _summary = new() { ForeColor = Theme.Current.Muted };
 
-        // So that a hook row of several commands is as tall as its lines.
-        AutoSizeRowsMode = DataGridViewAutoSizeRowsMode.AllCells,
-        AllowUserToAddRows = false,
-        AllowUserToDeleteRows = false,
-        RowHeadersVisible = false,
-        SelectionMode = DataGridViewSelectionMode.CellSelect,
-        MultiSelect = false,
-    };
+    // ---- the Advanced body ------------------------------------------------------------------
+
+    private readonly Panel _advanced = new() { AutoScroll = true, BackColor = Theme.Current.Window };
+    private readonly Panel _content = new() { BackColor = Theme.Current.Window };
+    private readonly Dictionary<string, Row> _rows = new(StringComparer.OrdinalIgnoreCase);
+    private readonly Dictionary<string, ForeignKey> _foreign = new(StringComparer.OrdinalIgnoreCase);
+    private readonly Dictionary<string, string> _problems = new(StringComparer.OrdinalIgnoreCase);
+    private readonly ToolTip _tips = new();
+
+    // ---- under both -------------------------------------------------------------------------
 
     private readonly Label _status = new() { ForeColor = Theme.Current.Muted };
+    private readonly LinkLabel _toggle = new();
+    private readonly Button _check = new() { Text = "Check", FlatStyle = FlatStyle.System };
+    private readonly Button _save = new() { Text = "Save", FlatStyle = FlatStyle.System };
+
+    /// <summary>One Advanced row's controls, and whether a tick box was touched.</summary>
+    private sealed class Row
+    {
+        public required JobField Field { get; init; }
+        public required FieldPresentation Shown { get; init; }
+        public required Control Editor { get; init; }
+        public required Label Caption { get; init; }
+        public required Label Source { get; init; }
+
+        /// <summary>For a tick box: whether the person set it, as opposed to it showing the inherited value.</summary>
+        public bool Explicit { get; set; }
+    }
+
+    private sealed class ForeignKey
+    {
+        public required Label Text { get; init; }
+        public required LinkLabel Remove { get; init; }
+        public bool Removed { get; set; }
+    }
 
     private JobEditor(
         CliRunner cli, string? configDir, JobEditorView view, bool isNew, string? hookWarning)
@@ -88,6 +123,9 @@ public sealed class JobEditor : Form
         _original = view;
         _isNew = isNew;
         _hookWarning = hookWarning;
+        _layout = EditorLayout.Compute(
+            JobEditorModel.Sections(view),
+            [.. JobEditorModel.Foreign(view).Select(f => f.Key)]);
 
         Text = isNew ? "New job" : $"Job: {view.Job}";
         FormBorderStyle = FormBorderStyle.FixedDialog;
@@ -100,7 +138,8 @@ public sealed class JobEditor : Form
         // Scaled with the monitor, in the order MainForm explains: layout suspended, the mode
         // and the dimensions, the controls, and then the one scale. The layout's numbers are
         // logical pixels at 100 per cent, and PerformAutoScale is what turns them into the
-        // monitor's.
+        // monitor's. Both bodies are built now, so the toggle never places a control after
+        // the scale.
         SuspendLayout();
         AutoScaleMode = AutoScaleMode.Dpi;
         AutoScaleDimensions = new SizeF(96F, 96F);
@@ -112,19 +151,25 @@ public sealed class JobEditor : Form
         PerformAutoScale();
 
         // After the controls exist, because a dialog is built long after the main window was
-        // themed - and an unthemed DataGridView keeps light headers on a dark window.
+        // themed.
         Theme.Apply(this);
+
+        Shown += async (_, _) => await PreviewAsync().ConfigureAwait(true);
+    }
+
+    protected override void Dispose(bool disposing)
+    {
+        if (disposing)
+        {
+            _tips.Dispose();
+        }
+
+        base.Dispose(disposing);
     }
 
     /// <summary>
-    /// Opens the editor for a job, or for one that does not exist yet.
+    /// Opens the editor and returns what the verb said when it wrote, or null when nothing was.
     /// </summary>
-    /// <remarks>
-    /// Returns what the save wrote, in the verb's own words, or null when nothing was: the caller
-    /// refreshes and shows the sentence on a value, and leaves its grid alone on null, so a
-    /// cancelled edit does not look like a change. It used to return a bare true, and the "2
-    /// changes in iis.toml" the verb had counted was discarded on the way.
-    /// </remarks>
     public static async Task<string?> ShowAsync(
         IWin32Window owner, CliRunner cli, string? configDir, string? job)
     {
@@ -152,8 +197,6 @@ public sealed class JobEditor : Form
 
             view = JobEditorModel.From(read.StdOut);
 
-            // The verb's own reason - usually which jobs there are, for a name that is not one -
-            // rather than the version-mismatch sentence a refusal used to be reported as.
             if (view.Refusal is { } refusal)
             {
                 LrDialog.Error(owner, "Job", refusal, read.Details);
@@ -190,80 +233,108 @@ public sealed class JobEditor : Form
         return form.ShowDialog(owner) == DialogResult.OK ? form._said : null;
     }
 
-    /// <summary>
-    /// Places every control where <see cref="JobEditorLayout"/> says.
-    /// </summary>
-    /// <remarks>
-    /// The form used to lay itself out top-down from constants and give the grid whatever height
-    /// was left, which for eight common rows was -52: the grid could not be seen, and the status
-    /// line was drawn behind the last two rows. The arithmetic is the model's now, asserted by
-    /// <c>JobEditorLayoutTests</c>; what is left here is reading it.
-    /// </remarks>
+    // ---- building ---------------------------------------------------------------------------
+
     private void Build()
     {
         var colors = Theme.Current;
-        var layout = JobEditorLayout.Compute(JobEditorModel.Common.Count);
+        var layout = _layout;
 
         ClientSize = new Size(layout.ClientWidth, layout.ClientHeight);
 
-        Label Caption(string text, Box box) => new()
-        {
-            Text = text,
-            Bounds = box.ToRectangle(),
-            ForeColor = colors.Muted,
-        };
-
-        _name.Bounds = layout.Name.ToRectangle();
-        _paths.Bounds = layout.Paths.ToRectangle();
-        _kind.Bounds = layout.Kind.ToRectangle();
-        _enabled.Bounds = layout.Enabled.ToRectangle();
-
+        // Header.
         Controls.Add(Caption("Name", layout.NameCaption));
-        Controls.Add(_name);
-        Controls.Add(Caption("Paths", layout.PathsCaption));
-        Controls.Add(_paths);
-        Controls.Add(Caption("Kind", layout.KindCaption));
-        Controls.Add(_kind);
-        Controls.Add(_enabled);
+        Place(_name, layout.Name);
+        Place(_enabled, layout.Enabled);
+        Controls.Add(Caption("Which files", layout.FilesCaption));
+        Place(_files, layout.Files);
+        Place(_browse, layout.Browse);
+        Controls.Add(Caption(JobEditorText.FilesHint, layout.FilesHint));
+        Place(_preview, layout.Preview);
 
-        // One line per pattern, said where somebody will read it rather than in the manual - and
-        // beside the box rather than over it, which is where a fixed offset had put it.
-        Controls.Add(Caption("One glob per line.", layout.PathsHint));
+        _browse.Click += (_, _) => BrowseForFile();
+        _files.Leave += async (_, _) => await PreviewAsync().ConfigureAwait(true);
+        _files.TextChanged += (_, _) => UpdateSummary();
 
-        for (var i = 0; i < JobEditorModel.Common.Count; i++)
+        // Basics.
+        Basic(Caption("Who rotates", layout.WhoCaption));
+        Basic(_rotateRadio, layout.RotateRadio);
+        Basic(Caption(JobEditorText.RotateHint, layout.RotateHint));
+        Basic(_manageRadio, layout.ManageRadio);
+        Basic(Caption(JobEditorText.ManageHint, layout.ManageHint));
+        Basic(Caption("How often", layout.WhenCaption));
+        Basic(_schedule, layout.Schedule);
+        Basic(_earlyLead, layout.EarlyLead);
+        Basic(_maxSize, layout.MaxSize);
+        Basic(_whenHint, layout.WhenHint);
+        Basic(Caption("Keep", layout.KeepCaption));
+        Basic(_rotate, layout.Rotate);
+        Basic(_keepLead, layout.KeepLead);
+        Basic(_maxAge, layout.MaxAge);
+        Basic(_keepUnit, layout.KeepUnit);
+        Basic(Caption(JobEditorText.KeepHint, layout.KeepHint));
+        Basic(_summary, layout.Summary);
+
+        _schedule.Items.Add(JobEditorModel.DefaultChoice(JobSchema.Find("schedule")?.Default));
+        foreach (var choice in JobSchema.Find("schedule")?.Choices ?? [])
         {
-            var key = JobEditorModel.Common[i];
-
-            if (Field(key) is not { } row)
+            if (!JobEditorModel.SizeApplies(choice))
             {
-                continue;
+                _schedule.Items.Add(choice);
             }
-
-            Controls.Add(Caption(key, layout.Common[i].Caption));
-            Controls.Add(Editor(row, layout.Common[i].Editor));
         }
 
-        _advanced.Bounds = layout.Advanced.ToRectangle();
-        _advanced.Columns.Add("key", "Key");
-        _advanced.Columns.Add("value", "Value");
+        _rotateRadio.CheckedChanged += (_, _) => WhoChanged();
+        _schedule.SelectedIndexChanged += (_, _) => ScheduleChanged();
+        _maxSize.TextChanged += (_, _) => UpdateSummary();
+        _rotate.TextChanged += (_, _) => UpdateSummary();
+        _maxAge.TextChanged += (_, _) => UpdateSummary();
+        JudgeOnLeave(_maxSize, "maxsize");
+        JudgeOnLeave(_rotate, "rotate");
+        JudgeOnLeave(_maxAge, "maxage");
 
-        var state = new DataGridViewTextBoxColumn
-        {
-            Name = "state",
-            HeaderText = "Source",
-            ReadOnly = true,
-        };
-
-        _advanced.Columns.Add(state);
-        _advanced.Columns["key"]!.ReadOnly = true;
-        _advanced.CellEndEdit += (_, _) => Restate();
+        // Advanced: a scrolling panel showing a content panel the layout sized.
+        _advanced.Bounds = layout.Viewport.ToRectangle();
+        _content.Bounds = new Box(0, 0, layout.ContentWidth, layout.ContentHeight).ToRectangle();
+        _advanced.Controls.Add(_content);
         Controls.Add(_advanced);
 
-        _status.Bounds = layout.Status.ToRectangle();
-        Controls.Add(_status);
+        foreach (var section in layout.Sections)
+        {
+            _content.Controls.Add(new Label
+            {
+                Text = section.Title,
+                Bounds = section.Header.ToRectangle(),
+                ForeColor = colors.Accent,
+            });
 
-        _check.Bounds = layout.Check.ToRectangle();
-        _save.Bounds = layout.Save.ToRectangle();
+            foreach (var row in section.Rows)
+            {
+                BuildRow(row);
+            }
+        }
+
+        if (layout.ForeignHeader is { } foreignHeader)
+        {
+            _content.Controls.Add(new Label
+            {
+                Text = JobEditorText.ForeignSection,
+                Bounds = foreignHeader.ToRectangle(),
+                ForeColor = colors.Accent,
+            });
+        }
+
+        foreach (var row in layout.Foreign)
+        {
+            BuildForeignRow(row);
+        }
+
+        // Under both.
+        Place(_status, layout.Status);
+        Controls.Add(Caption(JobEditorText.ButtonsHint, layout.ButtonsHint));
+        Place(_toggle, layout.Toggle);
+        Place(_check, layout.Check);
+        Place(_save, layout.Save);
 
         var cancel = new Button
         {
@@ -273,28 +344,531 @@ public sealed class JobEditor : Form
             DialogResult = DialogResult.Cancel,
         };
 
-        // The shield goes on Save and not on Check: Check runs --dry-run, which writes nothing
-        // and needs no rights at all. A shield on it would promise a prompt that never comes,
-        // and train somebody to expect one where it matters less.
-        LrDialog.AddShield(_save);
-
-        _check.Click += async (_, _) => await OneAtATimeAsync(CheckAsync).ConfigureAwait(true);
-        _save.Click += async (_, _) => await OneAtATimeAsync(SaveAsync).ConfigureAwait(true);
-
-        Controls.Add(_check);
-        Controls.Add(_save);
         Controls.Add(cancel);
         CancelButton = cancel;
+
+        // The shield goes on Save and not on Check: Check runs --dry-run, which writes nothing
+        // and needs no rights at all. A shield on it would promise a prompt that never comes.
+        LrDialog.AddShield(_save);
+
+        _toggle.LinkClicked += (_, _) => ShowAdvanced(!_showingAdvanced);
+        _check.Click += async (_, _) => await OneAtATimeAsync(CheckAsync).ConfigureAwait(true);
+        _save.Click += async (_, _) => await OneAtATimeAsync(SaveAsync).ConfigureAwait(true);
+    }
+
+    private Label Caption(string text, Box box) => new()
+    {
+        Text = text,
+        Bounds = box.ToRectangle(),
+        ForeColor = Theme.Current.Muted,
+        AutoEllipsis = true,
+    };
+
+    private void Place(Control control, Box box)
+    {
+        control.Bounds = box.ToRectangle();
+        Controls.Add(control);
+    }
+
+    private void Basic(Control control, Box box)
+    {
+        Place(control, box);
+        _basics.Add(control);
+    }
+
+    private void Basic(Control control)
+    {
+        Controls.Add(control);
+        _basics.Add(control);
+    }
+
+    private void BuildRow(AdvancedRow row)
+    {
+        var field = _original.Fields.First(f => string.Equals(f.Key, row.Key, StringComparison.OrdinalIgnoreCase));
+        var shown = JobEditorModel.Presentation(field);
+        var colors = Theme.Current;
+
+        var caption = new Label { Text = shown.Caption, Bounds = row.Caption.ToRectangle(), AutoEllipsis = true };
+        var key = new Label { Text = shown.Key, Bounds = row.KeyLabel.ToRectangle(), ForeColor = colors.Muted };
+        var source = new Label { Bounds = row.Source.ToRectangle(), ForeColor = colors.Muted, AutoEllipsis = true };
+        var description = new Label
+        {
+            Text = shown.Description,
+            Bounds = row.Description.ToRectangle(),
+            ForeColor = colors.Muted,
+            AutoEllipsis = true,
+        };
+        _tips.SetToolTip(description, shown.Description);
+
+        Control editor = shown.Editor switch
+        {
+            FieldEditor.Check => new CheckBox { Bounds = row.Editor.ToRectangle() },
+            FieldEditor.Choice => Choice(row.Editor, shown.Choices),
+            FieldEditor.Lines => new TextBox
+            {
+                Bounds = row.Editor.ToRectangle(),
+                Multiline = true,
+                ScrollBars = ScrollBars.Vertical,
+                AcceptsReturn = true,
+                PlaceholderText = shown.Placeholder,
+            },
+            _ => new TextBox { Bounds = row.Editor.ToRectangle(), PlaceholderText = shown.Placeholder },
+        };
+
+        var inherit = new LinkLabel { Text = JobEditorText.InheritLink, Bounds = row.Inherit.ToRectangle() };
+
+        var made = new Row { Field = field, Shown = shown, Editor = editor, Caption = caption, Source = source };
+        _rows[field.Key] = made;
+
+        switch (editor)
+        {
+            case CheckBox box:
+                // Click, not CheckedChanged: only the person's own click makes the row explicit.
+                box.Click += (_, _) => { made.Explicit = true; Relabel(made); UpdateSummary(); };
+                break;
+            case ComboBox combo:
+                combo.SelectedIndexChanged += (_, _) => { Relabel(made); ScheduleChanged(); };
+                break;
+            default:
+                editor.TextChanged += (_, _) => { Relabel(made); UpdateSummary(); };
+                editor.Leave += (_, _) => JudgeRow(made);
+                break;
+        }
+
+        inherit.LinkClicked += (_, _) => Inherit(made);
+
+        _content.Controls.Add(caption);
+        _content.Controls.Add(key);
+        _content.Controls.Add(editor);
+        if (row.Unit is { } unitBox && shown.Unit is { } unit)
+        {
+            _content.Controls.Add(new Label { Text = unit, Bounds = unitBox.ToRectangle(), ForeColor = colors.Muted });
+        }
+
+        _content.Controls.Add(source);
+        _content.Controls.Add(inherit);
+        _content.Controls.Add(description);
+    }
+
+    private static ComboBox Choice(Box box, IReadOnlyList<string> choices)
+    {
+        var combo = new ComboBox { Bounds = box.ToRectangle(), DropDownStyle = ComboBoxStyle.DropDownList };
+        combo.Items.Add(JobEditorModel.InheritChoice);
+        foreach (var choice in choices)
+        {
+            combo.Items.Add(choice);
+        }
+
+        return combo;
+    }
+
+    private void BuildForeignRow(ForeignRow row)
+    {
+        var field = _original.Fields.First(f => string.Equals(f.Key, row.Key, StringComparison.OrdinalIgnoreCase));
+
+        var text = new Label
+        {
+            Text = $"{field.Key} = {field.Value}   (line {field.Line}, not a setting this product reads)",
+            Bounds = row.Text.ToRectangle(),
+            ForeColor = Theme.Current.Warning,
+            AutoEllipsis = true,
+        };
+        var remove = new LinkLabel { Text = JobEditorText.RemoveLink, Bounds = row.Remove.ToRectangle() };
+        var made = new ForeignKey { Text = text, Remove = remove };
+        _foreign[field.Key] = made;
+
+        remove.LinkClicked += (_, _) =>
+        {
+            made.Removed = true;
+            text.ForeColor = Theme.Current.Danger;
+            text.Text = $"{field.Key} will be removed";
+            remove.Enabled = false;
+        };
+
+        _content.Controls.Add(text);
+        _content.Controls.Add(remove);
+    }
+
+    // ---- filling ----------------------------------------------------------------------------
+
+    private JobField? Field(string key) =>
+        _original.Fields.FirstOrDefault(f => string.Equals(f.Key, key, StringComparison.OrdinalIgnoreCase));
+
+    private void Fill()
+    {
+        _filling = true;
+
+        _name.Text = Field("name")?.Value ?? string.Empty;
+        _name.ReadOnly = !_isNew;
+        _files.Text = Field("paths")?.Value ?? string.Empty;
+        _enabled.Checked = !string.Equals(Field("enabled")?.Value, "false", StringComparison.OrdinalIgnoreCase);
+
+        // Basics, from the file.
+        var managed = JobEditorModel.IsManaged(_original);
+        _manageRadio.Checked = managed;
+        _rotateRadio.Checked = !managed;
+
+        var schedule = Field("schedule")?.Value;
+        if (JobEditorModel.SizeApplies(schedule))
+        {
+            _schedule.SelectedIndex = 0;
+        }
+        else
+        {
+            Select(_schedule, schedule ?? JobEditorModel.DefaultChoice(JobSchema.Find("schedule")?.Default));
+        }
+
+        _maxSize.Text = Field("maxsize")?.Value ?? string.Empty;
+        _rotate.Text = Field("rotate")?.Value ?? string.Empty;
+        _maxAge.Text = Field("maxage")?.Value ?? string.Empty;
+
+        // Advanced, from the file.
+        foreach (var row in _rows.Values)
+        {
+            SetRow(row, row.Field.Value);
+        }
+
+        _filling = false;
+
+        WhoChanged();
+        ScheduleChanged();
+        UpdateSummary();
+        ShowAdvanced(false);
+
+        if (_original.Problems.Count > 0)
+        {
+            Say(string.Join("  ", _original.Problems), Theme.Current.Warning);
+        }
+        else if (_hookWarning is not null && !_isNew)
+        {
+            Say(_hookWarning, Theme.Current.Warning);
+        }
+        else
+        {
+            Say(_isNew ? JobEditorText.OpeningStatus : string.Empty, Theme.Current.Muted);
+        }
+    }
+
+    private void SetRow(Row row, string? value)
+    {
+        switch (row.Editor)
+        {
+            case CheckBox box:
+                row.Explicit = value is not null;
+                box.Checked = value is null
+                    ? row.Shown.InheritedChecked
+                    : string.Equals(value, "true", StringComparison.OrdinalIgnoreCase);
+                break;
+            case ComboBox combo:
+                Select(combo, value ?? JobEditorModel.InheritChoice);
+                break;
+            default:
+                row.Editor.Text = value ?? string.Empty;
+                break;
+        }
+
+        Relabel(row);
+    }
+
+    private string? ReadRow(Row row) => row.Editor switch
+    {
+        CheckBox box => row.Explicit ? (box.Checked ? "true" : "false") : null,
+        ComboBox combo => JobEditorModel.ChoiceValue(combo.SelectedItem as string),
+        _ => row.Editor.Text,
+    };
+
+    private void Relabel(Row row)
+    {
+        if (_filling)
+        {
+            return;
+        }
+
+        var hooked = _hookWarning is not null
+                     && JobEditorModel.Hooks.Contains(row.Field.Key, StringComparer.OrdinalIgnoreCase);
+
+        row.Source.Text = hooked ? "will never run here" : JobEditorModel.SourceLabel(row.Field, ReadRow(row));
+        row.Source.ForeColor = hooked ? Theme.Current.Warning : Theme.Current.Muted;
+        _tips.SetToolTip(row.Source, hooked
+            ? _hookWarning
+            : row.Source.Text.StartsWith("inherited", StringComparison.Ordinal) ? JobEditorText.InheritedTooltip : string.Empty);
+    }
+
+    private void Inherit(Row row)
+    {
+        SetRow(row, null);
+        Judged(row.Field.Key, row.Caption, null);
+        UpdateSummary();
+    }
+
+    // ---- the two views ----------------------------------------------------------------------
+
+    private void ShowAdvanced(bool advanced)
+    {
+        if (advanced && !_showingAdvanced)
+        {
+            CarryBasicsToAdvanced();
+        }
+        else if (!advanced && _showingAdvanced)
+        {
+            CarryAdvancedToBasics();
+        }
+
+        _showingAdvanced = advanced;
+        _advanced.Visible = advanced;
+        foreach (var control in _basics)
+        {
+            control.Visible = !advanced;
+        }
+
+        _toggle.Text = JobEditorModel.AdvancedLinkText(JobEditorModel.AdvancedSetCount(_original), advanced);
+    }
+
+    private BasicsAnswers Answers() => new(
+        _manageRadio.Checked,
+        _schedule.SelectedItem as string,
+        _maxSize.Text,
+        _rotate.Text,
+        _maxAge.Text);
+
+    private void CarryBasicsToAdvanced()
+    {
+        foreach (var (key, value) in JobEditorModel.BasicsEdits(_original, Answers()))
+        {
+            if (_rows.TryGetValue(key, out var row))
+            {
+                SetRow(row, string.IsNullOrWhiteSpace(value) ? null : value);
+            }
+        }
+    }
+
+    private void CarryAdvancedToBasics()
+    {
+        _filling = true;
+
+        if (_rows.TryGetValue("kind", out var kind))
+        {
+            var managed = string.Equals(ReadRow(kind), "manage", StringComparison.OrdinalIgnoreCase);
+            _manageRadio.Checked = managed;
+            _rotateRadio.Checked = !managed;
+        }
+
+        if (_rows.TryGetValue("schedule", out var schedule))
+        {
+            var value = ReadRow(schedule);
+            if (JobEditorModel.SizeApplies(value))
+            {
+                _schedule.SelectedIndex = 0;
+            }
+            else
+            {
+                Select(_schedule, value ?? JobEditorModel.DefaultChoice(JobSchema.Find("schedule")?.Default));
+            }
+        }
+
+        if (_rows.TryGetValue("maxsize", out var maxSize))
+        {
+            _maxSize.Text = ReadRow(maxSize) ?? string.Empty;
+        }
+
+        if (_rows.TryGetValue("rotate", out var rotate))
+        {
+            _rotate.Text = ReadRow(rotate) ?? string.Empty;
+        }
+
+        if (_rows.TryGetValue("maxage", out var maxAge))
+        {
+            _maxAge.Text = ReadRow(maxAge) ?? string.Empty;
+        }
+
+        _filling = false;
+        WhoChanged();
+        UpdateSummary();
+    }
+
+    private void WhoChanged()
+    {
+        var managed = _manageRadio.Checked;
+        var bySize = !_showingAdvanced && JobEditorModel.SizeApplies(ScheduleShown());
+
+        _schedule.Enabled = _maxSize.Enabled = _earlyLead.Enabled = !managed && !bySize;
+        _whenHint.Text = managed
+            ? JobEditorText.WhenManaged
+            : bySize ? JobEditorText.WhenBySize : JobEditorText.WhenHint;
+
+        UpdateSummary();
+    }
+
+    /// <summary>The schedule the visible view says, which decides whether the size threshold means anything.</summary>
+    private string? ScheduleShown() =>
+        _showingAdvanced && _rows.TryGetValue("schedule", out var row)
+            ? ReadRow(row)
+            : JobEditorModel.SizeApplies(Field("schedule")?.Value) && !_showingAdvanced
+                ? "size"
+                : JobEditorModel.ChoiceValue(_schedule.SelectedItem as string);
+
+    private void ScheduleChanged()
+    {
+        if (_filling)
+        {
+            return;
+        }
+
+        if (_rows.TryGetValue("size", out var size))
+        {
+            size.Editor.Enabled = JobEditorModel.SizeApplies(ScheduleShown());
+        }
+
+        UpdateSummary();
+    }
+
+    private void UpdateSummary()
+    {
+        if (_filling)
+        {
+            return;
+        }
+
+        bool? compress = _rows.TryGetValue("compress", out var row) && row.Explicit && row.Editor is CheckBox box
+            ? box.Checked
+            : null;
+
+        _summary.Text = JobSummary.Sentence(
+            _manageRadio.Checked,
+            ScheduleShown(),
+            _maxSize.Text,
+            _rotate.Text,
+            _maxAge.Text,
+            compress,
+            _files.Lines.FirstOrDefault(l => l.Trim().Length > 0));
+    }
+
+    // ---- judging a value before the CLI sees it --------------------------------------------
+
+    private void JudgeOnLeave(TextBox box, string key) =>
+        box.Leave += (_, _) =>
+        {
+            if (Field(key) is { } field)
+            {
+                Judged(key, null, JobEditorModel.Judge(field, box.Text));
+            }
+        };
+
+    private void JudgeRow(Row row) =>
+        Judged(row.Field.Key, row.Caption, JobEditorModel.Judge(row.Field, ReadRow(row)));
+
+    private void Judged(string key, Label? caption, string? problem)
+    {
+        if (problem is null)
+        {
+            if (_problems.Remove(key) && _status.Text.Length > 0 && _status.ForeColor == Theme.Current.Danger)
+            {
+                Say(string.Empty, Theme.Current.Muted);
+            }
+
+            if (caption is not null)
+            {
+                caption.ForeColor = Theme.Current.Text;
+            }
+
+            return;
+        }
+
+        _problems[key] = problem;
+        if (caption is not null)
+        {
+            caption.ForeColor = Theme.Current.Danger;
+        }
+
+        Say(problem, Theme.Current.Danger);
+    }
+
+    // ---- files -----------------------------------------------------------------------------
+
+    private void BrowseForFile()
+    {
+        using var dialog = new OpenFileDialog
+        {
+            Title = "Pick one of the log files",
+            Filter = "Log files (*.log;*.txt)|*.log;*.txt|All files (*.*)|*.*",
+            CheckFileExists = true,
+            Multiselect = false,
+        };
+
+        var first = _files.Lines.FirstOrDefault(l => l.Trim().Length > 0);
+        if (first is not null && PatternSuggestion.Folder(first) is { Length: > 0 } folder)
+        {
+            dialog.InitialDirectory = folder.Replace('/', '\\');
+        }
+
+        if (dialog.ShowDialog(this) != DialogResult.OK)
+        {
+            return;
+        }
+
+        var line = PatternSuggestion.FromPick(dialog.FileName);
+        _files.Text = _files.Text.Trim().Length == 0 ? line : _files.Text.TrimEnd() + Environment.NewLine + line;
+
+        if (_isNew)
+        {
+            var suggestion = JobNameSuggestion.From(line);
+            _name.Text = JobNameSuggestion.Apply(_name.Text.Trim(), _lastSuggestedName, suggestion);
+            _lastSuggestedName = suggestion;
+        }
+
+        _ = PreviewAsync();
     }
 
     /// <summary>
-    /// Runs Check or Save, with both disabled until it has finished.
+    /// Says what the files box matches, one line at a time, through the real verb.
     /// </summary>
     /// <remarks>
-    /// Save awaits a dry run and then a UAC prompt. Both buttons stayed enabled throughout, so a
-    /// double-click was two prompts and two writes, and the second one's dialog could open on a
-    /// form the first had already closed.
+    /// Never gates Check or Save: a line the CLI cannot answer for is a sentence in Muted, not a
+    /// blocked button. A serial number drops an answer that arrives after the box has changed.
     /// </remarks>
+    private async Task PreviewAsync()
+    {
+        var serial = ++_previewSerial;
+        var lines = _files.Lines.Select(l => l.Trim()).Where(l => l.Length > 0).ToArray();
+
+        if (lines.Length == 0)
+        {
+            _preview.Text = string.Empty;
+            return;
+        }
+
+        var previews = new List<GlobPreview>();
+
+        foreach (var line in lines.Take(PreviewLines))
+        {
+            var result = await _cli.RunAsync(GlobPreviewProjection.Arguments(line)).ConfigureAwait(true);
+
+            if (IsDisposed || serial != _previewSerial)
+            {
+                return;
+            }
+
+            // A defect is one sentence here, like any other answer the preview cannot use: the
+            // projection words it, and the dialog is for the verbs that write.
+            previews.Add(GlobPreviewProjection.From(result));
+        }
+
+        var combined = GlobPreviewProjection.Combine(previews);
+
+        _preview.Text = lines.Length > PreviewLines
+            ? $"{combined.Sentence} (Preview shows the first {PreviewLines} lines.)"
+            : combined.Sentence;
+        _preview.ForeColor = combined.Tone switch
+        {
+            CheckTone.Error => Theme.Current.Danger,
+            CheckTone.Warning => Theme.Current.Warning,
+            _ => Theme.Current.Muted,
+        };
+        _tips.SetToolTip(_preview, combined.Remedy);
+    }
+
+    // ---- check and save ---------------------------------------------------------------------
+
     private async Task OneAtATimeAsync(Func<Task> action)
     {
         if (_busy)
@@ -320,202 +894,45 @@ public sealed class JobEditor : Form
         }
     }
 
-    private Control Editor(JobField row, Box box)
-    {
-        Control control;
-
-        if (row.Kind == JobKeyKind.Enum && row.Choices.Count > 0)
-        {
-            var combo = new ComboBox
-            {
-                Bounds = box.ToRectangle(),
-                DropDownStyle = ComboBoxStyle.DropDownList,
-            };
-
-            // The empty entry is not decoration: it is how the form says "inherit again", and
-            // without it an enum is the one kind of field somebody could set and never clear.
-            combo.Items.Add(string.Empty);
-            foreach (var choice in row.Choices)
-            {
-                combo.Items.Add(choice);
-            }
-
-            control = combo;
-        }
-        else if (row.Kind == JobKeyKind.Flag)
-        {
-            var combo = new ComboBox
-            {
-                Bounds = box.ToRectangle(),
-                DropDownStyle = ComboBoxStyle.DropDownList,
-            };
-
-            // Three states, not a checkbox. A checkbox has two, and a job key has three: true,
-            // false, and inherited - which is the distinction the whole editor turns on.
-            combo.Items.AddRange([string.Empty, "true", "false"]);
-            control = combo;
-        }
-        else
-        {
-            control = new TextBox
-            {
-                Bounds = box.ToRectangle(),
-                PlaceholderText = row.Sample.Trim('"'),
-            };
-        }
-
-        _editors[row.Key] = control;
-        return control;
-    }
-
-    private JobField? Field(string key) =>
-        _original.Fields.FirstOrDefault(f => string.Equals(f.Key, key, StringComparison.OrdinalIgnoreCase));
-
-    private void Fill()
-    {
-        _name.Text = Field("name")?.Value ?? string.Empty;
-
-        // The name is the job's identity, so it is read-only on an existing job: renaming means
-        // a new file and a journal that no longer matches, which is an add and a remove.
-        _name.ReadOnly = !_isNew;
-
-        _paths.Text = Field("paths")?.Value ?? string.Empty;
-
-        _kind.Items.Clear();
-
-        // The empty entry first, and it is what an unset key selects. Defaulting the combo to
-        // "rotate" instead would mean a job that never said kind acquired `kind = "rotate"` on
-        // the first Save - semantically identical, and a line nobody asked for in a file whose
-        // whole promise is that keys nobody named are untouched.
-        _kind.Items.Add(string.Empty);
-
-        foreach (var choice in Field("kind")?.Choices ?? [])
-        {
-            _kind.Items.Add(choice);
-        }
-
-        Select(_kind, Field("kind")?.Value ?? string.Empty);
-        _enabled.Checked = !string.Equals(Field("enabled")?.Value, "false", StringComparison.OrdinalIgnoreCase);
-
-        foreach (var (key, control) in _editors)
-        {
-            Set(control, Field(key)?.Value ?? string.Empty);
-        }
-
-        _advanced.Rows.Clear();
-
-        // The model decides what the grid holds, so the rule that every key is reachable from
-        // this form is asserted where a test can reach it. The grid used to skip every
-        // structural key, and allowdangerous is structural without having a box of its own.
-        foreach (var field in JobEditorModel.GridFields(_original))
-        {
-            var row = _advanced.Rows[_advanced.Rows.Add(field.Key, field.Value ?? string.Empty, State(field))];
-
-            if (JobEditorModel.Hooks.Contains(field.Key, StringComparer.OrdinalIgnoreCase))
-            {
-                // One command per line, which a single-line cell could neither show nor take:
-                // two commands were drawn on one line, and Enter in the cell ended the edit
-                // instead of starting a line. Wrapped, the cell shows every line, and the grid's
-                // editing control takes Shift+Enter as a new one.
-                row.Cells["value"].Style.WrapMode = DataGridViewTriState.True;
-                row.Cells["value"].ToolTipText = "One command per line. Shift+Enter starts a new line.";
-            }
-
-            if (_hookWarning is not null
-                && JobEditorModel.Hooks.Contains(field.Key, StringComparer.OrdinalIgnoreCase))
-            {
-                row.Cells["state"].Value = "will never run here";
-                row.Cells["state"].ToolTipText = _hookWarning;
-                row.DefaultCellStyle.ForeColor = Theme.Current.Warning;
-            }
-
-            if (!field.Known)
-            {
-                // This build has no row for it, so it can be cleared and not written. Saying so
-                // in the cell is the only warning an editor gets before typing into it.
-                row.Cells["state"].Value = "not a setting this product reads";
-                row.DefaultCellStyle.ForeColor = Theme.Current.Warning;
-            }
-        }
-
-        Restate();
-
-        if (_original.Problems.Count > 0)
-        {
-            _status.Text = string.Join("  ", _original.Problems);
-            _status.ForeColor = Theme.Current.Warning;
-        }
-        else if (_hookWarning is not null && _advanced.Rows.Count > 0)
-        {
-            Say(_hookWarning, Theme.Current.Warning);
-        }
-    }
-
-    /// <summary>Whether a value is the job's own or comes from somewhere above it.</summary>
-    private static string State(JobField field) =>
-        field.IsSet ? $"set here (line {field.Line})" : "inherited";
-
     /// <summary>
-    /// Re-labels the Source column after an edit.
+    /// What the form holds, as edits over the job as it was read.
     /// </summary>
     /// <remarks>
-    /// Because the label is the point of the column: somebody who types into an inherited row has
-    /// just decided to stop inheriting that key, and should see that before they press Save
-    /// rather than afterwards.
+    /// The keys Basics asks about come from whichever view is showing; everything else comes from
+    /// Advanced, whose rows hold the file's values until somebody touches them. A foreign key is
+    /// sent only when it was removed. The size threshold is sent as cleared unless the schedule
+    /// showing is <c>size</c>, or a calendar choice would never take effect.
     /// </remarks>
-    private void Restate()
-    {
-        foreach (DataGridViewRow row in _advanced.Rows)
-        {
-            var key = row.Cells["key"].Value as string ?? string.Empty;
-            var field = Field(key);
-
-            if (field is null
-                || !field.Known
-                || (_hookWarning is not null
-                    && JobEditorModel.Hooks.Contains(key, StringComparer.OrdinalIgnoreCase)))
-            {
-                // A hook's label says it will never run here, which stays true whatever is typed
-                // into it - and is the more important of the two things that cell could say.
-                continue;
-            }
-
-            // The model's comparison, not a text one: a hook of two commands comes back from a
-            // wrapped cell with Windows line endings, and compared as text that was a change.
-            var now = row.Cells["value"].Value as string ?? string.Empty;
-
-            row.Cells["state"].Value = JobEditorModel.Unchanged(field, now)
-                ? State(field)
-                : now.Trim().Length == 0 ? "will inherit again" : "will be set here";
-        }
-    }
-
-    /// <summary>What the form currently says, as the model wants it.</summary>
     private Dictionary<string, string?> Edited()
     {
         var edited = new Dictionary<string, string?>(StringComparer.OrdinalIgnoreCase)
         {
             ["name"] = _name.Text.Trim(),
-            ["paths"] = _paths.Text,
-            // Empty means the job does not say it, which is not the same as saying "rotate".
-            ["kind"] = _kind.SelectedItem as string,
-
-            // Absent means enabled, so the box being ticked says nothing rather than "true".
-            // Writing enabled = true would put a second spelling of the default in the file.
+            ["paths"] = _files.Text,
             ["enabled"] = _enabled.Checked ? null : "false",
         };
 
-        foreach (var (key, control) in _editors)
+        foreach (var (key, row) in _rows)
         {
-            edited[key] = Read(control);
+            edited[key] = ReadRow(row);
         }
 
-        foreach (DataGridViewRow row in _advanced.Rows)
+        if (!_showingAdvanced)
         {
-            if (row.Cells["key"].Value is string key)
+            foreach (var (key, value) in JobEditorModel.BasicsEdits(_original, Answers()))
             {
-                edited[key] = (row.Cells["value"].Value as string)?.Trim();
+                edited[key] = value;
             }
+        }
+
+        if (!JobEditorModel.SizeApplies(ScheduleShown()))
+        {
+            edited["size"] = null;
+        }
+
+        foreach (var (key, foreign) in _foreign.Where(f => f.Value.Removed))
+        {
+            edited[key] = null;
         }
 
         return edited;
@@ -540,7 +957,6 @@ public sealed class JobEditor : Form
 
         var result = await _cli.RunAsync(Args(dryRun: true)).ConfigureAwait(true);
 
-        // Closed while the check ran. Nothing to say it on.
         if (IsDisposed)
         {
             return;
@@ -563,9 +979,7 @@ public sealed class JobEditor : Form
             return;
         }
 
-        // Checked before it is elevated, and through the same arguments plus one flag. A form
-        // that validated one way and saved another would raise a UAC prompt for a change that
-        // was never going to work.
+        // The dry run first, unelevated: a refusal costs no UAC prompt.
         var dry = await _cli.RunAsync(Args(dryRun: true)).ConfigureAwait(true);
 
         if (IsDisposed)
@@ -593,8 +1007,6 @@ public sealed class JobEditor : Form
 
         var result = await _cli.RunElevatedAsync(Args(dryRun: false)).ConfigureAwait(true);
 
-        // Closed while the elevated child ran. The file is whatever the child made of it, and
-        // the Jobs page will show that on its next refresh.
         if (IsDisposed)
         {
             return;
@@ -616,8 +1028,6 @@ public sealed class JobEditor : Form
 
         if (written is null)
         {
-            // Refused, or already what the file said. Either way the form stays open with the
-            // verb's sentence in the status line, and nothing is reported as a change.
             return;
         }
 
@@ -626,34 +1036,29 @@ public sealed class JobEditor : Form
         Close();
     }
 
-    /// <summary>What the form can refuse without asking the CLI.</summary>
-    /// <remarks>
-    /// Only the two things that would otherwise produce a command line with a missing argument.
-    /// Everything else is the CLI's to judge, because a second opinion about what a valid job is
-    /// is the thing this whole design exists to avoid having.
-    /// </remarks>
+    /// <summary>
+    /// What this window refuses on its own: a new job with no name or no files, and a value the
+    /// CLI would refuse by the same grammar. Everything else is the CLI's to judge.
+    /// </summary>
     private string? Refused()
     {
         if (_isNew && _name.Text.Trim().Length == 0)
         {
-            return "Give the job a name first. It appears in the journal and in every diagnostic.";
+            return JobEditorText.NoName;
         }
 
-        return _isNew && _paths.Text.Trim().Length == 0
-            ? "A new job needs at least one path to rotate."
-            : null;
+        if (_isNew && _files.Text.Trim().Length == 0)
+        {
+            return JobEditorText.NoFiles;
+        }
+
+        return _problems.Values.FirstOrDefault();
     }
 
     /// <summary>
-    /// Says what the verb answered, and returns the sentence when something was written.
+    /// Reports the verb's answer: the sentence in the status line, and the details in a dialog
+    /// when it is an error with something to show.
     /// </summary>
-    /// <remarks>
-    /// Through <see cref="JobEditProjection"/>, not <c>ConfigCheckProjection</c>: a job verb's
-    /// payload has no <c>errors</c> or <c>warnings</c> count, and a refusal has no payload at
-    /// all, so the check projection reported every one of them as an unreadable response. The
-    /// verb's own words - which key, which value, and an example that works - go in the status
-    /// line; a refusal with more to say also opens the dialog, because a status line is one line.
-    /// </remarks>
     private string? Report(CliResult result, bool checking)
     {
         var view = JobEditProjection.From(result);
@@ -679,27 +1084,7 @@ public sealed class JobEditor : Form
         _status.ForeColor = colour;
     }
 
-    private static void Set(Control control, string value)
-    {
-        if (control is ComboBox combo)
-        {
-            Select(combo, value);
-            return;
-        }
-
-        control.Text = value;
-    }
-
-    /// <summary>
-    /// Selects a value, adding it to the list first if the list does not have it.
-    /// </summary>
-    /// <remarks>
-    /// <c>SelectedItem</c> set to something the list lacks selects nothing, silently. The model
-    /// shows a known value in the list's own spelling, so what arrives here and is missing is a
-    /// value this build does not know - from a newer CLI, or a hand-written file - and the only
-    /// way to hand it back unchanged is to make it selectable. Without this, reading the combo
-    /// gave null, and null differed from the file, and an untouched Save deleted the line.
-    /// </remarks>
+    /// <summary>Selects a value, adding it first when the list does not have it, so a foreign spelling round-trips.</summary>
     private static void Select(ComboBox combo, string value)
     {
         if (!combo.Items.Contains(value))
@@ -709,7 +1094,4 @@ public sealed class JobEditor : Form
 
         combo.SelectedItem = value;
     }
-
-    private static string? Read(Control control) =>
-        control is ComboBox combo ? combo.SelectedItem as string : control.Text;
 }
