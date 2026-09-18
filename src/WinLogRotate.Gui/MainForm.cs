@@ -136,6 +136,53 @@ public sealed class MainForm : Form
                 "changing jobs or scheduling will ask for elevation when needed.",
                 Severity.Info);
         }
+
+        await CheckForUpdateIfDueAsync().ConfigureAwait(true);
+    }
+
+    /// <summary>
+    /// The once-a-day check, when the user has asked for one and a day has passed.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// Only ever a check, and only ever after the identity probe has said the executable is
+    /// ours. A newer release takes the banner over the elevation note: the note is true for
+    /// the whole session and says so on every start, while a release is news, and news that
+    /// is a press away from being acted on.
+    /// </para>
+    /// <para>
+    /// The stamp is written whether or not the feed answered, so an offline machine asks again
+    /// tomorrow rather than on every start. A check that failed says nothing here; the Settings
+    /// page says it when asked.
+    /// </para>
+    /// </remarks>
+    private async Task CheckForUpdateIfDueAsync()
+    {
+        var preferences = PreferencesStore.Load();
+
+        if (preferences.UpdateCheck != UpdateCheckMode.Daily
+            || !GuiPreferences.IsCheckDue(preferences.LastUpdateCheckUtc, DateTimeOffset.UtcNow))
+        {
+            return;
+        }
+
+        // Not CliArgs.For: the update verbs declare no --config-dir, and would answer one with
+        // a parse error.
+        var result = await _cli.RunAsync(["update", "check", "--json"]).ConfigureAwait(true);
+
+        if (IsDisposed)
+        {
+            return;
+        }
+
+        PreferencesStore.Save(preferences with { LastUpdateCheckUtc = DateTimeOffset.UtcNow });
+
+        var status = UpdateStatusProjection.From(result, ProductInfo.Version);
+
+        if (status.Latest is { } latest)
+        {
+            ShowBanner(UpdateText.Banner(latest), Severity.Info);
+        }
     }
 
     /// <summary>

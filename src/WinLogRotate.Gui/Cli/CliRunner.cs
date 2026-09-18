@@ -150,19 +150,42 @@ public sealed class CliRunner(string executablePath)
     /// - which is the UI thread, for as long as the child takes to start.
     /// </para>
     /// </remarks>
-    public async Task<CliResult> RunElevatedAsync(
+    public Task<CliResult> RunElevatedAsync(
         IReadOnlyList<string> arguments,
         Action<string>? onLine = null,
         Action<int>? onStarted = null,
-        CancellationToken cancellationToken = default)
+        CancellationToken cancellationToken = default) =>
+        RunThroughFileAsync(arguments, elevated: true, onLine, onStarted, cancellationToken);
+
+    /// <summary>
+    /// Runs a verb unelevated, streaming its progress the same way an elevated one is streamed.
+    /// </summary>
+    /// <remarks>
+    /// The same file and the same tail as <see cref="RunElevatedAsync"/>, so a page that
+    /// shows progress does not need two code paths for the two tokens - which is what the
+    /// Updates panel needs: a per-machine install updates elevated and a per-user one does
+    /// not, and the download looks the same either way.
+    /// </remarks>
+    public Task<CliResult> RunStreamingAsync(
+        IReadOnlyList<string> arguments,
+        Action<string>? onLine = null,
+        CancellationToken cancellationToken = default) =>
+        RunThroughFileAsync(arguments, elevated: false, onLine, onStarted: null, cancellationToken);
+
+    private async Task<CliResult> RunThroughFileAsync(
+        IReadOnlyList<string> arguments,
+        bool elevated,
+        Action<string>? onLine,
+        Action<int>? onStarted,
+        CancellationToken cancellationToken)
     {
         var workDirectory = Path.Combine(Path.GetTempPath(), WorkDirectories.Name(Guid.NewGuid()));
         var eventFile = Path.Combine(workDirectory, "events.ndjson");
 
         var info = new ProcessStartInfo(ExecutablePath)
         {
-            UseShellExecute = true,
-            Verb = "runas",
+            UseShellExecute = elevated,
+            Verb = elevated ? "runas" : string.Empty,
             CreateNoWindow = true,
             WindowStyle = ProcessWindowStyle.Hidden,
         };

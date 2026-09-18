@@ -80,3 +80,21 @@ public static class JobsEmptyState
     public static ToolbarButton Add { get; } = new("Add a job\u2026", 110);
 }
 
+/// <summary>
+/// The Updates panel at the top of the Settings page: two choices, two buttons, one line of
+/// status.
+/// </summary>
+/// <remarks>
+/// Heights and widths live here so <c>WindowLayoutTests</c> can hold the captions against
+/// them; the page never types a number.
+/// </remarks>
+public static class UpdatesPanel
+{
+    /// <summary>Title, two radio rows, and the button row, with the padding between them.</summary>
+    public const int Height = 118;
+
+    public const int Padding = 6;
+
+    public static ToolbarButton CheckNow { get; } = new("Check now", 96);
+    public static ToolbarButton Update { get; } = new("Update\u2026", 96);
+}
