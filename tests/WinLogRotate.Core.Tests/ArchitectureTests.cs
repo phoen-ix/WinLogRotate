@@ -1459,7 +1459,7 @@ public partial class ArchitectureTests
     /// </remarks>
     private static readonly Dictionary<string, string[]> Raisers = new(StringComparer.Ordinal)
     {
-        [nameof(DiagnosticCode.NeedsAdministrator)] = ["HostCommand.cs", "ImportCommand.cs", "JobCommand.cs", "PauseCommand.cs", "SecretCommand.cs"],
+        [nameof(DiagnosticCode.NeedsAdministrator)] = ["HostCommand.cs", "ImportCommand.cs", "JobCommand.cs", "PauseCommand.cs", "SecretCommand.cs", "UpdateCommand.cs"],
         [nameof(DiagnosticCode.ConfigUnreadable)] = ["JobCommand.cs", "ConfigLoader.cs", "SecretCommand.cs"],
         [nameof(DiagnosticCode.ConfigInvalid)] = ["ConfigBinder.cs", "ConfigLoader.cs", "ConfigValidator.cs", "Diagnose.cs", "ImportCommand.cs", "LogrotateImporter.cs", "SecretCommand.cs"],
         [nameof(DiagnosticCode.NoJobsConfigured)] = ["ConfigLoader.cs"],
@@ -1492,6 +1492,7 @@ public partial class ArchitectureTests
         [nameof(DiagnosticCode.HostRegistrationFailed)] = ["HostCommand.cs"],
         [nameof(DiagnosticCode.PathUnwritable)] = ["HostCommand.cs"],
         [nameof(DiagnosticCode.UpdateCheckFailed)] = ["UpdateCommand.cs"],
+        [nameof(DiagnosticCode.UpdateNotInstalled)] = ["UpdateCommand.cs"],
         [nameof(DiagnosticCode.NotifyMisconfigured)] = ["ChannelResolver.cs", "ConfigBinder.cs", "ConfigLoader.cs", "HookDispatcher.cs", "NotifyCommand.cs", "NotifyTestCommand.cs", "SecretCommand.cs"],
         [nameof(DiagnosticCode.NotifyFailed)] = ["HookDispatcher.cs"],
         [nameof(DiagnosticCode.NotifyCircuitOpen)] = ["DoctorCommand.cs", "HookDispatcher.cs"],

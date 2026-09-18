@@ -235,6 +235,19 @@ public static class DiagnosticCode
     /// </remarks>
     public const string PathUnwritable = "LR4005";
 
+    /// <summary>
+    /// A newer release exists and was not installed: it could not be downloaded, did not match
+    /// the release's checksum, or its installer could not be started. Nothing was changed.
+    /// </summary>
+    /// <remarks>
+    /// Its own code because <see cref="UpdateCheckFailed"/> is a warning about a query that
+    /// could not be made, and this is an error about an action that was asked for and did not
+    /// happen. Error, because <c>update apply</c> from a script must exit non-zero when the
+    /// machine is still on the old version - and a checksum mismatch is the one finding here
+    /// that somebody should read the same day.
+    /// </remarks>
+    public const string UpdateNotInstalled = "LR4006";
+
     // 5xxx - notification delivery.
     //
     // Deliberately its own band rather than sharing 3xxx: a webhook that could not be reached is

@@ -97,6 +97,7 @@ public static class EventIds
         DiagnosticCode.HostRegistrationFailed => 142,
         DiagnosticCode.UpdateCheckFailed => 143,
         DiagnosticCode.PathUnwritable => 144,
+        DiagnosticCode.UpdateNotInstalled => 145,
 
         // The 1xxx band's own block, 111-119, is full. 160 continues it rather than borrowing a
         // number from a neighbour: the bands group the table for a reader, and an ID that has

@@ -513,7 +513,26 @@ public sealed record UpdateResult
     public required string Current { get; init; }
     public string? Latest { get; init; }
     public required bool UpdateAvailable { get; init; }
+
+    /// <summary>A word or a URL: <c>up to date</c>, <c>disabled by policy</c>, <c>could not
+    /// reach the feed</c>, the release page when an update exists, <c>installing</c> once
+    /// <c>apply</c> has handed over, <c>not installed</c> when it refused.</summary>
     public string? Detail { get; init; }
+
+    /// <summary><c>PerMachine</c> or <c>PerUser</c>, as the installer recorded it; absent for
+    /// a portable copy. The console reads it to know whether Update will ask for elevation.</summary>
+    public string? Scope { get; init; }
+
+    /// <summary><c>full</c> or <c>min</c>: which installer an update fetches. Absent for a
+    /// portable copy.</summary>
+    public string? Variant { get; init; }
+
+    /// <summary>True once <c>update apply</c> has handed over to the installer, which then
+    /// closes the console, replaces the files, and may start the console again.</summary>
+    public bool Installing { get; init; }
+
+    /// <summary>The downloaded, verified installer that was started, when one was.</summary>
+    public string? Installer { get; init; }
 }
 
 /// <summary>One key an edit changed, in the file's own spelling.</summary>

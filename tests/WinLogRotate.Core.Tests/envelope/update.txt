@@ -12,8 +12,12 @@ ok : Boolean
 product : String
 result.current : String
 result.detail : String
+result.installer : String
+result.installing : Boolean
 result.latest : String
+result.scope : String
 result.updateAvailable : Boolean
+result.variant : String
 schema : Number
 verb : String
 version : String

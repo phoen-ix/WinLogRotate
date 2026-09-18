@@ -691,13 +691,16 @@ internal static class CommandTree
         GlobalOptions.AddTo(check, configDir: false);  // update check asks GitHub for a version
         check.SetAction(parse => CommandContext.Guarded(parse, ctx => UpdateCommand.CheckAsync(ctx).GetAwaiter().GetResult()));
 
-        // No --yes, and the description says what the verb does rather than what it is named
-        // after. Apply deliberately does not self-replace - see UpdateCommand.Apply - so a switch
-        // offering to "install without asking" was attached to a verb that installs nothing.
-        var apply = new Command("apply", "Explain how to install the newest release.");
-        GlobalOptions.AddTo(apply, configDir: false);  // update apply prints where to download
-        apply.SetAction(parse => CommandContext.Guarded(parse, ctx => UpdateCommand.Apply(ctx)));
+        // No --yes: running this verb is the consent. It downloads, verifies and starts the
+        // installer, which then waits for any rotation in progress before replacing anything.
+        var restartGui = new Option<bool>("--restart-gui")
+        {
+            Description = "Start the console again once the installer has finished. The console passes this itself.",
+        };
+        var apply = new Command("apply", "Download the newest release, verify it, and run its installer.") { restartGui };
+        GlobalOptions.AddTo(apply, configDir: false);  // update apply reads the install record, not a configuration
+        apply.SetAction(parse => CommandContext.Guarded(parse, ctx => UpdateCommand.Apply(ctx, parse.GetValue(restartGui))));
 
-        return new Command("update", "Check for newer releases, and say how to install one.") { check, apply };
+        return new Command("update", "Check for newer releases, and install one.") { check, apply };
     }
 }

@@ -509,12 +509,16 @@ public sealed class EnvelopeShapeTests
     [Fact]
     public void UpdateKeepsItsShape() =>
         ShouldMatchSnapshot(
-            Envelope("update check", new UpdateResult
+            Envelope("update apply", new UpdateResult
             {
                 Current = "0.12.1",
                 Latest = "0.13.0",
                 UpdateAvailable = true,
-                Detail = "https://example.invalid/releases/latest",
+                Detail = "installing",
+                Scope = "PerMachine",
+                Variant = "full",
+                Installing = true,
+                Installer = @"C:\Users\me\AppData\Local\Temp\WinLogRotate-update-1a2b3c\WinLogRotate-Setup-0.13.0-full.exe",
             }),
             "update");
 
