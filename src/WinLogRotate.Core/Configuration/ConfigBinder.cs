@@ -1054,18 +1054,29 @@ public static class ConfigBinder
 
         if (!double.TryParse(
                 trimmed[..^1], System.Globalization.NumberStyles.Float,
-                System.Globalization.CultureInfo.InvariantCulture, out var count) || count < 0)
+                System.Globalization.CultureInfo.InvariantCulture, out var count)
+            || !double.IsFinite(count) || count < 0)
         {
             return false;
         }
 
-        switch (char.ToLowerInvariant(unit))
+        // A count the unit cannot hold - "1e30h" - used to leave here as an OverflowException
+        // and end the run as a defect. It is an unusable duration like any other.
+        try
         {
-            case 's': value = TimeSpan.FromSeconds(count); return true;
-            case 'm': value = TimeSpan.FromMinutes(count); return true;
-            case 'h': value = TimeSpan.FromHours(count); return true;
-            case 'd': value = TimeSpan.FromDays(count); return true;
-            default: return false;
+            switch (char.ToLowerInvariant(unit))
+            {
+                case 's': value = TimeSpan.FromSeconds(count); return true;
+                case 'm': value = TimeSpan.FromMinutes(count); return true;
+                case 'h': value = TimeSpan.FromHours(count); return true;
+                case 'd': value = TimeSpan.FromDays(count); return true;
+                default: return false;
+            }
+        }
+        catch (OverflowException)
+        {
+            value = default;
+            return false;
         }
     }
 
