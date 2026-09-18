@@ -275,7 +275,7 @@ public sealed class RotationRunner(
                         continue;
                     }
 
-                    var found = _files.Resolve(pattern);
+                    var found = _sources.Files.Resolve(pattern);
 
                     // A link we would not follow is named, every time. This used to be a bare
                     // `continue` inside the walk, so a junctioned log directory was never rotated and
@@ -354,7 +354,7 @@ public sealed class RotationRunner(
 
                 // Whatever the archive glob refused, reported against this job and then cleared, so a
                 // later job cannot inherit it.
-                if (_archives is FileArchiveSource source)
+                if (_sources.Archives is FileArchiveSource source)
                 {
                     foreach (var refusal in source.Refused)
                     {
@@ -942,7 +942,7 @@ public sealed class RotationRunner(
             }
         }
 
-        var plan = RotateJobPlanner.Plan(job, LogSeries.Discover(job, consider, _archives), due, now, report);
+        var plan = RotateJobPlanner.Plan(job, LogSeries.Discover(job, consider, _sources.Archives), due, now, report);
 
         // Prepended rather than threaded through the planner, which stays pure and knows nothing
         // about the file system. A directory has to exist before anything is moved into it.

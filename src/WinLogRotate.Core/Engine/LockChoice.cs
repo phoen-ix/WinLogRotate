@@ -23,7 +23,12 @@ public sealed record NulFillJudgement
     public static readonly NulFillJudgement Nothing = new();
 
     /// <summary>Nothing could be concluded; look again next run.</summary>
-    public static NulFillJudgement Defer { get; } = new();
+    /// <remarks>
+    /// The same value as <see cref="Nothing"/>, named for the reader at its call site: a
+    /// judgement that leaves every stored field alone is exactly what "look again" means. It
+    /// used to be a second instance, which read as a second meaning.
+    /// </remarks>
+    public static NulFillJudgement Defer => Nothing;
 }
 
 /// <summary>Which strategy one rotation gets, and what to remember about the choice.</summary>
