@@ -141,6 +141,27 @@ public sealed class CliArgsTests
         }
         .Describe().ShouldContain(expected);
 
+    /// <summary>A child that ran, and whose answer could not be read, is not "could not be run".</summary>
+    [Fact]
+    public void AChildWhoseAnswerCouldNotBeReadSaysThatInstead()
+    {
+        var result = new CliResult
+        {
+            ExitCode = -1,
+            StdOut = "",
+            StdErr = "",
+            Failure = CliFailure.CouldNotRead,
+            Reason = "The process cannot access the file because it is being used by another process.",
+            Verb = "job set",
+        };
+
+        result.Ok.ShouldBeFalse();
+        result.IsDefect.ShouldBeFalse();
+        result.Describe().ShouldContain("ran, but", Case.Sensitive);
+        result.Describe().ShouldNotContain("could not be run", Case.Sensitive);
+        result.Describe().ShouldContain("being used by another process", Case.Sensitive);
+    }
+
     /// <summary>
     /// A child that could not be run says why, and is not a defect in the CLI.
     /// </summary>

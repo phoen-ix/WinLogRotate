@@ -19,6 +19,16 @@ public enum CliFailure
     /// that asked; the system's own sentence is carried in <see cref="CliResult.Reason"/>.
     /// </remarks>
     CouldNotStart,
+
+    /// <summary>
+    /// The child ran to its end, and what it wrote could not be read back.
+    /// </summary>
+    /// <remarks>
+    /// An event file an antivirus scanner still holds when the elevated child has exited. It
+    /// used to be reported as <see cref="CouldNotStart"/>, "could not be run", about a verb that
+    /// had run - and, for a Save, had already written.
+    /// </remarks>
+    CouldNotRead,
 }
 
 /// <summary>What one invocation produced.</summary>
@@ -95,6 +105,9 @@ public sealed record CliResult
         CliFailure.CouldNotStart => Reason.Length > 0
             ? $"winlogrotate.exe could not be run: {Reason}"
             : "winlogrotate.exe could not be run.",
+        CliFailure.CouldNotRead => Reason.Length > 0
+            ? $"winlogrotate.exe ran, but what it wrote could not be read back: {Reason}"
+            : "winlogrotate.exe ran, but what it wrote could not be read back.",
         _ => ExitCode switch
         {
             Core.ExitCode.Ok => "Completed.",

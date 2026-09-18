@@ -176,6 +176,8 @@ public sealed class CliRunner(string executablePath)
         info.ArgumentList.Add("--output");
         info.ArgumentList.Add(eventFile);
 
+        var ran = false;
+
         try
         {
             // Inside the try. An unwritable temporary folder threw from here, before any catch
@@ -187,6 +189,8 @@ public sealed class CliRunner(string executablePath)
             {
                 return Failed(CliFailure.NotFound);
             }
+
+            ran = true;
 
             var tail = EventTail.FollowAsync(
                 eventFile, onLine, () => process.HasExited, cancellationToken);
@@ -234,8 +238,10 @@ public sealed class CliRunner(string executablePath)
         {
             // Everything else that stops a child running or being read: AppLocker, a corrupt
             // image, a temporary folder that cannot be written, an event file held open by an
-            // antivirus scanner after the child exited. The system's sentence travels with it.
-            return Failed(CliFailure.CouldNotStart, e.Message);
+            // antivirus scanner after the child exited. The system's sentence travels with it -
+            // and so does whether the child ran, because "could not be run" about a Save that
+            // had already written is the wrong thing to tell the person who pressed it.
+            return Failed(ran ? CliFailure.CouldNotRead : CliFailure.CouldNotStart, e.Message);
         }
         catch (OperationCanceledException)
         {
