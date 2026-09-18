@@ -1352,6 +1352,11 @@ jobs:
           }
           Assert-PathEntry -Scope User -NotContains $entry.InstallLocation `
                            -PreservedRaw $userStoredBefore.Value -PreservedKind $userStoredBefore.Kind
+          # The uninstaller must have read its DataDir from the per-user key: an all-users
+          # uninstaller reads HKLM, finds nothing, and /PURGEDATA quietly purges nothing.
+          if (Test-Path (Join-Path $env:APPDATA 'WinLogRotate')) {
+            throw 'A per-user uninstall with /PURGEDATA left the per-user data directory behind.'
+          }
           '  per-user install left the machine untouched'
 
   # The only check in this pipeline that runs the installer smoke job's PowerShell without a

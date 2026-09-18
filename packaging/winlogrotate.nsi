@@ -707,19 +707,21 @@ FunctionEnd
 Function un.onInit
   !insertmacro MULTIUSER_UNINIT
 
-  ; Work out on our own whether this uninstaller belongs to a machine-wide install: the
-  ; registered uninstall strings carry no /AllUsers, and stock MultiUser puts every token into
-  ; per-user mode.
-  ;
-  ; NOTE, and this differs from the reference: because MULTIUSER_EXECUTIONLEVEL Highest is no
-  ; longer overridden back to "user", an administrator DOES arrive here already elevated. The
-  ; handoff below is therefore only needed when we are not.
+  ; Work out on our own which install this uninstaller belongs to. The registered uninstall
+  ; strings carry no /AllUsers or /CurrentUser, and MULTIUSER_UNINIT's default is decided by
+  ; the token, not by the install: with MULTIUSER_EXECUTIONLEVEL Highest an administrator
+  ; arrives elevated and in ALL-USERS mode. This used to assume the opposite - that stock
+  ; MultiUser put every token into per-user mode - and only ever switched up to all-users, so a
+  ; per-user install uninstalled by an administrator ran in the wrong mode: its DataDir was read
+  ; from HKLM and found empty, so /PURGEDATA removed nothing, and its PATH entry was looked for
+  ; on the machine PATH and left on the user's for good.
   ReadRegStr $0 HKCU "${UNINST_KEY}" "InstallLocation"
-  ${If} $0 != "$INSTDIR"
+  ${If} $0 == "$INSTDIR"
+    Call un.MultiUser.InstallMode.CurrentUser
+  ${Else}
     ReadRegStr $0 HKLM "${UNINST_KEY}" "InstallLocation"
     ${If} $0 == "$INSTDIR"
-      StrCpy $MultiUser.InstallMode "AllUsers"
-      SetShellVarContext all
+      Call un.MultiUser.InstallMode.AllUsers
     ${EndIf}
   ${EndIf}
 
