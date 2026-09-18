@@ -85,6 +85,54 @@ public class LogrotateParserTests
             "C:/b/*.log" { weekly
             }
             """).Count.ShouldBe(2);
+
+    /// <summary>
+    /// A directive whose argument is a path is a directive, even directly above a block.
+    /// </summary>
+    /// <remarks>
+    /// The stock /etc/logrotate.conf has exactly this shape: 'include /etc/logrotate.d', then
+    /// '/var/log/wtmp {'. The include line contains a slash and stands before a brace, so it was
+    /// read as two more patterns - a job named 'include' with a live path of "include" - and the
+    /// directory holding every service's configuration was never imported.
+    /// </remarks>
+    [Fact]
+    public void AnIncludeAboveABlockIsADirectiveNotAPattern()
+    {
+        var stanza = LogrotateParser.Parse("""
+            include /etc/logrotate.d
+            /var/log/wtmp {
+                monthly
+            }
+            """).ShouldHaveSingleItem();
+
+        stanza.Patterns.ShouldBe(["/var/log/wtmp"]);
+        stanza.Directives.ShouldContain(("include", "/etc/logrotate.d"));
+    }
+
+    /// <summary>The stock files are indented and aligned with tabs.</summary>
+    [Fact]
+    public void ATabSeparatesADirectiveFromItsArgument()
+    {
+        var stanza = LogrotateParser.Parse("/var/log/app.log {\n\trotate\t4\n\tsize\t100k\n}\n")
+            .ShouldHaveSingleItem();
+
+        stanza.Directives.ShouldContain(("rotate", "4"));
+        stanza.Directives.ShouldContain(("size", "100k"));
+    }
+
+    /// <summary>A '#' inside a word is part of it; one that starts a word opens a comment.</summary>
+    [Fact]
+    public void AHashInsideAWordIsNotAComment()
+    {
+        var stanza = LogrotateParser.Parse("""
+            /var/log/app#1.log {   # the odd one
+                rotate 4 # keep four
+            }
+            """).ShouldHaveSingleItem();
+
+        stanza.Patterns.ShouldBe(["/var/log/app#1.log"]);
+        stanza.Directives.ShouldContain(("rotate", "4"));
+    }
 }
 
 public class LogrotateImporterTests
@@ -431,4 +479,74 @@ public class LogrotateImporterTests
                 daily
             }
             """).Toml.ShouldContain($"name  = \"{expected}\"");
+
+    /// <summary>A quote in a path is escaped, so the file loads and the path is intact.</summary>
+    [Fact]
+    public void AQuoteInAPathIsEscapedRatherThanRefused()
+    {
+        var job = Import("""
+            C:/logs/a/*.log {
+                daily
+                olddir C:/arch"ive
+            }
+            """);
+
+        job.Toml.ShouldContain("olddir = \"C:/arch\\\"ive\"", Case.Sensitive);
+        LogrotateImporter.Check(job).ShouldBeEmpty();
+    }
+
+    /// <summary>
+    /// A path with backslashes is written as a literal string, and the file loads.
+    /// </summary>
+    /// <remarks>
+    /// Every string used to be interpolated into "..." unescaped, so a UNC pattern became a run
+    /// of invalid TOML escapes and <c>Check</c> refused the whole job as a defect in the importer.
+    /// </remarks>
+    [Fact]
+    public void AUncPatternSurvivesTheRoundTrip()
+    {
+        var job = Import("""
+            \\srv\share\logs\*.log {
+                daily
+                olddir D:\archive\old
+            }
+            """);
+
+        job.Toml.ShouldContain(@"'\\srv\share\logs\*.log'", Case.Sensitive);
+        job.Toml.ShouldContain("olddir = \"D:/archive/old\"", Case.Sensitive);
+        LogrotateImporter.Check(job).ShouldBeEmpty();
+    }
+
+    /// <summary>
+    /// A POSIX olddir is a TODO, not a key that resolves relative to the log directory here.
+    /// </summary>
+    [Fact]
+    public void APosixOlddirIsATodoNotALiveKey()
+    {
+        var job = Import("""
+            C:/logs/*.log {
+                daily
+                olddir /var/log/old
+            }
+            """);
+
+        job.Toml.ShouldNotContain("olddir =", Case.Sensitive, "it would have resolved to C:/logs/var/log/old");
+        job.Toml.ShouldContain("# TODO: olddir '/var/log/old'", Case.Sensitive);
+        job.NeedsReview.ShouldBeTrue();
+    }
+
+    /// <summary>An include is said to have been left unfollowed, rather than dropped in silence.</summary>
+    [Fact]
+    public void AnIncludeIsSaidToHaveBeenLeftUnfollowed()
+    {
+        var job = Import("""
+            include /etc/logrotate.d
+            /var/log/wtmp {
+                monthly
+            }
+            """);
+
+        job.Toml.ShouldContain("# TODO: include /etc/logrotate.d", Case.Sensitive);
+        job.NeedsReview.ShouldBeTrue();
+    }
 }

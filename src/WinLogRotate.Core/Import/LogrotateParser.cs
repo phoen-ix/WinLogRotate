@@ -26,6 +26,14 @@ public static class LogrotateParser
     private static readonly string[] ScriptOpeners =
         ["prerotate", "postrotate", "firstaction", "lastaction", "preremove"];
 
+    /// <summary>
+    /// Directives whose argument is a path, and which were therefore mistaken for a pattern list
+    /// when they stood directly above a block.
+    /// </summary>
+    private static readonly string[] PathDirectives = ["include", "tabooext", "taboopat"];
+
+    private static readonly char[] Whitespace = [' ', '\t'];
+
     public static IReadOnlyList<LogrotateStanza> Parse(string text)
     {
         var stanzas = new List<LogrotateStanza>();
@@ -39,6 +47,16 @@ public static class LogrotateParser
             var line = Strip(lines[i]);
             if (line.Length == 0)
             {
+                i++;
+                continue;
+            }
+
+            // 'include /etc/logrotate.d' directly above '/var/log/wtmp {' contains a slash and
+            // stands before a brace, so it read as two patterns: a job named 'include' whose
+            // live path was "include", and the directory it named silently never imported.
+            if (IsPathDirective(line))
+            {
+                globals.Add(SplitDirective(line));
                 i++;
                 continue;
             }
@@ -151,7 +169,7 @@ public static class LogrotateParser
                 return true;
             }
 
-            if (line.Length > 0 && !LooksLikePath(line))
+            if (line.Length > 0 && (IsPathDirective(line) || !LooksLikePath(line)))
             {
                 return false;
             }
@@ -213,18 +231,41 @@ public static class LogrotateParser
         }
     }
 
+    private static bool IsPathDirective(string line) =>
+        PathDirectives.Contains(SplitDirective(line).Name, StringComparer.OrdinalIgnoreCase);
+
+    /// <summary>The directive name and whatever follows it, split at the first blank or tab.</summary>
+    /// <remarks>
+    /// A tab counts. The stock files are indented with tabs and some are aligned with them, and a
+    /// split on the space character alone read <c>rotate\t4</c> as one word that nothing
+    /// recognised.
+    /// </remarks>
     private static (string Name, string Argument) SplitDirective(string line)
     {
-        var space = line.IndexOf(' ', StringComparison.Ordinal);
+        var space = line.IndexOfAny(Whitespace);
         return space < 0
             ? (line.Trim(), string.Empty)
             : (line[..space].Trim(), line[(space + 1)..].Trim());
     }
 
     /// <summary>Removes a comment and surrounding whitespace. Only applied outside script bodies.</summary>
+    /// <remarks>
+    /// logrotate's rule: a <c>#</c> opens a comment where a word would start, at the beginning of
+    /// the line or after a blank. One inside a word is part of it - <c>/var/log/app#1.log</c> used
+    /// to lose its tail here and match nothing.
+    /// </remarks>
     private static string Strip(string line)
     {
-        var hash = line.IndexOf('#', StringComparison.Ordinal);
-        return (hash < 0 ? line : line[..hash]).Trim();
+        for (var hash = line.IndexOf('#', StringComparison.Ordinal);
+             hash >= 0;
+             hash = line.IndexOf('#', hash + 1))
+        {
+            if (hash == 0 || char.IsWhiteSpace(line[hash - 1]))
+            {
+                return line[..hash].Trim();
+            }
+        }
+
+        return line.Trim();
     }
 }

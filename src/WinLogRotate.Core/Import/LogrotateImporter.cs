@@ -286,6 +286,16 @@ public static class LogrotateImporter
                     body.AppendLine($"# dropped: {directive} {argument}".TrimEnd());
                     break;
 
+                case "include":
+                    // The files it names are not read - an import is one file, on purpose - and used to
+                    // be dropped without a word, so the jobs in /etc/logrotate.d never arrived.
+                    warnings.Add($"'include {argument}' was not followed; import what it names separately.");
+                    needsReview = true;
+                    body.AppendLine(CultureInfo.InvariantCulture,
+                        $"# TODO: include {argument} - not followed. Run 'winlogrotate import' on each file it names.");
+                    break;
+
+
                 default:
                     body.AppendLine($"# unrecognised: {directive} {argument}".TrimEnd());
                     break;
