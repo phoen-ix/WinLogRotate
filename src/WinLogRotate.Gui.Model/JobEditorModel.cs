@@ -35,6 +35,13 @@ public sealed record JobField
     public int Line { get; init; }
 
     /// <summary>
+    /// The key that decided this value when it was not this key: <c>daily</c> for a schedule the
+    /// file spells as <c>daily = true</c>, <c>size</c> for one it spells as a threshold. Null when
+    /// the value is the key's own.
+    /// </summary>
+    public string? Via { get; init; }
+
+    /// <summary>
     /// Whether the file says this, rather than inheriting it.
     /// </summary>
     /// <remarks>
@@ -81,6 +88,61 @@ public sealed record JobEditorView
     /// </remarks>
     public string? Refusal { get; init; }
 }
+
+/// <summary>One group of the Advanced view: a heading and the fields under it.</summary>
+public sealed record JobSection(JobKeyGroup Group, string Title, IReadOnlyList<JobField> Fields);
+
+/// <summary>Which control edits a field.</summary>
+public enum FieldEditor
+{
+    /// <summary>A two-state tick box; the row remembers whether it was touched.</summary>
+    Check,
+
+    /// <summary>A drop-down list with an inherit entry first.</summary>
+    Choice,
+
+    /// <summary>A text box that must hold a whole number.</summary>
+    Number,
+
+    /// <summary>A text box.</summary>
+    Text,
+
+    /// <summary>A multi-line text box, one item per line.</summary>
+    Lines,
+}
+
+/// <summary>Everything a form needs to draw one field: what to call it, how to explain it, what to show when it says nothing.</summary>
+public sealed record FieldPresentation
+{
+    /// <summary>The caption in the operator's words.</summary>
+    public required string Caption { get; init; }
+
+    /// <summary>The key as the file spells it, shown small beside the caption.</summary>
+    public required string Key { get; init; }
+
+    public required string Description { get; init; }
+
+    /// <summary>The built-in value, or null when leaving the key out means "not applied".</summary>
+    public string? Default { get; init; }
+
+    /// <summary><c>days</c>, <c>ms</c>, or null.</summary>
+    public string? Unit { get; init; }
+
+    /// <summary>What an empty box shows: the default, or an example when there is none.</summary>
+    public required string Placeholder { get; init; }
+
+    public required FieldEditor Editor { get; init; }
+
+    public required IReadOnlyList<string> Choices { get; init; }
+
+    /// <summary>For a tick box: whether the inherited value is ticked.</summary>
+    public bool InheritedChecked { get; init; }
+}
+
+/// <summary>What the Basics view asked, ready to be turned into edits.</summary>
+/// <param name="Manage">The second radio: the application starts new files itself.</param>
+/// <param name="Schedule">The combo's item, or null for the default entry.</param>
+public sealed record BasicsAnswers(bool Manage, string? Schedule, string? MaxSize, string? Rotate, string? MaxAge);
 
 /// <summary>
 /// The decisions a job editor makes, with nothing that needs a window.
@@ -143,6 +205,242 @@ public static class JobEditorModel
     /// timeout will never run would be nonsense.
     /// </remarks>
     public static IReadOnlyList<string> Hooks { get; } = ["prerotate", "postrotate"];
+
+    /// <summary>The keys the header above both views carries: the job's identity and its files.</summary>
+    public static IReadOnlyList<string> Header { get; } = ["name", "paths", "enabled"];
+
+    /// <summary>
+    /// The keys the Basics view asks about, besides <c>kind</c>, which it asks as a pair of radios.
+    /// </summary>
+    /// <remarks>
+    /// Chosen, not derived: how often, an early trigger, how many to keep and for how long are the
+    /// decisions somebody adding a log file has to make. Everything else has a default the summary
+    /// sentence states. The Advanced view offers these too - Basics is a subset, never a third place.
+    /// </remarks>
+    public static IReadOnlyList<string> Basics { get; } = ["schedule", "maxsize", "rotate", "maxage"];
+
+    /// <summary>
+    /// The five keys that spell a schedule as a flag. Never shown: the schedule field shows what
+    /// they decided, and a change to it retires them.
+    /// </summary>
+    public static IReadOnlyList<string> Shorthands { get; } = ["hourly", "daily", "weekly", "monthly", "yearly"];
+
+    /// <summary>The Advanced view's sections: every known key the header does not carry, grouped and in schema order.</summary>
+    public static IReadOnlyList<JobSection> Sections(JobEditorView view) =>
+        [.. Enum.GetValues<JobKeyGroup>()
+            .Select(group => new JobSection(
+                group,
+                group == JobKeyGroup.Structural ? "Job" : group.ToString(),
+                [.. view.Fields.Where(f =>
+                    f.Known
+                    && f.Group == group
+                    && !Header.Contains(f.Key, StringComparer.OrdinalIgnoreCase)
+                    && !Shorthands.Contains(f.Key, StringComparer.OrdinalIgnoreCase))]))
+            .Where(section => section.Fields.Count > 0)];
+
+    /// <summary>Keys the file writes that this build does not read. They can be seen and removed, nothing else.</summary>
+    public static IReadOnlyList<JobField> Foreign(JobEditorView view) =>
+        [.. view.Fields.Where(f => !f.Known)];
+
+    /// <summary>How to draw one field.</summary>
+    public static FieldPresentation Presentation(JobField field)
+    {
+        var row = field.Known ? JobSchema.Find(field.Key) : null;
+
+        if (row is null)
+        {
+            return new FieldPresentation
+            {
+                Caption = field.Key,
+                Key = field.Key,
+                Description = "Not a setting this product reads.",
+                Placeholder = string.Empty,
+                Editor = FieldEditor.Text,
+                Choices = [],
+            };
+        }
+
+        return new FieldPresentation
+        {
+            Caption = row.Title,
+            Key = row.Key,
+            Description = row.Description,
+            Default = row.Default,
+            Unit = row.Unit switch
+            {
+                JobKeyUnit.Days => "days",
+                JobKeyUnit.Milliseconds => "ms",
+                _ => null,
+            },
+            Placeholder = row.Default ?? $"e.g. {row.Sample}",
+            Editor = row.Kind switch
+            {
+                JobKeyKind.Flag => FieldEditor.Check,
+                JobKeyKind.Enum => FieldEditor.Choice,
+                JobKeyKind.Integer => FieldEditor.Number,
+                JobKeyKind.TextList => FieldEditor.Lines,
+                _ => FieldEditor.Text,
+            },
+            Choices = row.Choices,
+            InheritedChecked = string.Equals(row.Default, "true", StringComparison.OrdinalIgnoreCase),
+        };
+    }
+
+    /// <summary>Where a field's value comes from, as the label beside it says it.</summary>
+    public static string SourceLabel(JobField field, string? now)
+    {
+        if (!field.Known)
+        {
+            return "not a setting this product reads";
+        }
+
+        if (!Unchanged(field, now))
+        {
+            return Blank(now) ? "will inherit again" : "will be set here";
+        }
+
+        if (field.IsSet)
+        {
+            return field.Via switch
+            {
+                null => $"set here (line {field.Line})",
+                "size" => $"set here (line {field.Line}, by size)",
+                var shorthand => $"set here (line {field.Line}, as {shorthand} = true)",
+            };
+        }
+
+        return JobSchema.Find(field.Key)?.Default is { } fallback
+            ? $"inherited (default {fallback})"
+            : "inherited (none)";
+    }
+
+    /// <summary>
+    /// Why the CLI would refuse this text for this field, in the verb's own words, or null.
+    /// </summary>
+    /// <remarks>
+    /// The same grammar <c>JobDocument.Apply</c> judges by, asked before the verb is run, so the
+    /// form can say "'soon' is not a whole number." beside the box instead of after a round trip.
+    /// Only what one field can be wrong about on its own; a rule between two keys stays with the
+    /// dry run.
+    /// </remarks>
+    public static string? Judge(JobField field, string? text)
+    {
+        if (Blank(text) || !field.Known)
+        {
+            return null;
+        }
+
+        var trimmed = text!.Trim();
+
+        if (!JobSchema.TryParse(field.Key, trimmed, out _, out var problem))
+        {
+            return $"'{trimmed}' is {problem}";
+        }
+
+        var row = JobSchema.Find(field.Key);
+
+        if (row is { Kind: JobKeyKind.Integer }
+            && int.TryParse(trimmed, System.Globalization.NumberStyles.AllowLeadingSign,
+                System.Globalization.CultureInfo.InvariantCulture, out var number))
+        {
+            if (row is { Min: { } min, Max: { } max } && (number < min || number > max))
+            {
+                return $"{row.Key} must be between {min} and {max}.";
+            }
+
+            if (row is { Min: { } floor } && number < floor)
+            {
+                return $"{row.Key} must be at least {floor}.";
+            }
+
+            if (row is { Max: { } ceiling } && number > ceiling)
+            {
+                return $"{row.Key} must be at most {ceiling}.";
+            }
+        }
+
+        if (string.Equals(field.Key, "dateformat", StringComparison.OrdinalIgnoreCase))
+        {
+            return ConfigValidator.DateFormatProblem(trimmed)?.Message;
+        }
+
+        return null;
+    }
+
+    /// <summary>Whether the size threshold means anything under the schedule the form shows.</summary>
+    /// <remarks>
+    /// Only under <c>size</c>. Otherwise the form hands the key back empty, so a threshold the
+    /// file already holds is unset - a product-written file has <c>size</c> after
+    /// <c>schedule</c>, and the last of the two to be written wins, so without this a calendar
+    /// choice would never take effect.
+    /// </remarks>
+    public static bool SizeApplies(string? scheduleShown) =>
+        string.Equals(scheduleShown?.Trim(), "size", StringComparison.OrdinalIgnoreCase);
+
+    /// <summary>The entry a drop-down shows for "leave it inherited".</summary>
+    public const string InheritChoice = "(inherit)";
+
+    /// <summary>The entry the Basics drop-down shows for "leave it at the default", naming it.</summary>
+    public static string DefaultChoice(string? fallback) =>
+        fallback is null ? InheritChoice : $"(default: {fallback})";
+
+    /// <summary>The value a drop-down item stands for: null for either inherit entry.</summary>
+    public static string? ChoiceValue(string? item) =>
+        item is null || item.StartsWith('(') ? null : item;
+
+    /// <summary>Whether the file says the application rotates its own logs.</summary>
+    public static bool IsManaged(JobEditorView view) =>
+        string.Equals(
+            view.Fields.FirstOrDefault(f => string.Equals(f.Key, "kind", StringComparison.OrdinalIgnoreCase))?.Value,
+            "manage", StringComparison.OrdinalIgnoreCase);
+
+    /// <summary>
+    /// What the "who rotates" radios say <c>kind</c> should be.
+    /// </summary>
+    /// <remarks>
+    /// The first radio is the default, so a new job that keeps it says nothing and inherits; an
+    /// existing <c>manage</c> job switched back does say <c>rotate</c>, because silence would
+    /// leave the file as it was.
+    /// </remarks>
+    public static string? KindValue(bool manage, string? original) =>
+        manage ? "manage" : original is null ? null : "rotate";
+
+    /// <summary>The edits the Basics view stands for, over the job as it was read.</summary>
+    /// <remarks>
+    /// Under "only tidy up" the schedule and the early trigger mean nothing, so they are handed
+    /// back as they were: a size typed before the radio was flipped is not written.
+    /// </remarks>
+    public static IReadOnlyDictionary<string, string?> BasicsEdits(JobEditorView original, BasicsAnswers answers)
+    {
+        string? Was(string key) =>
+            original.Fields.FirstOrDefault(f => string.Equals(f.Key, key, StringComparison.OrdinalIgnoreCase))?.Value;
+
+        return new Dictionary<string, string?>(StringComparer.OrdinalIgnoreCase)
+        {
+            ["kind"] = KindValue(answers.Manage, Was("kind")),
+            ["schedule"] = answers.Manage ? Was("schedule") : ChoiceValue(answers.Schedule),
+            ["maxsize"] = answers.Manage ? Was("maxsize") : answers.MaxSize,
+            ["rotate"] = answers.Rotate,
+            ["maxage"] = answers.MaxAge,
+        };
+    }
+
+    /// <summary>How many keys the file sets that the Basics view cannot show.</summary>
+    public static int AdvancedSetCount(JobEditorView view) =>
+        view.Fields.Count(f =>
+            f.IsSet
+            && !Header.Contains(f.Key, StringComparer.OrdinalIgnoreCase)
+            && !Basics.Contains(f.Key, StringComparer.OrdinalIgnoreCase)
+            && !Shorthands.Contains(f.Key, StringComparer.OrdinalIgnoreCase)
+            && !string.Equals(f.Key, "kind", StringComparison.OrdinalIgnoreCase));
+
+    /// <summary>The toggle's caption.</summary>
+    public static string AdvancedLinkText(int advancedSet, bool showingAdvanced) =>
+        showingAdvanced
+            ? "Basic settings"
+            : advancedSet == 0
+                ? "Advanced settings"
+                : $"Advanced settings ({advancedSet} set)";
 
     /// <summary>
     /// What to say beside a hook field, given what <c>doctor</c> made of this installation.
@@ -293,6 +591,8 @@ public static class JobEditorModel
                 });
             }
 
+            FoldSchedule(fields);
+
             return new JobEditorView
             {
                 Job = result.GetProperty("job").GetString() ?? "",
@@ -352,6 +652,10 @@ public static class JobEditorModel
         var before = original.Fields.ToDictionary(f => f.Key, f => f.Value, StringComparer.OrdinalIgnoreCase);
         var kinds = original.Fields.ToDictionary(f => f.Key, f => f.Kind, StringComparer.OrdinalIgnoreCase);
 
+        var schedule = original.Fields.FirstOrDefault(f =>
+            string.Equals(f.Key, "schedule", StringComparison.OrdinalIgnoreCase));
+        var scheduleTouched = false;
+
         foreach (var (key, now) in edited.OrderBy(e => Order(e.Key)))
         {
             // The name is the job's identity, carried as the argument above. It is refused from
@@ -373,6 +677,18 @@ public static class JobEditorModel
                 continue;
             }
 
+            if (string.Equals(key, "schedule", StringComparison.OrdinalIgnoreCase))
+            {
+                scheduleTouched = true;
+
+                // The file never wrote 'schedule'; it wrote the shorthand the field shows. Unsetting
+                // a key the file does not have would be refused, and the shorthand is retired below.
+                if (value is null && schedule?.Via is { } via && !string.Equals(via, "size", StringComparison.OrdinalIgnoreCase))
+                {
+                    continue;
+                }
+            }
+
             if (value is null)
             {
                 args.Add("--unset");
@@ -386,6 +702,22 @@ public static class JobEditorModel
             {
                 args.Add("--set");
                 args.Add($"{key}={item}");
+            }
+        }
+
+        // A changed schedule retires every shorthand the file writes, whatever its value: a
+        // 'weekly = false' left behind is one hand edit from silently overriding the choice, and
+        // a 'daily = true' below the new line would override it tonight.
+        if (scheduleTouched && !isNew)
+        {
+            foreach (var shorthand in original.Fields.Where(f =>
+                         f.IsSet && Shorthands.Contains(f.Key, StringComparer.OrdinalIgnoreCase)))
+            {
+                if (!args.Contains(shorthand.Key, StringComparer.OrdinalIgnoreCase))
+                {
+                    args.Add("--unset");
+                    args.Add(shorthand.Key);
+                }
             }
         }
 
@@ -474,6 +806,40 @@ public static class JobEditorModel
     /// </remarks>
     public static bool Changes(IReadOnlyList<string> args) =>
         args.Any(a => a is "--set" or "--unset");
+
+    /// <summary>
+    /// Shows the schedule the file actually means on the schedule field.
+    /// </summary>
+    /// <remarks>
+    /// The binder gives one schedule to <c>schedule</c>, to each shorthand that is <c>true</c>
+    /// and to <c>size</c>, and the last one written wins. A form that showed <c>schedule</c>
+    /// alone would show an inherited daily beside a file that says <c>weekly = true</c>.
+    /// </remarks>
+    private static void FoldSchedule(List<JobField> fields)
+    {
+        var winner = fields
+            .Where(f => f.IsSet && (
+                string.Equals(f.Key, "schedule", StringComparison.OrdinalIgnoreCase)
+                || string.Equals(f.Key, "size", StringComparison.OrdinalIgnoreCase)
+                || (Shorthands.Contains(f.Key, StringComparer.OrdinalIgnoreCase)
+                    && string.Equals(f.Value, "true", StringComparison.OrdinalIgnoreCase))))
+            .OrderByDescending(f => f.Line)
+            .FirstOrDefault();
+
+        if (winner is null || string.Equals(winner.Key, "schedule", StringComparison.OrdinalIgnoreCase))
+        {
+            return;
+        }
+
+        var at = fields.FindIndex(f => string.Equals(f.Key, "schedule", StringComparison.OrdinalIgnoreCase));
+
+        fields[at] = fields[at] with
+        {
+            Value = string.Equals(winner.Key, "size", StringComparison.OrdinalIgnoreCase) ? "size" : winner.Key,
+            Line = winner.Line,
+            Via = winner.Key,
+        };
+    }
 
     private static JobField Unset(JobKey row) => new()
     {

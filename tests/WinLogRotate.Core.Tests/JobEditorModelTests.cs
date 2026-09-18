@@ -347,26 +347,32 @@ public sealed class JobEditorModelTests
     public void EveryKeyIsReachableFromTheForm()
     {
         var view = Loaded();
-        var grid = JobEditorModel.GridFields(view).Select(f => f.Key).ToArray();
+        var sections = JobEditorModel.Sections(view);
+        var sectioned = sections.SelectMany(s => s.Fields).Select(f => f.Key).ToArray();
 
-        grid.ShouldContain("allowdangerous");
-        grid.ShouldContain("ownr", "a key this build does not know is still shown");
+        sectioned.ShouldContain("allowdangerous");
+        sectioned.ShouldContain("kind", "who rotates is asked in Basics and offered in Advanced");
+        sectioned.ShouldNotContain("ownr", "a key this build does not know is a foreign key, not a setting");
+        JobEditorModel.Foreign(view).Select(f => f.Key).ShouldBe(["ownr"]);
 
-        JobEditorModel.Common.Intersect(JobEditorModel.Carried, StringComparer.OrdinalIgnoreCase)
-            .ShouldBeEmpty("a key with a control of its own is not also a common field");
+        // Header, sections and the hidden shorthands partition the schema; nothing is in two of
+        // them, and nothing is in none of them.
+        var header = JobEditorModel.Header;
+        header.Intersect(sectioned, StringComparer.OrdinalIgnoreCase).ShouldBeEmpty();
+        JobEditorModel.Shorthands.Intersect(sectioned, StringComparer.OrdinalIgnoreCase).ShouldBeEmpty();
 
-        var reachable = JobEditorModel.Common
-            .Concat(JobEditorModel.Carried)
-            .Concat(grid)
+        var reachable = header.Concat(sectioned).Concat(JobEditorModel.Shorthands)
             .ToHashSet(StringComparer.OrdinalIgnoreCase);
-
         JobSchema.Keys.Select(k => k.Key).Where(k => !reachable.Contains(k))
             .ShouldBeEmpty("keys the form offers no way to see or edit");
+        sectioned.ShouldBeUnique();
 
-        // And nothing is offered twice: a grid row for a key that also has a box on the form
-        // would be two places to type one value.
-        grid.Intersect(JobEditorModel.Common, StringComparer.OrdinalIgnoreCase).ShouldBeEmpty();
-        grid.Intersect(JobEditorModel.Carried, StringComparer.OrdinalIgnoreCase).ShouldBeEmpty();
+        // Basics is a subset of Advanced - a second place to see a value, never a third value.
+        JobEditorModel.Basics.ShouldAllBe(k => sectioned.Contains(k, StringComparer.OrdinalIgnoreCase));
+
+        // Sections come in the reference's order, and an empty one is not drawn.
+        sections.Select(s => s.Group).ShouldBe(sections.Select(s => s.Group).Order());
+        sections.ShouldAllBe(s => s.Fields.Count > 0);
     }
 
     /// <summary>A new job never sends <c>--unset</c>, because there is nothing to inherit again.</summary>
@@ -772,4 +778,317 @@ public sealed class JobEditorModelTests
     [InlineData("", false)]
     public void DoctorsVerdictIsReadAndAnUnreadableAnswerMeansRefused(string json, bool expected) =>
         JobEditorModel.HooksAllowed(json).ShouldBe(expected);
+
+    // ---- the schedule contest ---------------------------------------------------------------
+
+    /// <summary>
+    /// A file that says <c>daily = true</c> shows daily on the schedule field, and says which key said it.
+    /// </summary>
+    /// <remarks>
+    /// The binder gives one schedule to <c>schedule</c>, to each shorthand that is true and to
+    /// <c>size</c>, last line wins. A form showing <c>schedule</c> alone showed an inherited
+    /// daily beside a file that said <c>weekly = true</c>, and the shorthands themselves were
+    /// five more rows saying one thing.
+    /// </remarks>
+    [Fact]
+    public void AShorthandIsShownAsTheScheduleItSpells()
+    {
+        var view = JobEditorModel.From(ShownWith(("name", "\"iis\""), ("paths", "\"C:/l/*.log\""), ("daily", "true")));
+
+        var schedule = view.Fields.Single(f => f.Key == "schedule");
+        schedule.Value.ShouldBe("daily");
+        schedule.Line.ShouldBe(6);
+        schedule.Via.ShouldBe("daily");
+
+        JobEditorModel.Sections(view).SelectMany(s => s.Fields).ShouldNotContain(f => f.Key == "daily");
+    }
+
+    [Fact]
+    public void TheLastScheduleKeyInTheFileDecides()
+    {
+        var byDay = JobEditorModel.From(ShownWith(
+            ("name", "\"iis\""), ("schedule", "\"weekly\""), ("daily", "true")));
+        byDay.Fields.Single(f => f.Key == "schedule").Value.ShouldBe("daily");
+
+        var bySize = JobEditorModel.From(ShownWith(
+            ("name", "\"iis\""), ("schedule", "\"weekly\""), ("daily", "true"), ("size", "\"5M\"")));
+        var schedule = bySize.Fields.Single(f => f.Key == "schedule");
+        schedule.Value.ShouldBe("size");
+        schedule.Via.ShouldBe("size");
+    }
+
+    [Fact]
+    public void AFalseShorthandDecidesNothing()
+    {
+        var view = JobEditorModel.From(ShownWith(("name", "\"iis\""), ("daily", "false")));
+
+        view.Fields.Single(f => f.Key == "schedule").IsSet.ShouldBeFalse();
+    }
+
+    [Fact]
+    public void AnUntouchedScheduleReadFromAShorthandSendsNothing()
+    {
+        var view = JobEditorModel.From(ShownWith(("name", "\"iis\""), ("daily", "true")));
+
+        var args = JobEditorModel.SaveArgs(null, "iis", isNew: false, view,
+            new Dictionary<string, string?> { ["schedule"] = "daily" });
+
+        JobEditorModel.Changes(args).ShouldBeFalse();
+    }
+
+    [Fact]
+    public void ChangingTheScheduleRetiresEveryShorthandTheFileWrites()
+    {
+        var view = JobEditorModel.From(ShownWith(("name", "\"iis\""), ("daily", "true"), ("weekly", "false")));
+
+        var args = JobEditorModel.SaveArgs(null, "iis", isNew: false, view,
+            new Dictionary<string, string?> { ["schedule"] = "monthly" });
+
+        args.ShouldBe(["job", "set", "iis", "--set", "schedule=monthly", "--unset", "daily", "--unset", "weekly"]);
+        ShouldParse(args);
+    }
+
+    /// <summary>Clearing a schedule the file spells as a shorthand unsets the shorthand, not a key the file lacks.</summary>
+    [Fact]
+    public void ClearingAShorthandScheduleUnsetsTheShorthand()
+    {
+        var view = JobEditorModel.From(ShownWith(("name", "\"iis\""), ("daily", "true")));
+
+        var args = JobEditorModel.SaveArgs(null, "iis", isNew: false, view,
+            new Dictionary<string, string?> { ["schedule"] = null });
+
+        args.ShouldBe(["job", "set", "iis", "--unset", "daily"]);
+        ShouldParse(args);
+    }
+
+    [Fact]
+    public void LeavingTheSizeScheduleClearsTheThreshold()
+    {
+        var view = JobEditorModel.From(ShownWith(("name", "\"iis\""), ("size", "\"5M\"")));
+        view.Fields.Single(f => f.Key == "schedule").Value.ShouldBe("size");
+
+        var args = JobEditorModel.SaveArgs(null, "iis", isNew: false, view,
+            new Dictionary<string, string?> { ["schedule"] = "daily", ["size"] = null });
+
+        args.ShouldBe(["job", "set", "iis", "--set", "schedule=daily", "--unset", "size"]);
+        ShouldParse(args);
+    }
+
+    [Theory]
+    [InlineData("size", true)]
+    [InlineData("Size", true)]
+    [InlineData("daily", false)]
+    [InlineData(null, false)]
+    public void SizeAppliesOnlyUnderTheSizeSchedule(string? shown, bool applies) =>
+        JobEditorModel.SizeApplies(shown).ShouldBe(applies);
+
+    // ---- what the form says beside a field ---------------------------------------------------
+
+    [Fact]
+    public void EverySectionedFieldHasAPresentation()
+    {
+        foreach (var field in JobEditorModel.Sections(Loaded()).SelectMany(s => s.Fields))
+        {
+            var row = JobSchema.Find(field.Key).ShouldNotBeNull();
+            var shown = JobEditorModel.Presentation(field);
+
+            shown.Caption.ShouldBe(row.Title);
+            shown.Key.ShouldBe(row.Key);
+            shown.Description.ShouldBe(row.Description);
+            shown.Default.ShouldBe(row.Default);
+            shown.Editor.ShouldBe(row.Kind switch
+            {
+                JobKeyKind.Flag => FieldEditor.Check,
+                JobKeyKind.Enum => FieldEditor.Choice,
+                JobKeyKind.Integer => FieldEditor.Number,
+                JobKeyKind.TextList => FieldEditor.Lines,
+                _ => FieldEditor.Text,
+            });
+        }
+    }
+
+    [Fact]
+    public void ThePlaceholderIsTheDefaultWhenThereIsOne()
+    {
+        var view = Loaded();
+
+        JobEditorModel.Presentation(view.Fields.Single(f => f.Key == "rotate")).Placeholder.ShouldBe("7");
+        JobEditorModel.Presentation(view.Fields.Single(f => f.Key == "maxage")).Placeholder.ShouldBe("e.g. 90");
+        JobEditorModel.Presentation(view.Fields.Single(f => f.Key == "maxage")).Unit.ShouldBe("days");
+        JobEditorModel.Presentation(view.Fields.Single(f => f.Key == "compress")).InheritedChecked.ShouldBeTrue();
+        JobEditorModel.Presentation(view.Fields.Single(f => f.Key == "ownr")).Description
+            .ShouldBe("Not a setting this product reads.");
+    }
+
+    [Fact]
+    public void TheSourceLabelSaysWhereAValueComesFrom()
+    {
+        var view = Loaded();
+        var rotate = view.Fields.Single(f => f.Key == "rotate");
+        var maxage = view.Fields.Single(f => f.Key == "maxage");
+        var olddir = view.Fields.Single(f => f.Key == "olddir");
+        var ownr = view.Fields.Single(f => f.Key == "ownr");
+
+        JobEditorModel.SourceLabel(rotate, "14").ShouldBe("set here (line 6)");
+        JobEditorModel.SourceLabel(rotate, "30").ShouldBe("will be set here");
+        JobEditorModel.SourceLabel(rotate, "").ShouldBe("will inherit again");
+        JobEditorModel.SourceLabel(maxage, null).ShouldBe("inherited (none)");
+        JobEditorModel.SourceLabel(view.Fields.Single(f => f.Key == "compress"), null).ShouldBe("inherited (default true)");
+        JobEditorModel.SourceLabel(olddir, "D:/a").ShouldBe("will be set here");
+        JobEditorModel.SourceLabel(ownr, "team-web").ShouldBe("not a setting this product reads");
+
+        var shorthand = JobEditorModel.From(ShownWith(("name", "\"iis\""), ("daily", "true")))
+            .Fields.Single(f => f.Key == "schedule");
+        JobEditorModel.SourceLabel(shorthand, "daily").ShouldBe("set here (line 5, as daily = true)");
+    }
+
+    /// <summary>
+    /// A value the CLI would refuse is said beside the box, in the verb's own words, before it is sent.
+    /// </summary>
+    [Theory]
+    [InlineData("rotate", "soon", "whole number")]
+    [InlineData("compresstype", "bzip2", "one of")]
+    [InlineData("hook_timeout", "a while", "duration")]
+    [InlineData("maxsize", "big", "100M")]
+    [InlineData("weekday", "9", "between 0 and 7")]
+    [InlineData("retrycount", "0", "at least 1")]
+    [InlineData("rotate", "-2", "at least -1")]
+    [InlineData("dateformat", "-%Y%m%d", "strftime")]
+    public void AValueTheCliWouldRefuseIsJudgedBeforeItIsSent(string key, string text, string says)
+    {
+        var field = Loaded().Fields.Single(f => f.Key == key);
+
+        JobEditorModel.Judge(field, text).ShouldNotBeNull().ShouldContain(says, Case.Sensitive);
+    }
+
+    [Theory]
+    [InlineData("rotate", "-1")]
+    [InlineData("rotate", " 14 ")]
+    [InlineData("weekday", "7")]
+    [InlineData("dateformat", "-yyyyMMdd")]
+    [InlineData("maxsize", "100M")]
+    [InlineData("compresstype", "GZIP")]
+    public void AValueTheCliWouldAcceptIsNotJudged(string key, string text) =>
+        JobEditorModel.Judge(Loaded().Fields.Single(f => f.Key == key), text).ShouldBeNull();
+
+    [Fact]
+    public void ABlankValueIsNeverAProblemAndAForeignKeyIsNotJudged()
+    {
+        var view = Loaded();
+
+        foreach (var field in view.Fields)
+        {
+            JobEditorModel.Judge(field, "").ShouldBeNull(field.Key);
+            JobEditorModel.Judge(field, null).ShouldBeNull(field.Key);
+        }
+
+        JobEditorModel.Judge(view.Fields.Single(f => f.Key == "ownr"), "anything").ShouldBeNull();
+    }
+
+    [Fact]
+    public void TheInlineJudgementIsTheVerbsOwnSentence()
+    {
+        JobSchema.TryParse("rotate", "soon", out _, out var problem).ShouldBeFalse();
+
+        JobEditorModel.Judge(Loaded().Fields.Single(f => f.Key == "rotate"), "soon")
+            .ShouldBe($"'soon' is {problem}");
+    }
+
+    // ---- what the Basics view stands for ------------------------------------------------------
+
+    [Fact]
+    public void ChoosingWhoRotatesWritesKindOnlyWhenItChanges()
+    {
+        JobEditorModel.KindValue(manage: false, original: null).ShouldBeNull("a new job keeping the first radio inherits");
+        JobEditorModel.KindValue(manage: true, original: null).ShouldBe("manage");
+        JobEditorModel.KindValue(manage: false, original: "manage").ShouldBe("rotate", "silence would leave the file as it was");
+        JobEditorModel.KindValue(manage: false, original: "rotate").ShouldBe("rotate");
+
+        var fresh = JobEditorModel.BasicsEdits(JobEditorModel.Blank(), new BasicsAnswers(false, null, null, null, null));
+        var args = JobEditorModel.SaveArgs(null, "iis", isNew: true, JobEditorModel.Blank(),
+            new Dictionary<string, string?>(fresh) { ["paths"] = "C:/logs/*.log" });
+
+        args.ShouldBe(["job", "add", "iis", "--set", "paths=C:/logs/*.log"], "the shortest job that works");
+        ShouldParse(args);
+    }
+
+    [Fact]
+    public void AManagedJobLeavesTheRotateRowAlone()
+    {
+        var edits = JobEditorModel.BasicsEdits(
+            JobEditorModel.Blank(), new BasicsAnswers(Manage: true, Schedule: "weekly", MaxSize: "100M", Rotate: null, MaxAge: null));
+
+        var args = JobEditorModel.SaveArgs(null, "iis", isNew: true, JobEditorModel.Blank(),
+            new Dictionary<string, string?>(edits) { ["paths"] = "C:/logs/*.log" });
+
+        args.ShouldBe(["job", "add", "iis", "--set", "paths=C:/logs/*.log", "--set", "kind=manage"]);
+        ShouldParse(args);
+    }
+
+    [Fact]
+    public void ABasicsJobIsWrittenInSchemaOrder()
+    {
+        var edits = JobEditorModel.BasicsEdits(
+            JobEditorModel.Blank(),
+            new BasicsAnswers(Manage: false, Schedule: "weekly", MaxSize: "100M", Rotate: "14", MaxAge: "90"));
+
+        var args = JobEditorModel.SaveArgs(null, "iis", isNew: true, JobEditorModel.Blank(),
+            new Dictionary<string, string?>(edits) { ["paths"] = "C:/logs/*.log" });
+
+        args.ShouldBe([
+            "job", "add", "iis",
+            "--set", "paths=C:/logs/*.log",
+            "--set", "schedule=weekly",
+            "--set", "rotate=14",
+            "--set", "maxage=90",
+            "--set", "maxsize=100M",
+        ]);
+        ShouldParse(args);
+    }
+
+    [Fact]
+    public void TheDefaultChoiceIsTheEmptyValueBothWays()
+    {
+        JobEditorModel.DefaultChoice("daily").ShouldBe("(default: daily)");
+        JobEditorModel.DefaultChoice(null).ShouldBe(JobEditorModel.InheritChoice);
+        JobEditorModel.ChoiceValue("(default: daily)").ShouldBeNull();
+        JobEditorModel.ChoiceValue(JobEditorModel.InheritChoice).ShouldBeNull();
+        JobEditorModel.ChoiceValue("weekly").ShouldBe("weekly");
+        JobEditorModel.ChoiceValue(null).ShouldBeNull();
+    }
+
+    [Fact]
+    public void TheAdvancedLinkCountsWhatBasicsCannotShow()
+    {
+        // The fixture sets name, paths, rotate, maxsize and ownr: only ownr is beyond Basics.
+        JobEditorModel.AdvancedSetCount(Loaded()).ShouldBe(1);
+        JobEditorModel.AdvancedSetCount(JobEditorModel.Blank()).ShouldBe(0);
+
+        JobEditorModel.AdvancedLinkText(0, showingAdvanced: false).ShouldBe("Advanced settings");
+        JobEditorModel.AdvancedLinkText(3, showingAdvanced: false).ShouldBe("Advanced settings (3 set)");
+        JobEditorModel.AdvancedLinkText(3, showingAdvanced: true).ShouldBe("Basic settings");
+    }
+
+    [Fact]
+    public void AForeignKeyCanOnlyBeRemoved()
+    {
+        var args = JobEditorModel.SaveArgs(null, "iis", isNew: false, Loaded(),
+            new Dictionary<string, string?> { ["ownr"] = null });
+
+        args.ShouldBe(["job", "set", "iis", "--unset", "ownr"]);
+        ShouldParse(args);
+    }
+
+    [Fact]
+    public void EverySizeAndCountExampleInTheHintsParses()
+    {
+        foreach (var size in new[] { "100k", "10M", "1G" })
+        {
+            JobSchema.TryParse("maxsize", size, out _, out _).ShouldBeTrue(size);
+        }
+
+        JobSchema.TryParse("rotate", "7", out _, out _).ShouldBeTrue();
+        JobEditorText.FilesHint.ShouldNotContain("glob", Case.Insensitive);
+        JobEditorText.FilesHint.ShouldNotContain("pattern", Case.Insensitive);
+    }
 }
