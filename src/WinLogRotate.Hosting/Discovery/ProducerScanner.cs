@@ -1,5 +1,6 @@
 using System.Runtime.Versioning;
 using System.Xml.Linq;
+using Microsoft.Win32;
 
 namespace WinLogRotate.Hosting.Discovery;
 
@@ -137,41 +138,24 @@ public static class ProducerScanner
         };
     }
 
-    private static IEnumerable<ProducerFinding> ScanSqlServer()
+    private static IEnumerable<ProducerFinding> ScanSqlServer() =>
+        ScanSqlServer(path => Registry.LocalMachine.OpenSubKey(path));
+
+    /// <summary>
+    /// The SQL Server scan, over whatever <paramref name="open"/> answers for a key path.
+    /// </summary>
+    /// <remarks>
+    /// Internal, and taking the registry as a function, so the Windows suite can hand it one
+    /// that refuses without changing an ACL on the runner. The walk is guarded the way the IIS
+    /// and HTTPERR branches always were: a key this account may not read, or one that changes
+    /// under the walk, produces no finding and no crash. It used to produce exit 4 and
+    /// <c>LR1006</c>, "a defect in the product", on a hardened database server with nothing
+    /// wrong but a tightened ACL.
+    /// </remarks>
+    internal static IEnumerable<ProducerFinding> ScanSqlServer(Func<string, RegistryKey?> open)
     {
-        using var key = Microsoft.Win32.Registry.LocalMachine.OpenSubKey(
-            @"SOFTWARE\Microsoft\Microsoft SQL Server\Instance Names\SQL");
-
-        if (key is null)
+        foreach (var (instance, directory) in SqlServerErrorLogDirectories(open))
         {
-            yield break;
-        }
-
-        foreach (var instance in key.GetValueNames())
-        {
-            if (key.GetValue(instance) is not string internalName)
-            {
-                continue;
-            }
-
-            using var parameters = Microsoft.Win32.Registry.LocalMachine.OpenSubKey(
-                $@"SOFTWARE\Microsoft\Microsoft SQL Server\{internalName}\MSSQLServer\Parameters");
-
-            var errorLog = parameters?.GetValueNames()
-                .Select(n => parameters.GetValue(n) as string)
-                .FirstOrDefault(v => v?.StartsWith("-e", StringComparison.OrdinalIgnoreCase) == true)?[2..];
-
-            if (errorLog is null)
-            {
-                continue;
-            }
-
-            var directory = Path.GetDirectoryName(errorLog);
-            if (directory is null || !Directory.Exists(directory))
-            {
-                continue;
-            }
-
             var (count, bytes) = Measure(directory, "ERRORLOG*");
 
             yield return new ProducerFinding
@@ -189,6 +173,66 @@ public static class ProducerScanner
                 TotalBytes = bytes,
             };
         }
+    }
+
+    /// <summary>
+    /// Each instance's error log directory, read from its startup parameters.
+    /// </summary>
+    /// <remarks>
+    /// Not an iterator, so the whole walk can sit inside one try: a yield may not appear inside a
+    /// try that has a catch, which is why the walk and the findings it feeds are two methods.
+    /// Read-only and best-effort - what was read before a refusal stands, and what was not is
+    /// simply not reported.
+    /// </remarks>
+    private static List<(string Instance, string Directory)> SqlServerErrorLogDirectories(
+        Func<string, RegistryKey?> open)
+    {
+        var found = new List<(string Instance, string Directory)>();
+
+        try
+        {
+            using var key = open(@"SOFTWARE\Microsoft\Microsoft SQL Server\Instance Names\SQL");
+
+            if (key is null)
+            {
+                return found;
+            }
+
+            foreach (var instance in key.GetValueNames())
+            {
+                if (key.GetValue(instance) is not string internalName)
+                {
+                    continue;
+                }
+
+                using var parameters = open(
+                    $@"SOFTWARE\Microsoft\Microsoft SQL Server\{internalName}\MSSQLServer\Parameters");
+
+                var errorLog = parameters?.GetValueNames()
+                    .Select(n => parameters.GetValue(n) as string)
+                    .FirstOrDefault(v => v?.StartsWith("-e", StringComparison.OrdinalIgnoreCase) == true)?[2..];
+
+                if (errorLog is null)
+                {
+                    continue;
+                }
+
+                var directory = Path.GetDirectoryName(errorLog);
+                if (directory is null || !Directory.Exists(directory))
+                {
+                    continue;
+                }
+
+                found.Add((instance, directory));
+            }
+        }
+        catch (Exception e) when (e is System.Security.SecurityException or UnauthorizedAccessException or IOException)
+        {
+            // The same three the other branches catch. Nothing to report: a producer this
+            // account cannot see is not a producer it can be asked to manage.
+        }
+
+        return found;
     }
 
     private static (int Count, long Bytes) Measure(string directory, string pattern)
