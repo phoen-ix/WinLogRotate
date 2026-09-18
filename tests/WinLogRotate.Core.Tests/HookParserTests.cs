@@ -109,6 +109,26 @@ public sealed class HookParserTests
         action.Target.ShouldBe("nginx");
     }
 
+    /// <summary>
+    /// A space after a colon does not become part of the service name.
+    /// </summary>
+    /// <remarks>
+    /// The whole entry is trimmed before the scheme is found, but the halves after it were not:
+    /// <c>service:paramchange: W3SVC</c> - the way one writes a list - asked OpenService for
+    /// <c>" W3SVC"</c>, which does not exist, and the failure said so about a service that does.
+    /// </remarks>
+    [Theory]
+    [InlineData("service:paramchange: W3SVC", "paramchange", "W3SVC")]
+    [InlineData("service: paramchange :W3SVC ", "paramchange", "W3SVC")]
+    [InlineData("service: W3SVC", null, "W3SVC")]
+    public void AServiceNameAndVerbAreTrimmed(string raw, string? verb, string target)
+    {
+        var action = Parse(raw);
+
+        action.Verb.ShouldBe(verb);
+        action.Target.ShouldBe(target);
+    }
+
     [Theory]
     [InlineData("smtp:ops@example.com", HookScheme.Smtp, "ops@example.com")]
     [InlineData("pushover:uQiRzpo4", HookScheme.Pushover, "uQiRzpo4")]

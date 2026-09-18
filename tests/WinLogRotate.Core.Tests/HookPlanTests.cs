@@ -116,6 +116,55 @@ public sealed class HookPlanTests
             .Action.Target.ShouldBe(@"Global\AppReload");
     }
 
+    /// <summary>
+    /// An event without the Global\ prefix is accepted, and config check says what will happen.
+    /// </summary>
+    /// <remarks>
+    /// A name without the prefix lives in the session that created it. The hook runs from a
+    /// scheduled task in session 0 and the waiting program is on a desktop, so the two never meet
+    /// and every night's failure reads "no event named AppReload exists" about one that does.
+    /// Not refused - a hand-run rotation from that desktop reaches it - but nothing said so
+    /// before 03:00.
+    /// </remarks>
+    [Fact]
+    public void AnEventWithoutTheGlobalPrefixIsWarnedAboutAtConfigTime()
+    {
+        var bag = new DiagnosticBag();
+        var file = TomlFile.Parse("""
+            schema = 1
+            [job]
+            name  = "app"
+            paths = ["C:/logs/*.log"]
+            postrotate = ["event:AppReload"]
+            """, "app.toml");
+
+        var job = SettingsMerge.Resolve(
+            ConfigBinder.BindJob(file, bag).ShouldNotBeNull(), null);
+
+        ConfigValidator.Validate(job, new PathGuard(new GuardOptions()), bag);
+
+        var warning = bag.Items.Where(i => i.Message.Contains("session 0")).ShouldHaveSingleItem();
+        warning.Severity.ShouldBe(Severity.Warning);
+        warning.Code.ShouldBe(DiagnosticCode.ConfigInvalid);
+        warning.Message.ShouldContain(@"Global\");
+        warning.Remedy.ShouldNotBeNull().ShouldContain(@"event:Global\AppReload");
+        bag.Items.ShouldNotContain(i => i.Severity == Severity.Error, "advice, not a refusal");
+
+        // Still planned: the warning is advice, not a refusal.
+        Plan("event:AppReload").Hooks.ShouldHaveSingleItem();
+    }
+
+    /// <summary>The prefixed form, in either case, is not warned about.</summary>
+    [Theory]
+    [InlineData(@"event:Global\AppReload")]
+    [InlineData(@"event:GLOBAL\AppReload")]
+    public void AGlobalEventIsNotWarnedAbout(string entry)
+    {
+        var hook = Plan(entry).Hooks.ShouldHaveSingleItem();
+
+        HookPlan.SessionLocalEventCaution(hook.Action).ShouldBeNull();
+    }
+
     // ---- the gate ----------------------------------------------------------------------------
 
     /// <summary>

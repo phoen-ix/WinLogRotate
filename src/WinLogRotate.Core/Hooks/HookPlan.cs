@@ -45,6 +45,36 @@ public static class HookPlan
     /// </remarks>
     private static readonly string[] Verbs = ["stop", "start", "restart", "pause", "continue"];
 
+    /// <summary>The namespace prefix that makes a kernel object name visible from every session.</summary>
+    public const string GlobalPrefix = @"Global\";
+
+    /// <summary>
+    /// Whether an <c>event:</c> target names an event every session can see.
+    /// </summary>
+    /// <remarks>
+    /// A name without the prefix is created and looked up in the caller's own session. The hook
+    /// runs from a scheduled task in session 0; the program waiting on the event is, as often as
+    /// not, on somebody's desktop in session 1 or higher. The two never meet, and the failure
+    /// reads "no event named X exists" about an event that does. Not a refusal - a hand-run
+    /// rotation from the same desktop does reach it - but a shape worth a warning at config time
+    /// and a fuller sentence at run time.
+    /// </remarks>
+    public static bool NamesAGlobalEvent(string target) =>
+        target.TrimStart().StartsWith(GlobalPrefix, StringComparison.OrdinalIgnoreCase);
+
+    /// <summary>
+    /// The config-time warning for an <c>event:</c> target that only its own session can see, or
+    /// null when the target is fine.
+    /// </summary>
+    public static string? SessionLocalEventCaution(HookAction action) =>
+        action.Scheme == HookScheme.Event
+        && action.Target.Trim().Length > 0
+        && !NamesAGlobalEvent(action.Target)
+            ? $"'{action.Display}' names an event without the {GlobalPrefix} prefix, so it is only "
+              + "visible inside the session that created it; a scheduled task runs in session 0, "
+              + "and a program waiting on a desktop will never be signalled from there."
+            : null;
+
     public static PlannedHooks For(
         string jobName, HookStage stage, IReadOnlyList<string> raw, HookGate gate,
         string? sourceFile = null)

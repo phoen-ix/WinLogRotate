@@ -85,7 +85,7 @@ public sealed class HookRunner(IJournal journal, IHookHost? host, HookGate gate,
             // which reports it as 0x41306 - indistinguishable from an operator pressing Stop. The
             // rotation would have succeeded and the only machine-readable evidence of it would say
             // "terminated".
-            var (allowed, _) = NotifyBudget.For(timeout, deadline, started, clock.GetUtcNow());
+            var (allowed, clamped) = NotifyBudget.For(timeout, deadline, started, clock.GetUtcNow());
 
             var outcome = allowed <= TimeSpan.Zero
                 ? HookOutcome.CouldNotStart(
@@ -105,7 +105,7 @@ public sealed class HookRunner(IJournal journal, IHookHost? host, HookGate gate,
             }
 
             failed++;
-            diagnostics.Add(Failure(jobName, hook, outcome, allowed));
+            diagnostics.Add(Failure(jobName, hook, outcome, allowed, clamped));
         }
 
         return new HookStageResult
@@ -152,8 +152,15 @@ public sealed class HookRunner(IJournal journal, IHookHost? host, HookGate gate,
             Ms = ms,
         };
 
+    /// <param name="allowed">What the hook was actually given.</param>
+    /// <param name="clamped">
+    /// Whether that was the run's deadline talking rather than <c>hook_timeout</c>. The remedy has
+    /// to say which: told to raise <c>hook_timeout</c> above 12s, an operator raises it and the
+    /// hook is given 12s again the next night, because the scheduled task's own limit was what
+    /// decided it and nothing in the job file can move that.
+    /// </param>
     private static CliDiagnostic Failure(
-        string jobName, PlannedHook hook, HookOutcome outcome, TimeSpan allowed) => new()
+        string jobName, PlannedHook hook, HookOutcome outcome, TimeSpan allowed, bool clamped) => new()
         {
             Severity = Severity.Error,
             Code = DiagnosticCode.HookFailed,
@@ -166,8 +173,13 @@ public sealed class HookRunner(IJournal journal, IHookHost? host, HookGate gate,
                 ? "The job was skipped and no file was touched, because a prerotate hook is the "
                   + "job's precondition."
                 : outcome.Result == HookResult.TimedOut
-                    ? $"The rotation stands. Raise hook_timeout above {allowed.TotalSeconds:0}s if "
-                      + "the hook is simply slow."
+                    ? clamped
+                        ? $"The rotation stands. The hook was given {allowed.TotalSeconds:0}s because "
+                          + "that was all the run had left before the scheduled task's own time "
+                          + "limit, so raising hook_timeout would not help: start the run earlier, "
+                          + "give the task more time, or make the hook faster."
+                        : $"The rotation stands. Raise hook_timeout above {allowed.TotalSeconds:0}s if "
+                          + "the hook is simply slow."
                     : Silent(outcome)
 
                         // Only standard error is repeated - see WindowsHookHost.Tail. A hook that

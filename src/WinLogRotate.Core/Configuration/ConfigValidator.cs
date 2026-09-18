@@ -335,9 +335,26 @@ public static class ConfigValidator
         // at separate times: a file appearing between 17:00 and 03:00 was enough to make them
         // disagree, and the file that made them disagree was the one an attacker would plant.
         // CommandLine.TrySplit takes no probe now, so the agreement is a property of the text.
-        foreach (var refusal in HookPlan.For(job.Name, stage, hooks, HookGate.Open).Refusals)
+        var planned = HookPlan.For(job.Name, stage, hooks, HookGate.Open);
+
+        foreach (var refusal in planned.Refusals)
         {
             d.Warn(file, refusal.Code, refusal.Message, remedy: refusal.Remedy);
+        }
+
+        // Accepted, and still worth a sentence: an event: target without Global\ is a hook that
+        // will run and report "no event named X exists" every night, about an event that does
+        // exist on somebody's desktop. Under ConfigInvalid at Warning, beside the hook_timeout
+        // check, rather than HookRefused - it is not refused, and docs/hooks.md says LR9003
+        // means "the hook will not be run".
+        foreach (var hook in planned.Hooks)
+        {
+            if (HookPlan.SessionLocalEventCaution(hook.Action) is { } caution)
+            {
+                d.Warn(file, DiagnosticCode.ConfigInvalid, $"the {hook.StageName} hook {caution}",
+                    remedy: $"Write event:{HookPlan.GlobalPrefix}{hook.Action.Target.Trim()} here and "
+                          + "create the event under that name in the waiting program.");
+            }
         }
     }
 }

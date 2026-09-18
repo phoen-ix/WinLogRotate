@@ -91,10 +91,14 @@ public static class HookParser
         // service:NAME carries no verb, which means the default control code. Accepted because
         // it is the obvious thing to write, and because rejecting it would only teach people
         // that the three-part form is a magic incantation.
+        //
+        // Trimmed, both halves. The whole entry is trimmed before the scheme is found, but a
+        // space after the last colon - 'service:paramchange: W3SVC', the way one writes a list -
+        // survived into the name, and OpenService was asked for ' W3SVC', which does not exist.
         return split < 0
-            ? Ok(HookAction.Create(HookScheme.Service, raw, rest, file: file, line: line, column: column))
+            ? Ok(HookAction.Create(HookScheme.Service, raw, rest.Trim(), file: file, line: line, column: column))
             : Ok(HookAction.Create(
-                HookScheme.Service, raw, rest[(split + 1)..], verb: rest[..split].ToLowerInvariant(),
+                HookScheme.Service, raw, rest[(split + 1)..].Trim(), verb: rest[..split].Trim().ToLowerInvariant(),
                 file: file, line: line, column: column));
     }
 

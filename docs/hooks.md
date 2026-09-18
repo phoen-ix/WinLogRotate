@@ -102,6 +102,19 @@ postrotate = ['command:C:\tools\notify.exe --msg "say \"hi\""']
 event, the hook **fails** rather than quietly creating one and setting it — a hook that reports
 success while the program it was meant to poke is not even running is worse than no hook at all.
 
+**Write the `Global\` prefix, on both sides.** A name without it lives in the session that created
+it. The rotation runs from a scheduled task in session 0; a program waiting on a desktop is in
+session 1 or higher; the two never meet, and the hook reports "no event named `AppReload` exists"
+about an event that does. `winlogrotate config check` warns about an `event:` target without the
+prefix, and the run-time failure says which session it looked in.
+
+**Anyone who can create a named event can create yours first.** `Global\` names are one flat
+namespace shared by every session, and the hook opens whatever holds the name. A local process
+that creates `Global\AppReload` before your program does receives the signal instead, and the hook
+reports success. Have the waiting program create the event with a security descriptor that grants
+`EVENT_MODIFY_STATE` to the rotation's account and nothing to everyone else, and choose a name
+nobody else would.
+
 ## When they run
 
 **Once per job, not once per file.** A directory of forty logs signals a service once. This is
@@ -145,14 +158,19 @@ Every hook has one. It defaults to 60 seconds and is set per job:
 hook_timeout = "120s"
 ```
 
-A hook that outlives it is killed, **along with its children** — a hook that launches a helper and
-returns would otherwise leave the helper holding a pipe and outliving the rotation it belonged to.
+A hook that outlives it is killed, **along with the children it still has** — a hook that launches
+a helper and waits would otherwise leave the helper holding a pipe and outliving the rotation it
+belonged to. The tree is walked at the moment of the kill, so a grandchild whose own parent has
+already exited is not found and survives; a hook that starts a detached helper and returns is one
+that outlives its timeout by design. A job object would be airtight, and this does not use one.
 
 The timeout is also clamped by what is left of the run's own deadline. The scheduled task carries an
 `ExecutionTimeLimit`, and a task killed at that limit is reported by Task Scheduler as `0x41306` —
 which is indistinguishable from an operator pressing Stop. A rotation that succeeded would leave
 evidence saying it was terminated. So a hook is never the thing that trips it: if there is not
-enough time left, the hook is not started, and `LR3103` says so.
+enough time left, the hook is not started, and `LR3103` says so. When a hook is started with less
+than its `hook_timeout` because of the clamp and then times out, `LR3103` says that too, rather
+than telling you to raise a setting that was not what decided it.
 
 ## Hooks need a per-machine install
 

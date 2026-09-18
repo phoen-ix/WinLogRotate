@@ -107,6 +107,40 @@ public sealed class HookRunnerTests
         host.LastTimeout.ShouldBe(TimeSpan.FromMinutes(10));
     }
 
+    /// <summary>
+    /// A timeout the run's deadline decided is blamed on the deadline, not on hook_timeout.
+    /// </summary>
+    /// <remarks>
+    /// The runner discarded the Clamped half of NotifyBudget.For, so a hook given 55s at minute
+    /// fifty-nine of a one-hour task was reported with "raise hook_timeout above 55s". The operator
+    /// raised it, and the hook was given 55s again the next night: the scheduled task's own limit
+    /// was what decided it, and nothing in the job file moves that.
+    /// </remarks>
+    [Fact]
+    public void ATimeoutTheDeadlineClampedIsNotBlamedOnHookTimeout()
+    {
+        var started = _clock.GetUtcNow();
+        _clock.Advance(TimeSpan.FromMinutes(59));
+
+        var result = Run(
+            new FakeHookHost(HookResult.TimedOut), TimeSpan.FromSeconds(60), TimeSpan.FromHours(1), started);
+
+        var remedy = result.Diagnostics.ShouldHaveSingleItem().Remedy.ShouldNotBeNull();
+        remedy.ShouldContain("55s");
+        remedy.ShouldContain("scheduled task");
+        remedy.ShouldNotContain("Raise hook_timeout");
+    }
+
+    /// <summary>And one hook_timeout decided still points at hook_timeout.</summary>
+    [Fact]
+    public void ATimeoutHookTimeoutDecidedStillNamesIt()
+    {
+        var result = Run(new FakeHookHost(HookResult.TimedOut), TimeSpan.FromSeconds(12), deadline: null);
+
+        result.Diagnostics.ShouldHaveSingleItem().Remedy.ShouldNotBeNull()
+            .ShouldContain("Raise hook_timeout above 12s");
+    }
+
     // ---- dry run -----------------------------------------------------------------------------
 
     /// <summary>A dry run records what it would do and does none of it.</summary>

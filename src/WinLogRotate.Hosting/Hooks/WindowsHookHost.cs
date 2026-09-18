@@ -86,6 +86,17 @@ public sealed class WindowsHookHost : IHookHost
             // configuration is not there. Reported, never thrown - see IHookHost.
             return HookOutcome.CouldNotStart($"{hook.Program} could not be started ({e.Message})");
         }
+        catch (InvalidOperationException e)
+        {
+            // Process.Start's other exception: the start info itself was not usable - no file
+            // name, or a process object already used. Until this it left through HookRunner's
+            // catch-all as "InvalidOperationException: <resource key>", which names nothing an
+            // operator can act on. Said in plain words, with the message appended for whoever
+            // reads the code.
+            return HookOutcome.CouldNotStart(
+                $"{hook.Program} could not be started: the process was never created, because "
+                + $"what it was to be started with was not usable ({e.Message})");
+        }
 
         // Started BEFORE the wait, both of them, and this ordering is the bug that is being
         // avoided rather than a stylistic preference. stdout is drained and then discarded: a
@@ -101,7 +112,18 @@ public sealed class WindowsHookHost : IHookHost
 
         // The tasks complete when the pipes close, which is at exit - so this is a formality by
         // now, and bounded anyway so a grandchild still holding the handle cannot hang the run.
-        Task.WhenAll(stdout, stderr).Wait(Reaping);
+        // Wait rethrows a faulted read as AggregateException; the child has exited either way,
+        // so that is a fact about what it printed, not about whether it ran, and it is reported
+        // as such rather than as "could not be started".
+        string? unread = null;
+        try
+        {
+            Task.WhenAll(stdout, stderr).Wait(Reaping);
+        }
+        catch (AggregateException e)
+        {
+            unread = (e.InnerException ?? e).Message;
+        }
 
         var elapsed = clock.Elapsed;
 
@@ -111,7 +133,9 @@ public sealed class WindowsHookHost : IHookHost
             {
                 Result = HookResult.Failed,
                 ExitCode = process.ExitCode,
-                Detail = Tail(stderr),
+                Detail = unread is null
+                    ? Tail(stderr)
+                    : $"what it wrote to standard error could not be read ({unread})",
                 Elapsed = elapsed,
             };
     }
@@ -258,8 +282,17 @@ public sealed class WindowsHookHost : IHookHost
         }
         catch (WaitHandleCannotBeOpenedException)
         {
-            return HookOutcome.CouldNotStart(
-                $"no event named '{hook.Action.Target}' exists, so nothing is waiting on it");
+            // A name without the Global\ prefix is looked up in the caller's own session, and a
+            // scheduled task's session is 0 - so an event the waiting program created on a
+            // desktop is invisible from here, and "does not exist" would send the operator to
+            // check a program that is running and waiting. HookPlan warns about this shape at
+            // config time; this is the same fact, said at the moment it bit.
+            return HookOutcome.CouldNotStart(HookPlan.NamesAGlobalEvent(hook.Action.Target)
+                ? $"no event named '{hook.Action.Target}' exists, so nothing is waiting on it"
+                : $"no event named '{hook.Action.Target}' exists in this session, so nothing here "
+                  + "is waiting on it; a scheduled task runs in session 0, and a name without the "
+                  + @"Global\ prefix is not shared across sessions - write event:Global\"
+                  + $"{hook.Action.Target} on both sides");
         }
         catch (UnauthorizedAccessException)
         {

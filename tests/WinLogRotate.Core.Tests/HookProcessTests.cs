@@ -235,4 +235,32 @@ public sealed class HookProcessTests : IDisposable
         outcome.Result.ShouldBe(HookResult.CouldNotStart);
         outcome.Detail.ShouldNotBeNull().ShouldContain("definitely-not-here.exe");
     }
+
+    /// <summary>
+    /// The other thing Process.Start throws is reported in plain words, not thrown.
+    /// </summary>
+    /// <remarks>
+    /// Only Win32Exception was caught. Start's other exception, InvalidOperationException, left
+    /// the host and reached HookRunner's catch-all, which reported it as its type name and its
+    /// message - and under UseSystemResourceKeys the message is a resource key, so the operator
+    /// read "InvalidOperationException: FileNameMissing". An empty program is the one portable
+    /// way to provoke it; the point is the boundary, not the trigger.
+    /// </remarks>
+    [Fact]
+    public void AProcessThatCannotBeCreatedIsReportedNotThrown()
+    {
+        var hook = new PlannedHook
+        {
+            Action = HookAction.Create(HookScheme.Command, "command:", string.Empty),
+            Stage = HookStage.PostRotate,
+            JobName = "app",
+            Program = string.Empty,
+        };
+
+        var outcome = Should.NotThrow(() => Host.Run(hook, TimeSpan.FromSeconds(30)));
+
+        outcome.Result.ShouldBe(HookResult.CouldNotStart);
+        outcome.Detail.ShouldNotBeNull().ShouldContain("could not be started");
+        outcome.Detail.ShouldNotContain("InvalidOperationException");
+    }
 }
