@@ -648,6 +648,13 @@ internal static class UpdateCommand
                 using var process = Process.Start(info);
                 return process is null ? "the system did not start it" : null;
             }
+            catch (System.ComponentModel.Win32Exception e) when (e.NativeErrorCode == 1223)
+            {
+                // The installer's own manifest asks for the highest rights the account has, so
+                // on an administrator's account even a per-user update raises the consent
+                // prompt - from the installer, not from us. Answering No is not a launch failure.
+                return "the elevation prompt was declined";
+            }
             catch (Exception e) when (e is System.ComponentModel.Win32Exception or InvalidOperationException or IOException)
             {
                 return e.Message;

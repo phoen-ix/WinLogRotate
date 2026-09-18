@@ -151,9 +151,17 @@ public sealed class UpdateCommandTests
         var sink = new Sink();
         var ctx = new CommandContext(sink, CommandTree.Build().Parse(["update", "apply"]));
 
+        launcher ??= new Launcher();
+
         var exit = UpdateCommand
-            .ApplyAsync(ctx, restartGui, releases, () => record, launcher ?? new Launcher(), () => elevated)
+            .ApplyAsync(ctx, restartGui, releases, () => record, launcher, () => elevated)
             .GetAwaiter().GetResult();
+
+        // A hand-over leaves its folder for the installer, which here never ran.
+        if (launcher.Installer is { } installer && Path.GetDirectoryName(installer) is { } folder && Directory.Exists(folder))
+        {
+            Directory.Delete(folder, recursive: true);
+        }
 
         return (sink, exit);
     }
