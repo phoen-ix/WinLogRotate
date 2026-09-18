@@ -647,4 +647,106 @@ public sealed class SecretCommandTests : IDisposable
 
         _sink.Diagnostics.ShouldNotContain(d => d.Code == DiagnosticCode.SecretInPlainConfig);
     }
+
+    // ---- a file obeys the same rules as the prompt ----------------------------------------
+
+    private FileInfo FileHolding(string text)
+    {
+        var file = new FileInfo(Path.Combine(Root, "creds.txt"));
+        File.WriteAllText(file.FullName, text);
+        return file;
+    }
+
+    private int SetFromFile(ISecretPlatform platform, string name, string text) =>
+        SecretCommand.Set(Context(), new FakeInput(null), platform, name, FileHolding(text), Root);
+
+    private string Stored(string name)
+    {
+        var store = SecretStore.Load(StorePath, new XorProtector(), "1111111111111111", "2222222222222222");
+        store.TryGet(name, out var value, out var error).ShouldBeTrue(error);
+        return value.Reveal();
+    }
+
+    /// <summary>
+    /// An empty file is refused, not stored as an empty secret.
+    /// </summary>
+    /// <remarks>
+    /// <c>--from-file</c> read the file, trimmed every newline and stored whatever was left -
+    /// which, for a file that was touched but never written, is nothing. An empty password
+    /// stored under a real name authenticates as anonymous against a relay that permits it and
+    /// fails silently against one that does not; the prompt has refused it since the rules were
+    /// written down, and this is the same rule reaching the third reader.
+    /// </remarks>
+    [Fact]
+    public void AnEmptyFileIsRefusedRatherThanStored()
+    {
+        SetFromFile(new FakePlatform(), "a", string.Empty).ShouldBe(ExitCode.Errors);
+
+        _sink.CodeOf(Severity.Error).ShouldBe(DiagnosticCode.ConfigInvalid);
+        File.Exists(StorePath).ShouldBeFalse("nothing should have been stored");
+    }
+
+    /// <summary>A file above the cap is refused, the way a piped value above it is.</summary>
+    [Fact]
+    public void AFileAboveTheLimitIsRefused()
+    {
+        SetFromFile(new FakePlatform(), "a", new string('x', SecretInput.MaxChars + 1))
+            .ShouldBe(ExitCode.Errors);
+
+        _sink.CodeOf(Severity.Error).ShouldBe(DiagnosticCode.ConfigInvalid);
+        File.Exists(StorePath).ShouldBeFalse();
+    }
+
+    /// <summary>
+    /// Exactly one trailing newline is stripped from a file, as from the prompt.
+    /// </summary>
+    /// <remarks>
+    /// <c>TrimEnd('\r', '\n')</c> took every trailing newline, so a password that genuinely ends
+    /// in one lost two characters via a file and one via the prompt - and the two verbs disagreed
+    /// about what had been typed, which <c>secret test</c> exists to catch and could not.
+    /// </remarks>
+    [Fact]
+    public void ExactlyOneNewlineIsStrippedFromAFile()
+    {
+        SetFromFile(new FakePlatform(), "a", "hunter2\n\n").ShouldBe(ExitCode.Ok);
+
+        Stored("a").ShouldBe("hunter2\n");
+    }
+
+    /// <summary>
+    /// <c>name=</c> with nothing after it refuses the whole import, and nothing is stored.
+    /// </summary>
+    /// <remarks>
+    /// Import values went straight into the store without passing the rules at all - no empty
+    /// check, no cap - so a deployment file that forgot to substitute a value stored "" under the
+    /// name and every notification from that machine authenticated with nothing.
+    /// </remarks>
+    [Fact]
+    public void ImportRefusesAnEmptyValueAndStoresNothing()
+    {
+        SecretCommand.Import(
+            Context(), new FakeInput("ok=one\na=\n"), new FakePlatform(), null, Root)
+            .ShouldBe(ExitCode.Errors);
+
+        var error = _sink.Diagnostics.Single(d => d.Severity == Severity.Error);
+        error.Code.ShouldBe(DiagnosticCode.ConfigInvalid);
+        error.Line.ShouldBe(2);
+        error.Message.ShouldContain("'a'");
+
+        // The good line before it did not land either: the whole file, or none of it.
+        File.Exists(StorePath).ShouldBeFalse();
+    }
+
+    /// <summary>The cap holds on import too, per value.</summary>
+    [Fact]
+    public void ImportEnforcesTheLengthCap()
+    {
+        var text = "a=" + new string('x', SecretInput.MaxChars + 1) + "\n";
+
+        SecretCommand.Import(Context(), new FakeInput(text), new FakePlatform(), null, Root)
+            .ShouldBe(ExitCode.Errors);
+
+        _sink.CodeOf(Severity.Error).ShouldBe(DiagnosticCode.ConfigInvalid);
+        File.Exists(StorePath).ShouldBeFalse();
+    }
 }

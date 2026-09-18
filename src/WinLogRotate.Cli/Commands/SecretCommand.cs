@@ -49,13 +49,30 @@ internal static class SecretCommand
                 return ctx.Output.Complete<SecretResult>("secret set", ExitCode.Errors, null);
             }
 
+            // The same rules the console and the pipe apply, because a file is just a third way
+            // of reading the value. Before this it was TrimEnd('\r', '\n') and nothing else: a
+            // password ending in two newlines lost two characters here and one at the prompt, an
+            // empty file stored an empty secret, and a file the operator meant to store
+            // deliberately - the reason the cap's own remedy names --from-file - had no cap.
+            if (!SecretInput.Validate(SecretInput.StripOneNewline(text), out value, out var invalid))
+            {
+                ctx.Output.Diagnostic(new CliDiagnostic
+                {
+                    Severity = Severity.Error,
+                    Code = DiagnosticCode.ConfigInvalid,
+                    Message = $"{fromFile.FullName} does not hold a usable secret: {invalid}",
+                    Path = fromFile.FullName,
+                    Remedy = "The file should hold the value and nothing else; one trailing "
+                           + "newline is ignored.",
+                });
+                return ctx.Output.Complete<SecretResult>("secret set", ExitCode.Errors, null);
+            }
+
             // The same hazard 'secret import' has warned about since --from-file existed: a
             // credential sitting in a plaintext file that nothing is going to delete. Two verbs
             // reading a secret out of a file the same way, and only one of them saying so, is a
             // warning an operator learns to expect and then does not get.
             WarnAboutPlaintextFile(ctx, fromFile);
-
-            value = SecretString.From(text);
         }
         else if (!input.TryReadSecret($"Value for '{name}'", out value, out var error))
         {
@@ -618,7 +635,27 @@ internal static class SecretCommand
                 return ctx.Output.Complete<SecretResult>("secret import", ExitCode.Errors, null);
             }
 
-            store = store.Set(name, SecretString.From(value), WhoAmI(), TimeProvider.System);
+            // Every value through the same rules as 'secret set', and the whole file refused on
+            // the first one that fails them. Until this check existed 'a=' stored an empty secret
+            // a relay would accept as anonymous mail, and there was no length cap here at all.
+            // Refusing the whole file rather than the one line is what the not-a-pair arm already
+            // does, and for the same reason: a fixed file can be re-run without wondering which
+            // half already landed.
+            if (!SecretInput.Validate(value, out var secret, out var invalid))
+            {
+                ctx.Output.Diagnostic(new CliDiagnostic
+                {
+                    Severity = Severity.Error,
+                    Code = DiagnosticCode.ConfigInvalid,
+                    Message = $"Line {line} ('{name}'): {invalid}",
+                    Path = fromFile?.FullName,
+                    Line = line,
+                    Remedy = "Nothing was stored. Fix the line and run the import again.",
+                });
+                return ctx.Output.Complete<SecretResult>("secret import", ExitCode.Errors, null);
+            }
+
+            store = store.Set(name, secret, WhoAmI(), TimeProvider.System);
             names.Add(name);
         }
 
@@ -746,12 +783,20 @@ internal static class SecretCommand
         return ctx.Output.Complete<SecretResult>(verb, ExitCode.Errors, null);
     }
 
+    /// <summary>
+    /// Reads the file exactly as it is; what the verb makes of the text is the verb's business.
+    /// </summary>
+    /// <remarks>
+    /// Not trimmed here. <c>secret set</c> strips one newline through <see cref="SecretInput"/>,
+    /// the way the console and the pipe do, and <c>secret import</c> splits lines - so a trim
+    /// here was either wrong or redundant, depending on the caller.
+    /// </remarks>
     private static bool ReadFile(CommandContext ctx, string verb, FileInfo file, out string text)
     {
         text = string.Empty;
         try
         {
-            text = File.ReadAllText(file.FullName).TrimEnd('\r', '\n');
+            text = File.ReadAllText(file.FullName);
             return true;
         }
         catch (Exception e) when (e is IOException or UnauthorizedAccessException)
