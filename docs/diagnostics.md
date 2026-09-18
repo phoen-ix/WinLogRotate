@@ -236,5 +236,6 @@ The GUI and this log report from the journal instead. That is an invariant, beca
 `LastTaskResult` is the tempting shortcut.
 
 `host status` answers a different question and reads neither: whether a run host is registered,
-whether the registration has drifted from what this build would write, and where the configuration
-lives. Ask the journal what happened; ask `host status` what is set up.
+whether what is registered is still the kind this install was set up to use, and where the
+configuration lives. It compares the kind only; it does not compare the task's definition with
+what this build would write. Ask the journal what happened; ask `host status` what is set up.

@@ -132,7 +132,7 @@ internal static class CommandTree
         new("--skip-state-lock") { Description = "Do not take the run lock. For environments where locking is unavailable." };
 
     private static readonly Option<bool> WaitForStateLock =
-        new("--wait-for-state-lock") { Description = "Block until the run lock is free instead of exiting 3." };
+        new("--wait-for-state-lock") { Description = "Wait up to 10 minutes for the run lock instead of exiting 3 at once; after that it gives up as if it had not waited." };
 
     /// <summary>
     /// On the run verb only, not global.

@@ -12,10 +12,6 @@ internal sealed class DiagnosticCollector
 
     public void Add(CliDiagnostic d) => _items.Add(d);
 
-    /// <summary>True once anything at <see cref="Severity.Error"/> or above was reported,
-    /// which is what turns a run's exit code into 1.</summary>
-    public bool HasErrors => _items.Any(d => d.Severity >= Severity.Error);
-
     /// <summary>
     /// What the envelope should carry, with the promise on <c>CliEnvelope.Diagnostics</c> kept.
     /// </summary>
