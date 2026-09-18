@@ -4,7 +4,9 @@ Every verb speaks `--json`. This page is what a script may rely on, and what it 
 
 ## The envelope
 
-One JSON object on stdout, and nothing on stderr.
+One JSON object on stdout - or in the file `--output` names, and then nothing on stdout - and
+nothing on stderr. That holds for a parse error and for a defect (exit 4) as much as for a verb
+that ran; see below.
 
 ```json
 {
@@ -41,7 +43,7 @@ One JSON object on stdout, and nothing on stderr.
 | `0` | Completed. |
 | `1` | The work happened and something in it went wrong. |
 | `2` | Nothing was attempted: a bad configuration, or a bad command line. |
-| `3` | Another rotation holds the machine-wide gate. Only `run` returns this. |
+| `3` | Another rotation holds the machine-wide gate, or its name could not be opened as a mutex. Only `run` returns this. |
 | `4` | A defect. Nothing about what was or was not done can be relied on. |
 
 **`1` and `2` are different on purpose.** A scheduled task logging `1` always means "look at

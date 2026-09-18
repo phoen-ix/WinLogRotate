@@ -105,6 +105,20 @@ Silent install, for deploying to customer sites:
 WinLogRotate-Setup.exe /S /AllUsers /HOST=task /CONFIG=\\srv\deploy\jobs
 ```
 
+Every switch the installer understands:
+
+| Switch | |
+| --- | --- |
+| `/S` | Silent. Every prompt takes its safe default: an upgrade waits for a running rotation, an uninstall keeps your data |
+| `/AllUsers` / `/CurrentUser` | Per-machine (`ProgramData`, SYSTEM task, locked-down directory) or per-user (your profile, no task, hooks refused) |
+| `/HOST=task` / `/HOST=none` | Register the scheduled task, or nothing. Anything else is refused before anything is installed |
+| `/CONFIG=<dir>` | Copy every `*.toml` from that directory into `conf.d` — a seeded configuration for a fleet |
+| `/NOPATH` | Leave PATH alone |
+| `/NORUNTIME` | Do not offer to install the .NET Desktop Runtime the GUI needs; the CLI works without it |
+| `/FORCEIDLE` | After two minutes of waiting for a rotation in progress, go ahead anyway. Off by default because the process being replaced may be mid-file on a multi-gigabyte log |
+| `/D=<dir>` | Install directory (the standard NSIS switch; must be last) |
+| `uninstall.exe /S /PURGEDATA` | Remove the configuration, state and history too. Without it a silent uninstall keeps them — which is what an in-place upgrade depends on |
+
 ---
 
 ## Use
@@ -143,9 +157,10 @@ doesn't run on Server Core and that's where IIS usually lives.
 | `job enable` / `disable` | Switch a job off and back on, reversibly |
 | `job remove <name>` | Delete a job and its file |
 | `job show <name>` | Print a job as its file writes it — what to feed back into `job set` |
-| `host use task\|service\|none` | Choose what runs rotations — switch freely, any time |
+| `host use task\|none` | Choose what runs rotations — switch freely, any time |
 | `host status` / `repair` / `pause` | Reality vs config; re-apply permissions; suspend |
 | `host export-task` | Scheduled Task XML, for GPO or DSC |
+| `host path-add` / `path-remove` | Put the install directory on PATH, or take it off — what the installer calls |
 | `import <path>` | Convert a Linux `logrotate.conf` |
 | `scan` | Find producers that roll but never delete |
 | `journal` | Everything compressed, moved or deleted, and why |
@@ -154,7 +169,9 @@ doesn't run on Server Core and that's where IIS usually lives.
 | `notify test` / `reset` | Send a real test message; clear a suppressed channel |
 | `notify set-secret` | Store a provider's credential and point the config at it, in one step |
 | `secret set` / `list` / `remove` / `test` | The encrypted credential store |
-| `update check` | Whether a newer release exists |
+| `secret import` | Several secrets from `name=value` lines, for unattended rollout |
+| `update check` / `apply` | Whether a newer release exists; how to install it |
+| `--version` | The build you are running, for a bug report |
 
 </details>
 
@@ -407,7 +424,7 @@ from elevation rather than from the install.
 
 ### What is thoroughly tested, everywhere
 
-1,188 tests, and the platform-neutral half is where the subtle bugs live:
+1,810 tests, and the platform-neutral half is where the subtle bugs live:
 
 - logrotate's scheduling rules, including that `--force` does **not** override `notifempty`,
   `minsize` or `minage` — one test per gate

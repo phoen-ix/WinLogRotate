@@ -36,8 +36,9 @@ public static class Names
     public const string TaskName = "Rotate";
     public const string TaskPath = @"\WinLogRotate\Rotate";
 
-    /// <summary>Event Log source, registered by the installer because creating one needs admin
-    /// and the unelevated CLI would otherwise throw on its first write.</summary>
+    /// <summary>Event Log source, registered by the installer because creating one needs admin,
+    /// and an unregistered source would be written with no message file behind it - every event
+    /// unreadable in Event Viewer. <c>EventLogWriter.IsRegistered</c> checks for the key.</summary>
     public const string EventLogSource = "WinLogRotate";
     public const string EventLogName = "Application";
 

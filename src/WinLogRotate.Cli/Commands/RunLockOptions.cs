@@ -22,7 +22,7 @@ internal sealed record RunLockOptions
     /// <summary>Do not take the gate at all.</summary>
     public bool Skip { get; init; }
 
-    /// <summary>Block until it is free instead of giving up immediately.</summary>
+    /// <summary>Wait for it, up to <see cref="WaitFor"/>, instead of giving up immediately.</summary>
     public bool Wait { get; init; }
 
     /// <summary>

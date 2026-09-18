@@ -19,8 +19,9 @@ envelope. See [automation](automation.md) for that envelope and what may be reli
 Everything at **Warning and above**, written to `Application` under the source `WinLogRotate`.
 Informational progress does not: a system log is not where progress belongs.
 
-The source is registered by the installer, because creating one requires administrator rights
-and the unelevated CLI would otherwise fail on its first write. **A per-user install registers
+The source is registered by the installer, because creating one requires administrator rights,
+and an unregistered source would otherwise be written with no message file behind it - every
+event rendering in Event Viewer as "the description cannot be found". **A per-user install registers
 nothing**, deliberately — on such a machine nothing is written and nothing is reported as
 broken. `winlogrotate doctor` tells you which state you are in, under **Notifications**:
 
@@ -122,7 +123,7 @@ mean the same thing wherever it is read.
 | 115 | Error | The verb needs a platform this is not | `LR1005` |
 | 116 | Error | The invocation ended unexpectedly; what was done is unknown | `LR1006` |
 | 117 | Error | The command line named something the verb could not use | `LR1007` |
-| 118 | Info | Another rotation holds the gate; this one did nothing | `LR1008` |
+| 118 | Info | Another rotation holds the gate, or its name could not be opened as a mutex; this run did nothing | `LR1008` |
 | 119 | Error | A verb failed and gave no reason. Always a defect | `LR1009` |
 | 120 | Warning | A job was skipped | `LR2001` |
 | 121 | Error | A job matched no files and did not say `missingok` | `LR2002` |
@@ -131,7 +132,7 @@ mean the same thing wherever it is read.
 | 124 | Info | First run: a baseline was recorded | `LR2005` |
 | 125 | Info | A file is named by more than one of a job's patterns; it is rotated once | `LR2006` |
 | 130 | Error | A rotation failed | `LR3001` |
-| 131 | Error | The file was locked by another process | `LR3002` |
+| 131 | Error | The file was locked by another process. Warning from `probe`, which only reports what a file supports | `LR3002` |
 | 132 | *varies* | The configured lock strategy was unavailable | `LR3003` |
 | 133 | Warning | A previous run abandoned the rotation mutex | `LR3101` |
 | 134 | Error | NUL-fill detected; `copytruncate` quarantined for that path | `LR3102` |
@@ -151,7 +152,7 @@ mean the same thing wherever it is read.
 | 153 | Warning | The notification state could not be read; change detection starts over | `LR5004` |
 | 154 | Warning | The notification phase was cut short to protect the run's deadline | `LR5005` |
 | 155 | Warning | A notification digest delivered to an `eventlog:` target | — |
-| 156 | Warning | A channel refused one message permanently; the others still went | `LR5006` |
+| 156 | Warning | A channel refused one or more messages permanently; they are not queued | `LR5006` |
 | 160 | Error | A configuration file could not be written; it was left as it was | `LR1010` |
 | 161 | Error | The rotation clocks exist but could not be used tonight - held open, unreadable, or written by a newer build; nothing was attempted | `LR3108` |
 | 190 | Error | The configuration directory is writable by a non-administrator | `LR9001` |

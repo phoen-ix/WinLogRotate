@@ -173,8 +173,9 @@ relay. `winlogrotate notify show` marks providers that need nothing stored.
 ### TLS
 
 `opportunistic` (the default) asks the relay first — a plaintext `EHLO` on its own connection, one
-extra round trip per send — and encrypts when STARTTLS is offered. When it is not, the message goes
-in the clear **and says so** with an `LR5001` naming the host, once per channel per run. A downgrade
+extra round trip per send — and encrypts when STARTTLS is offered. When it is not, the message — and
+the `login` credential, if the provider has one — goes in the clear **and says so** with an `LR5001`
+naming the host, once per channel per run. A downgrade
 nobody is told about is not opportunistic encryption, it is an unencrypted connection with a
 reassuring setting next to it. `tls = "required"` refuses such a relay instead and says what was
 missing (`LR5002`); `tls = "none"` never asks. Port 465 is implicit TLS, which the .NET SMTP client

@@ -30,8 +30,9 @@ public static class EnvelopeDetails
     /// exclusive by construction. A <c>--json</c> verb writes everything to stdout and nothing to
     /// stderr; a text verb writes its diagnostics to stderr and never puts a <c>{</c>-prefixed
     /// line on stdout; and the last-resort reporter, which runs when the guard itself was not
-    /// reached, writes to stderr with no envelope at all. Concatenating would buy nothing and
-    /// cost a rendering decision on a path that cannot happen.
+    /// reached, writes to stderr with no envelope for a text caller and its own <c>LR1006</c>
+    /// envelope for a <c>--json</c> one. Concatenating would buy nothing and cost a rendering
+    /// decision on a path that cannot happen.
     /// </para>
     /// <para>
     /// Whitespace-only stderr is nothing. Five call sites test <c>Details.Length &gt; 0</c> to

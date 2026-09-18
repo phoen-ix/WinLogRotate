@@ -731,8 +731,14 @@ Section "Uninstall"
   Call un.CloseGui
 
   ; Remove the run host BEFORE the executable it points at, or a task fires against a missing
-  ; binary and logs a failure every day forever.
-  nsExec::ExecToLog '"$INSTDIR\${CLI}" host use none'
+  ; binary and logs a failure every day forever. --config-dir as the install passes it, so the
+  ; verb records HostKind = none in the same install it was set up under rather than resolving
+  ; a directory of its own; an uninstall key without a DataDir falls back to the default.
+  ${If} $DataDir != ""
+    nsExec::ExecToLog '"$INSTDIR\${CLI}" host use none --config-dir "$DataDir"'
+  ${Else}
+    nsExec::ExecToLog '"$INSTDIR\${CLI}" host use none'
+  ${EndIf}
   Pop $0
   nsExec::ExecToLog '"$SYSDIR\schtasks.exe" /delete /tn "${TASK_PATH}" /f'
   Pop $0
@@ -748,7 +754,11 @@ Section "Uninstall"
   ${EndIf}
   Pop $0
 
-  DeleteRegKey HKLM "${EVENTLOG_KEY}"
+  ; Only the install that created it. A per-user uninstall is not elevated and would fail here
+  ; harmlessly - but if a per-machine install exists beside it, that install's source must stay.
+  ${If} $MultiUser.InstallMode == "AllUsers"
+    DeleteRegKey HKLM "${EVENTLOG_KEY}"
+  ${EndIf}
 
   Delete "$INSTDIR\${CLI}"
   Delete "$INSTDIR\${GUI}"
