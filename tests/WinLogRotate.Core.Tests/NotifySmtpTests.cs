@@ -1,4 +1,5 @@
 using System.Collections.Concurrent;
+using System.Diagnostics;
 using System.Net;
 using System.Net.Security;
 using System.Net.Sockets;
@@ -420,6 +421,65 @@ public sealed class NotifySmtpTests
         {
             (await held).Dispose();
         }
+    }
+
+    /// <summary>
+    /// The probe's deadline is the attempt's, for the whole conversation.
+    /// </summary>
+    /// <remarks>
+    /// Each read used to be allowed the full timeout on its own. A relay that greeted late and then
+    /// never answered EHLO therefore held the probe for the greeting's delay plus a whole timeout -
+    /// spent out of the channel's share of the notification budget before the send itself had been
+    /// tried, and a third helping was available to a reply that dripped in one line at a time.
+    /// Timing-based, with a second's slack either way: the old probe takes the greeting's delay
+    /// longer than the timeout, the fixed one takes the timeout and no more.
+    /// </remarks>
+    [Fact]
+    public async Task TheStartTlsProbeSpendsAtMostTheAttemptsTimeoutOnTheWholeConversation()
+    {
+        var timeout = TimeSpan.FromSeconds(2);
+        var lateGreeting = TimeSpan.FromMilliseconds(1500);
+        var token = TestContext.Current.CancellationToken;
+
+        using var slow = new TcpListener(IPAddress.Loopback, 0);
+        slow.Start();
+
+        // Greets late, then reads and never answers: a wedged relay behind a slow front door.
+        var serving = Task.Run(async () =>
+        {
+            try
+            {
+                using var accepted = await slow.AcceptTcpClientAsync(token);
+                await Task.Delay(lateGreeting, token);
+
+                var stream = accepted.GetStream();
+                await stream.WriteAsync(Encoding.ASCII.GetBytes("220 slow.relay.test ESMTP\r\n"), token);
+
+                var sink = new byte[256];
+                while (await stream.ReadAsync(sink, token) > 0)
+                {
+                    // Read, and never answer.
+                }
+            }
+            catch (Exception e) when (e is IOException or SocketException or OperationCanceledException
+                                        or ObjectDisposedException)
+            {
+                // The probe gave up and hung up, which is the point.
+            }
+        }, token);
+
+        var clock = Stopwatch.StartNew();
+        var result = Send(((IPEndPoint)slow.LocalEndpoint).Port, SmtpTls.Opportunistic, pin: null, timeout);
+        clock.Stop();
+
+        result.Ok.ShouldBeFalse();
+        result.Status.ShouldBe(0, "a relay that stops answering is unreachable, and retryable");
+        clock.Elapsed.ShouldBeLessThan(
+            timeout + TimeSpan.FromSeconds(1),
+            "the probe must not spend a fresh timeout on every reply");
+
+        slow.Stop();
+        await serving;
     }
 
     // ---- the pin ----------------------------------------------------------------------------

@@ -1,3 +1,4 @@
+using System.Diagnostics;
 using System.Net.Sockets;
 using System.Text;
 
@@ -41,8 +42,17 @@ internal static class StartTlsProbe
     private const int MaxReplyLines = 64;
 
     /// <summary>Asks the relay, within <paramref name="timeout"/> for the whole conversation.</summary>
+    /// <remarks>
+    /// One deadline, not one per reply. Each read used to be allowed the whole timeout on its own,
+    /// so a relay that greeted late and then went quiet - or dripped its EHLO reply one line at a
+    /// time - could hold the probe for two or three timeouts, all spent out of the channel's share
+    /// of the notification budget before the send itself had been tried. The connect, every line
+    /// read and the send that follows now draw on the same allowance.
+    /// </remarks>
     public static StartTlsAnswer Ask(string host, int port, TimeSpan timeout)
     {
+        var started = Stopwatch.GetTimestamp();
+
         try
         {
             using var client = new TcpClient();
@@ -50,7 +60,6 @@ internal static class StartTlsProbe
             client.ConnectAsync(host, port, cancel.Token).AsTask().GetAwaiter().GetResult();
 
             using var stream = client.GetStream();
-            stream.ReadTimeout = Milliseconds(timeout);
             stream.WriteTimeout = Milliseconds(timeout);
 
             using var reader = new StreamReader(stream, Encoding.ASCII, detectEncodingFromByteOrderMarks: false, 1024, leaveOpen: true);
@@ -60,7 +69,10 @@ internal static class StartTlsProbe
                 NewLine = "\r\n",
             };
 
-            var greeting = Reply(reader);
+            if (Reply(reader, stream, started, timeout) is not { } greeting)
+            {
+                return TimedOut;
+            }
 
             if (greeting.Count == 0 || !greeting[0].StartsWith("220", StringComparison.Ordinal))
             {
@@ -73,7 +85,11 @@ internal static class StartTlsProbe
             }
 
             writer.WriteLine($"EHLO {ClientName()}");
-            var ehlo = Reply(reader);
+
+            if (Reply(reader, stream, started, timeout) is not { } ehlo)
+            {
+                return TimedOut;
+            }
 
             // A relay that does not speak ESMTP cannot offer STARTTLS. SmtpClient falls back to
             // HELO in the same situation and reaches the same conclusion.
@@ -109,13 +125,37 @@ internal static class StartTlsProbe
         }
     }
 
-    /// <summary>One SMTP reply: every <c>NNN-</c> continuation line up to and including the <c>NNN </c> last one.</summary>
-    private static List<string> Reply(StreamReader reader)
+    /// <summary>The conversation outlived the attempt's timeout, whichever line it was waiting for.</summary>
+    private static StartTlsAnswer TimedOut => new(null, Describe(SocketError.TimedOut), null);
+
+    /// <summary>
+    /// One SMTP reply: every <c>NNN-</c> continuation line up to and including the <c>NNN </c> last
+    /// one - or null when the deadline passed before the last one arrived.
+    /// </summary>
+    /// <remarks>
+    /// The read timeout is re-armed with what is left before every line, so a reply that keeps
+    /// coming cannot outlive the deadline any more than a reply that never comes.
+    /// </remarks>
+    private static List<string>? Reply(StreamReader reader, NetworkStream stream, long started, TimeSpan timeout)
     {
         var lines = new List<string>();
 
-        while (lines.Count < MaxReplyLines && reader.ReadLine() is { } line)
+        while (lines.Count < MaxReplyLines)
         {
+            var left = timeout - Stopwatch.GetElapsedTime(started);
+
+            if (left <= TimeSpan.Zero)
+            {
+                return null;
+            }
+
+            stream.ReadTimeout = Milliseconds(left);
+
+            if (reader.ReadLine() is not { } line)
+            {
+                break;
+            }
+
             lines.Add(line);
 
             if (line.Length < 4 || line[3] != '-')
