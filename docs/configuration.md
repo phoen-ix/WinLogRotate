@@ -73,12 +73,12 @@ says so as it reads: `note: 'daily' overrides previously specified 'size'`.
 | Key | Type | Default | What it does |
 |---|---|---|---|
 | `hourly` | bool | — | Rotate every hour. |
-| `daily` | bool | `true` | Rotate every day. The default when nothing else is set. |
+| `daily` | bool | — | Rotate every day. |
 | `weekly` | bool | — | Rotate every week; see `weekday`. |
 | `monthly` | bool | — | Rotate every month; see `monthday`. |
 | `yearly` | bool | — | Rotate every year. |
-| `schedule` | string | `"daily"` | The same choice written as a value: `hourly`, `daily`, `weekly`, `monthly`, `yearly`. |
-| `size` | size | `1 MiB` | Rotate on size alone, ignoring the calendar, unless a frequency key is written after it. Accepts `100k`, `10M`, `1G`. |
+| `schedule` | string | `"daily"` | The same choice written as a value: `hourly`, `daily`, `weekly`, `monthly`, `yearly`, or `size` to rotate on size alone. Daily when nothing is set. |
+| `size` | size | `"1M"` | Rotate on size alone, ignoring the calendar, unless a frequency key is written after it. Accepts `100k`, `10M`, `1G`. |
 | `weekday` | 0–7 | `0` | 0 is Sunday through 6 Saturday. 7 means every seven days regardless of weekday. |
 | `monthday` | 0–31 | `0` | Day of the month for `monthly`. |
 

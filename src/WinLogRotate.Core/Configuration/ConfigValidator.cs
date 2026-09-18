@@ -248,40 +248,51 @@ public static class ConfigValidator
     /// </remarks>
     private static void CheckDateFormat(string format, string file, DiagnosticBag d)
     {
+        if (DateFormatProblem(format) is { } problem)
+        {
+            d.Error(file, DiagnosticCode.ConfigInvalid, problem.Message, remedy: problem.Remedy);
+        }
+    }
+
+    /// <summary>
+    /// Why a <c>dateformat</c> could not be found again, in the validator's own words, or null
+    /// when it can. Pure, so a form can say it before the file is written.
+    /// </summary>
+    public static (string Message, string Remedy)? DateFormatProblem(string format)
+    {
         if (format.Contains('%'))
         {
-            d.Error(file, DiagnosticCode.ConfigInvalid,
+            return (
                 $"dateformat '{format}' is written in strftime's grammar, which this product does not use.",
-                remedy: "Write .NET specifiers instead: %Y is yyyy, %m is MM, %d is dd, and %H %M %S "
-                      + "are HH mm ss - so -%Y%m%d is -yyyyMMdd.");
-            return;
+                "Write .NET specifiers instead: %Y is yyyy, %m is MM, %d is dd, and %H %M %S "
+                + "are HH mm ss - so -%Y%m%d is -yyyyMMdd.");
         }
 
         if (format.Length < 2)
         {
-            d.Error(file, DiagnosticCode.ConfigInvalid,
+            return (
                 $"dateformat '{format}' is too short: .NET reads a single character as one of its standard "
                 + "patterns, which contain separators no file name can carry.",
-                remedy: "Use a pattern of at least two characters, such as -yyyyMMdd.");
-            return;
+                "Use a pattern of at least two characters, such as -yyyyMMdd.");
         }
 
         var stray = format.FirstOrDefault(c => c is not ('y' or 'M' or 'd' or 'H' or 'm' or 's' or '-' or '_' or '.'));
         if (stray != default)
         {
-            d.Error(file, DiagnosticCode.ConfigInvalid,
+            return (
                 $"dateformat '{format}' contains '{stray}', and an archive named with it could not be found again.",
-                remedy: "Archives are rediscovered by their name, which works for runs of y, M, d, H, m and s "
-                      + "separated by -, _ or . and for nothing else. Anything else stops them being counted or deleted.");
-            return;
+                "Archives are rediscovered by their name, which works for runs of y, M, d, H, m and s "
+                + "separated by -, _ or . and for nothing else. Anything else stops them being counted or deleted.");
         }
 
         if (LongestRun(format, 'M') > 2 || LongestRun(format, 'd') > 2)
         {
-            d.Error(file, DiagnosticCode.ConfigInvalid,
+            return (
                 $"dateformat '{format}' spells a month or a weekday as a name, and a name is not a number an archive can be found by.",
-                remedy: "MM and dd are the numeric forms; MMM, MMMM, ddd and dddd are names.");
+                "MM and dd are the numeric forms; MMM, MMMM, ddd and dddd are names.");
         }
+
+        return null;
     }
 
     private static int LongestRun(string text, char c)

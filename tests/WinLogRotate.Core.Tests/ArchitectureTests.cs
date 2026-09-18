@@ -2057,6 +2057,11 @@ public partial class ArchitectureTests
     [GeneratedRegex(@"^\|\s*`([a-z_]+)`\s*\|", RegexOptions.Compiled)]
     private static partial Regex DocumentedJobKey();
 
+    /// <summary>Key, Type and Default cells of a job-key row; a cell may carry an escaped pipe.</summary>
+    [GeneratedRegex(@"^\|\s*`(?<key>[a-z_]+)`\s*\|(?<type>(?:\\\||[^|])*)\|(?<default>(?:\\\||[^|])*)\|", RegexOptions.Compiled)]
+    private static partial Regex DocumentedJobKeyDefault();
+
+
     /// <summary>
     /// Every <c>[job]</c> key has a row in the configuration reference, and every row is real.
     /// </summary>
@@ -2079,11 +2084,11 @@ public partial class ArchitectureTests
     /// tells an operator to write a key that will be warned about and ignored.
     /// </para>
     /// <para>
-    /// <b>What this deliberately does not assert:</b> row order, which section a key sits in, the
-    /// Default column against the code, or anything about the prose. Defaults live in three places
-    /// and are rendered for humans ("on", "beside the log"), so pinning them would either be wrong
-    /// or force the page into a machine-readable straitjacket - and a doc test that fails on a
-    /// wording change gets deleted within a month, which is worse than having none.
+    /// <b>What this deliberately does not assert:</b> row order, which section a key sits in, or
+    /// anything about the prose - a doc test that fails on a wording change gets deleted within a
+    /// month, which is worse than having none. The Default column is held to the schema's own
+    /// Default by <see cref="TheDocumentedDefaultOfEveryJobKeyIsTheSchemas"/>, as a value and not
+    /// as prose, now that the schema carries one.
     /// </para>
     /// </remarks>
     [Fact]
@@ -2108,6 +2113,57 @@ public partial class ArchitectureTests
         documented
             .Where(k => !ConfigBinder.JobKeys.Contains(k, StringComparer.OrdinalIgnoreCase))
             .ShouldBeEmpty("documented keys the binder does not accept");
+    }
+
+    /// <summary>
+    /// The Default column of every job-key row is the schema's Default, as a value.
+    /// </summary>
+    /// <remarks>
+    /// The schema's Default is what a form shows beside every field as "inherited (default 7)",
+    /// and a test binds an empty job to hold it to the binder. This closes the last gap: the
+    /// reference page. A cell is normalised before comparing - backticks and quotes stripped, a
+    /// dash or an italic note such as <i>(none)</i> read as no default - so the page stays
+    /// readable and only the value is pinned.
+    /// </remarks>
+    [Fact]
+    public void TheDocumentedDefaultOfEveryJobKeyIsTheSchemas()
+    {
+        var doc = Path.Combine(RepoRoot.Find().FullName, "docs", "configuration.md");
+
+        var rows = File.ReadAllLines(doc)
+            .Select(line => DocumentedJobKeyDefault().Match(line))
+            .Where(m => m.Success)
+            .Select(m => (Key: m.Groups["key"].Value, Default: Normalise(m.Groups["default"].Value)))
+            .ToArray();
+
+        rows.Length.ShouldBeGreaterThan(30, "the table should have been read");
+
+        var wrong = new List<string>();
+
+        foreach (var row in JobSchema.Keys)
+        {
+            var documented = rows.Where(r => r.Key.Equals(row.Key, StringComparison.OrdinalIgnoreCase)).ToArray();
+            var cell = documented.ShouldHaveSingleItem($"{row.Key} should have exactly one row").Default;
+
+            if (!string.Equals(cell, row.Default, StringComparison.OrdinalIgnoreCase))
+            {
+                wrong.Add($"{row.Key}: documented '{cell ?? "none"}', schema '{row.Default ?? "none"}'");
+            }
+        }
+
+        wrong.ShouldBeEmpty("docs/configuration.md's Default column disagrees with JobSchema");
+
+        static string? Normalise(string cell)
+        {
+            var text = cell.Trim();
+            if (text.Length == 0 || text.StartsWith('*') || text == "—" || text == "-")
+            {
+                return null;
+            }
+
+            text = text.Trim('`').Trim('"');
+            return text.Length == 0 ? null : text;
+        }
     }
 
     /// <summary>The unknown-key remedy points at a document that lists the keys.</summary>

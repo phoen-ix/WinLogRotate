@@ -112,4 +112,18 @@ public sealed class ConfigValidatorTests
 
         Errors(bag).ShouldNotContain(d => d.Message.StartsWith("dateformat", StringComparison.Ordinal));
     }
+
+    /// <summary>The date-format judgement can be asked without a diagnostic bag, and answers the same.</summary>
+    [Fact]
+    public void TheDateFormatJudgementIsPure()
+    {
+        ConfigValidator.DateFormatProblem("-yyyyMMdd").ShouldBeNull();
+
+        var problem = ConfigValidator.DateFormatProblem("-%Y%m%d").ShouldNotBeNull();
+        problem.Message.ShouldContain("strftime", Case.Sensitive);
+        problem.Remedy.ShouldContain("-yyyyMMdd", Case.Sensitive);
+
+        var bag = Validate(Fixtures.Job() with { DateExt = true, DateFormat = "-%Y%m%d" });
+        bag.Items.ShouldContain(d => d.Message == problem.Message && d.Remedy == problem.Remedy);
+    }
 }

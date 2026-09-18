@@ -276,6 +276,8 @@ public static class JobEditorModel
                     Kind = JobKeyKind.Text,
                     Group = JobKeyGroup.Behaviour,
                     Sample = string.Empty,
+                    Title = key,
+                    Description = "Not a setting this product reads.",
                 };
 
                 fields.Add(new JobField

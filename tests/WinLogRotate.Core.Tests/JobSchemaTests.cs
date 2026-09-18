@@ -1,6 +1,7 @@
 using Shouldly;
 using WinLogRotate.Contracts;
 using WinLogRotate.Core.Configuration;
+using WinLogRotate.Core.Safety;
 using Xunit;
 
 namespace WinLogRotate.Core.Tests;
@@ -166,4 +167,232 @@ public sealed class JobSchemaTests
     public void TheStructuralKeysAreTheOnesDefaultsMayNotCarry() =>
         JobSchema.Keys.Where(k => k.PerJobOnly).Select(k => k.Key)
             .ShouldBe(["name", "paths", "kind", "enabled", "allowdangerous"]);
+
+    // ---- what a form needs to know that the binder used to keep to itself -------------------
+
+    private static EffectiveJob BindEmptyJob()
+    {
+        var bag = new DiagnosticBag();
+        var job = ConfigBinder.BindJob(
+            TomlFile.Parse("schema = 1\n\n[job]\nname = \"x\"\npaths = [\"C:/logs/*.log\"]\n", "x.toml"), bag);
+
+        job.ShouldNotBeNull();
+        return SettingsMerge.Resolve(job, null);
+    }
+
+    /// <summary>The value a job gets when it says nothing, as the binder resolves it.</summary>
+    private static object? Effective(EffectiveJob job, string key) => key switch
+    {
+        "kind" => job.Kind,
+        "enabled" => job.Enabled,
+        "allowdangerous" => job.AllowDangerous.Count == 0 ? null : job.AllowDangerous,
+        "schedule" => job.Schedule,
+        "size" => job.SizeThreshold,
+        "weekday" => job.Weekday,
+        "monthday" => job.MonthDay,
+        "rotate" => job.Rotate,
+        "start" => job.Start,
+        "maxage" => job.MaxAge,
+        "minage" => job.MinAge,
+        "minsize" => job.MinSize,
+        "maxsize" => job.MaxSize,
+        "maxfiles" => job.MaxFiles,
+        "compress" => job.Compress,
+        "compresstype" => job.CompressType,
+        "delaycompress" => job.DelayCompress,
+        "dateext" => job.DateExt,
+        "dateformat" => job.DateFormat,
+        "olddir" => job.OldDir,
+        "createolddir" => job.CreateOldDir,
+        "missingok" => job.MissingOk,
+        "notify" => job.Notify,
+        "notifempty" => job.NotIfEmpty,
+        "lockstrategy" => job.LockStrategy,
+        "livefiles" => job.LiveFiles,
+        "retrycount" => job.RetryCount,
+        "retryinterval" => job.RetryIntervalMs,
+        "prerotate" => job.PreRotate.Count == 0 ? null : job.PreRotate,
+        "postrotate" => job.PostRotate.Count == 0 ? null : job.PostRotate,
+        "hook_timeout" => job.HookTimeout,
+
+        // name and paths are required, and a shorthand is not a value a job holds.
+        _ => null,
+    };
+
+    private static bool SameAs(JobKey row, object value) => row.Kind switch
+    {
+        JobKeyKind.Flag => value is bool b && bool.Parse(row.Default!) == b,
+        JobKeyKind.Integer => value is int i && int.Parse(row.Default!, System.Globalization.CultureInfo.InvariantCulture) == i,
+        JobKeyKind.Size => value is long l && ConfigBinder.TryParseSize(row.Default!, out var bytes) && bytes == l,
+        JobKeyKind.Duration => value is TimeSpan t && ConfigBinder.TryParseDuration(row.Default!, out var span) && span == t,
+        JobKeyKind.Enum => string.Equals(value.ToString(), row.Default, StringComparison.OrdinalIgnoreCase),
+        JobKeyKind.Text => value is string s && s == row.Default,
+        _ => false,
+    };
+
+    /// <summary>
+    /// The default a row declares is the value the binder gives a job that says nothing.
+    /// </summary>
+    /// <remarks>
+    /// The schema's Default column exists so a form can say "inherited (default 7)" without
+    /// binding a job to find out. Restated by hand, it would drift the first time somebody
+    /// changed <c>BuiltInDefaults</c> - so this binds an empty job and holds every row to it.
+    /// </remarks>
+    [Fact]
+    public void EveryDefaultIsTheBindersOwn()
+    {
+        var job = BindEmptyJob();
+        var wrong = new List<string>();
+
+        foreach (var row in JobSchema.Keys)
+        {
+            var effective = Effective(job, row.Key);
+
+            if (row.Default is null)
+            {
+                if (effective is not null)
+                {
+                    wrong.Add($"{row.Key}: the schema says no default, the binder gives {effective}");
+                }
+            }
+            else if (effective is null || !SameAs(row, effective))
+            {
+                wrong.Add($"{row.Key}: the schema says {row.Default}, the binder gives {effective ?? "nothing"}");
+            }
+        }
+
+        wrong.ShouldBeEmpty();
+    }
+
+    [Fact]
+    public void EveryDefaultParsesAsItsOwnKey()
+    {
+        var unparseable = JobSchema.Keys
+            .Where(row => row.Default is not null && !JobSchema.TryParse(row.Key, row.Default, out _, out _))
+            .Select(row => $"{row.Key} = {row.Default}")
+            .ToArray();
+
+        unparseable.ShouldBeEmpty();
+    }
+
+    /// <summary>Every key can be captioned and explained, in one sentence each, and no two alike.</summary>
+    [Fact]
+    public void EveryKeyHasATitleAndOneSentence()
+    {
+        foreach (var row in JobSchema.Keys)
+        {
+            row.Title.ShouldNotBeNullOrWhiteSpace(row.Key);
+            row.Description.ShouldEndWith(".", Case.Sensitive, row.Key);
+            row.Description.Length.ShouldBeLessThanOrEqualTo(120, row.Key);
+        }
+
+        JobSchema.Keys.Select(row => row.Description).ShouldBeUnique();
+        JobSchema.Keys.Select(row => row.Title).ShouldBeUnique();
+    }
+
+    private static EffectiveJob With(EffectiveJob job, string key, int value) => key switch
+    {
+        "weekday" => job with { Weekday = value },
+        "monthday" => job with { MonthDay = value },
+        "rotate" => job with { Rotate = value },
+        "start" => job with { Start = value },
+        "maxage" => job with { MaxAge = value },
+        "minage" => job with { MinAge = value },
+        "maxfiles" => job with { MaxFiles = value },
+        "livefiles" => job with { LiveFiles = value },
+        "retrycount" => job with { RetryCount = value },
+        "retryinterval" => job with { RetryIntervalMs = value },
+        _ => throw new ArgumentOutOfRangeException(nameof(key), key, "not an integer key this test knows"),
+    };
+
+    private static bool Refuses(EffectiveJob job, string key)
+    {
+        var bag = new DiagnosticBag();
+        ConfigValidator.Validate(job, new PathGuard(new GuardOptions { ProtectedRoots = [] }), bag);
+        return bag.Items.Any(d => d.Severity >= Severity.Error && d.Message.StartsWith(key, StringComparison.Ordinal));
+    }
+
+    /// <summary>
+    /// A range the schema declares is a range the validator enforces, and no more.
+    /// </summary>
+    /// <remarks>
+    /// Both halves matter. A floor the validator does not have would make a form refuse a value
+    /// the CLI accepts; a floor the schema does not declare is a refusal the form only learns of
+    /// from the dry run. maxage and minage have no floor either side, and that is recorded here
+    /// rather than papered over.
+    /// </remarks>
+    [Fact]
+    public void EveryIntegerRangeIsTheValidatorsOwn()
+    {
+        var job = BindEmptyJob();
+        var wrong = new List<string>();
+
+        foreach (var row in JobSchema.Keys.Where(r => r.Kind == JobKeyKind.Integer))
+        {
+            if (row.Min is { } min)
+            {
+                if (!Refuses(With(job, row.Key, min - 1), row.Key))
+                {
+                    wrong.Add($"{row.Key} = {min - 1} is below the schema's floor and the validator accepts it");
+                }
+
+                if (Refuses(With(job, row.Key, min), row.Key))
+                {
+                    wrong.Add($"{row.Key} = {min} is the schema's floor and the validator refuses it");
+                }
+            }
+            else if (Refuses(With(job, row.Key, -1), row.Key))
+            {
+                wrong.Add($"{row.Key} has no floor in the schema, but the validator refuses -1");
+            }
+
+            if (row.Max is { } max)
+            {
+                if (!Refuses(With(job, row.Key, max + 1), row.Key))
+                {
+                    wrong.Add($"{row.Key} = {max + 1} is above the schema's ceiling and the validator accepts it");
+                }
+
+                if (Refuses(With(job, row.Key, max), row.Key))
+                {
+                    wrong.Add($"{row.Key} = {max} is the schema's ceiling and the validator refuses it");
+                }
+            }
+        }
+
+        wrong.ShouldBeEmpty();
+
+    }
+
+    /// <summary>
+    /// Every choice the schedule row offers is one the binder reads, size included.
+    /// </summary>
+    /// <remarks>
+    /// The binder accepted <c>schedule = "size"</c> - its own remedy lists it - while the schema
+    /// offered five choices, so a form built from the schema could not show a job the file was
+    /// allowed to hold.
+    /// </remarks>
+    [Fact]
+    public void ScheduleAcceptsSizeBecauseTheBinderDoes()
+    {
+        var row = JobSchema.Find("schedule").ShouldNotBeNull();
+        row.Choices.ShouldContain("size");
+
+        foreach (var choice in row.Choices)
+        {
+            Enum.TryParse<Schedule>(choice, ignoreCase: true, out var parsed).ShouldBeTrue(choice);
+
+            var bag = new DiagnosticBag();
+            var job = ConfigBinder.BindJob(TomlFile.Parse(
+                $"schema = 1\n\n[job]\nname = \"x\"\npaths = [\"C:/logs/*.log\"]\nschedule = \"{choice}\"\n", "x.toml"), bag);
+
+            SettingsMerge.Resolve(job.ShouldNotBeNull(), null).Schedule.ShouldBe(parsed, choice);
+        }
+    }
+
+    [Fact]
+    public void EveryCountedUnitSitsOnAnInteger() =>
+        JobSchema.Keys
+            .Where(row => row.Unit != JobKeyUnit.None)
+            .ShouldAllBe(row => row.Kind == JobKeyKind.Integer);
 }
