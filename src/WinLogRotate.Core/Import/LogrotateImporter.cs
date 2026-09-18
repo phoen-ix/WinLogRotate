@@ -22,7 +22,7 @@ public sealed record ImportedJob
 /// <remarks>
 /// <para>
 /// One way, deliberately. The Windows-specific keys - <c>lockstrategy</c>, <c>livefiles</c>,
-/// <c>createsddl</c> - have no representation in logrotate's syntax, so a round trip would be
+/// <c>allowdangerous</c> - have no representation in logrotate's syntax, so a round trip would be
 /// lossy in a way that is worse than not offering it at all.
 /// </para>
 /// <para>
@@ -135,7 +135,7 @@ public static class LogrotateImporter
         body.AppendLine("# guessed at. Review them, then set enabled = true.");
         body.AppendLine();
         body.AppendLine("[job]");
-        body.AppendLine(CultureInfo.InvariantCulture, $"name  = \"{name}\"");
+        body.AppendLine(CultureInfo.InvariantCulture, $"name  = {TomlString(name)}");
         body.AppendLine("kind  = \"rotate\"");
 
         body.AppendLine("paths = [");
@@ -153,7 +153,7 @@ public static class LogrotateImporter
                 continue;
             }
 
-            body.AppendLine(CultureInfo.InvariantCulture, $"    \"{windows}\",");
+            body.AppendLine(CultureInfo.InvariantCulture, $"    {TomlString(windows)},");
             pathsWritten++;
         }
 
@@ -198,7 +198,7 @@ public static class LogrotateImporter
                     break;
 
                 case "size" or "minsize" or "maxsize":
-                    body.AppendLine(CultureInfo.InvariantCulture, $"{directive.ToLowerInvariant()} = \"{argument}\"");
+                    body.AppendLine(CultureInfo.InvariantCulture, $"{directive.ToLowerInvariant()} = {TomlString(argument)}");
                     break;
 
                 case "compress":
@@ -235,8 +235,21 @@ public static class LogrotateImporter
                     body.AppendLine("lockstrategy = \"copy\"");
                     break;
                 case "olddir":
-                    body.AppendLine(CultureInfo.InvariantCulture,
-                        $"olddir = \"{ToWindowsPath(argument) ?? argument}\"");
+                    if (ToWindowsPath(argument) is { } archiveDir)
+                    {
+                        body.AppendLine(CultureInfo.InvariantCulture, $"olddir = {TomlString(archiveDir)}");
+                    }
+                    else
+                    {
+                        // Passed through as written, a POSIX olddir became a live key: it
+                        // resolves relative to the log directory here, so the archives went to
+                        // C:\logs\var\log\old without anybody having chosen that.
+                        warnings.Add($"'olddir {argument}' is a POSIX path with no Windows equivalent.");
+                        needsReview = true;
+                        body.AppendLine(CultureInfo.InvariantCulture,
+                            $"# TODO: olddir '{argument}' has no Windows equivalent - name a Windows directory, or leave the archives beside the logs.");
+                    }
+
                     break;
                 case "createolddir":
                     body.AppendLine("createolddir = true");
@@ -255,7 +268,7 @@ public static class LogrotateImporter
                     }
                     else
                     {
-                        body.AppendLine(CultureInfo.InvariantCulture, $"dateformat = \"{translated}\"");
+                        body.AppendLine(CultureInfo.InvariantCulture, $"dateformat = {TomlString(translated)}");
                     }
 
                     break;
@@ -271,7 +284,7 @@ public static class LogrotateImporter
                 case "create":
                     warnings.Add($"'create {argument}' is approximated: Windows has no mode bits.");
                     body.AppendLine(CultureInfo.InvariantCulture, $"# create {argument}");
-                    body.AppendLine("#   Approximated as an ACL. Use createsddl for an exact one.");
+                    body.AppendLine("#   There are no mode bits here: a new log inherits its directory's ACL. Set that instead.");
                     break;
 
                 case "sharedscripts" or "nosharedscripts":
@@ -316,7 +329,7 @@ public static class LogrotateImporter
                     body.AppendLine(CultureInfo.InvariantCulture, $"#   {line.Trim()}");
                 }
 
-                body.AppendLine(CultureInfo.InvariantCulture, $"{which.ToLowerInvariant()} = [\"{hook}\"]");
+                body.AppendLine(CultureInfo.InvariantCulture, $"{which.ToLowerInvariant()} = [{TomlString(hook)}]");
                 continue;
             }
 
@@ -480,6 +493,50 @@ public static class LogrotateImporter
     }
 
     /// <summary>
+    /// The TOML spelling of a string value.
+    /// </summary>
+    /// <remarks>
+    /// A basic string, escaped, unless the value holds a backslash and can be a literal string -
+    /// then the literal form, because <c>'\\srv\share\logs'</c> is what the operator reviewing
+    /// the file wrote and <c>"\\\\srv\\share\\logs"</c> is not. Every site used to interpolate
+    /// into <c>"..."</c> unescaped, so a UNC path became a run of invalid escapes and
+    /// <see cref="Check"/> refused the whole job as a defect in the importer.
+    /// </remarks>
+    internal static string TomlString(string value)
+    {
+        if (value.Contains('\\') && !value.Contains('\'') && !value.Any(char.IsControl))
+        {
+            return "'" + value + "'";
+        }
+
+        var sb = new StringBuilder(value.Length + 2).Append('"');
+        foreach (var c in value)
+        {
+            switch (c)
+            {
+                case '"': sb.Append("\\\""); break;
+                case '\\': sb.Append("\\\\"); break;
+                case '\n': sb.Append("\\n"); break;
+                case '\r': sb.Append("\\r"); break;
+                case '\t': sb.Append("\\t"); break;
+                default:
+                    if (char.IsControl(c))
+                    {
+                        sb.Append("\\u").Append(((int)c).ToString("X4", CultureInfo.InvariantCulture));
+                    }
+                    else
+                    {
+                        sb.Append(c);
+                    }
+
+                    break;
+            }
+        }
+
+        return sb.Append('"').ToString();
+    }
+
+    /// <summary>
     /// Maps a POSIX path onto Windows where an obvious equivalent exists.
     /// </summary>
     /// <remarks>
@@ -487,6 +544,7 @@ public static class LogrotateImporter
     /// useful, so it is reported rather than invented - a job pointed at a guessed directory
     /// either does nothing or does something surprising.
     /// </remarks>
+
     private static string? ToWindowsPath(string path)
     {
         if (path.Length >= 2 && char.IsAsciiLetter(path[0]) && path[1] == ':')

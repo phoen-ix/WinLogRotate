@@ -90,7 +90,7 @@ in a config file requires, which in practice means a per-machine install.
 | Directive | Why, and what to use instead |
 |---|---|
 | `su user group` | Windows has no `setuid`. `LogonUser` needs a password; the service-logon path needs `SE_TCB_NAME` and yields a token that cannot open files. Parsed, warned about, ignored. **Instead:** run the whole tool under the identity you want, via the scheduled task's principal or a gMSA. |
-| `create mode owner group` | There are no mode bits. A POSIX mode is approximated as a DACL and marked protected, which is honest but lossy. **Instead:** `createsddl` and `createowner`. |
+| `create mode owner group` | There are no mode bits. A POSIX mode is approximated as a DACL and marked protected, which is honest but lossy. **Instead:** set the ACL on the log directory once; a new log inherits it. |
 | `shred` | Not implemented; no `sdelete` dependency is taken. |
 | `compresscmd` / `uncompresscmd` | Windows ships no `gzip.exe`. Compression is in-process. A config naming `/bin/gzip` is translated with a warning. |
 
@@ -152,7 +152,8 @@ a service forty times for a directory of forty logs.
 
 The other divergence is what a script *is*. There is no shell, so a hook is a program and its
 arguments, a service control code or a named event - never a shell fragment. `winlogrotate import`
-translates `kill -HUP` and `kill -USR1` into `service:paramchange:NAME`; anything else is preserved
+translates exactly two shapes - a `systemctl reload NAME`, and a `kill` or `reload` aimed at nginx or
+Apache - into `service:paramchange:NAME`; anything else, a bare `kill -HUP` included, is preserved
 as a `# TODO:` comment with the original quoted beneath, and the job is written `enabled = false`.
 A half-translated script that runs the wrong thing as SYSTEM is worse than one that does not run.
 

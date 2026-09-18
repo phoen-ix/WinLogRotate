@@ -162,7 +162,8 @@ public class LogrotateImporterTests
     /// write a file the loader refused, each of them the ordinary outcome for a real logrotate
     /// configuration rather than an edge case, and all three are now fixed. These two are what
     /// was left after that: a typo logrotate itself would reject, copied verbatim into an integer
-    /// position, and a path containing a quote emitted without escaping it.
+    /// position. (A path containing a quote was the other, until every string went through
+    /// <c>TomlString</c>; <c>AQuoteInAPathIsEscapedRatherThanRefused</c> holds that side now.)
     /// </para>
     /// <para>
     /// Neither was found by thinking about the emit switch. Both are found by reading the file
@@ -171,7 +172,6 @@ public class LogrotateImporterTests
     /// </remarks>
     [Theory]
     [InlineData("rotate notanumber", "notanumber")]
-    [InlineData("olddir C:/arch\"ive", "ive")]
     public void GeneratedTomlThatWillNotLoadIsReported(string directive, string expected)
     {
         var job = Import($$"""
