@@ -88,7 +88,11 @@ internal static class RawArguments
 
         try
         {
-            var fs = new FileStream(Path.GetFullPath(path), FileMode.Create, FileAccess.Write,
+            // Append, not Create. A fresh file appends from its first byte, so a parse error's
+            // envelope lands as before; but the last resort can fire after a verb's own sink has
+            // written events to this same file, and truncating those would hand the reader
+            // tailing it an envelope in place of the lines it was following.
+            var fs = new FileStream(Path.GetFullPath(path), FileMode.Append, FileAccess.Write,
                 FileShare.ReadWrite | FileShare.Delete);
             return new StreamWriter(fs) { AutoFlush = true };
         }
