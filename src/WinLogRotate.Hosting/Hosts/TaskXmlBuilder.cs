@@ -134,7 +134,14 @@ public static class TaskXmlBuilder
                     new XElement(Ns + "DisallowStartIfOnBatteries", !definition.RunOnBatteries),
                     new XElement(Ns + "StopIfGoingOnBatteries", !definition.RunOnBatteries),
 
-                    new XElement(Ns + "AllowHardTerminate", false),
+                    // Task Scheduler's own default, restored. It was false here for a release,
+                    // which made ExecutionTimeLimit below advisory: at the limit the scheduler
+                    // then only asks the process to close, and a console process with no window
+                    // has nothing that hears the request. A wedged rotation was never killed,
+                    // held the gate for days, and the 0x41306 reasoning in docs/hooks.md and
+                    // GateHoldRule rested on a kill that did not happen. True makes the limit
+                    // a kill.
+                    new XElement(Ns + "AllowHardTerminate", true),
 
                     // The anacron equivalent. Without it, a machine that was switched off at
                     // the scheduled time simply skips that day and logs Event ID 153,

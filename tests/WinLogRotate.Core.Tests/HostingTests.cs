@@ -54,6 +54,20 @@ public class TaskXmlBuilderTests
         Setting(Build(), "ExecutionTimeLimit").ShouldBe("PT1H");
 
     /// <summary>
+    /// The time limit is a kill, not a request.
+    /// </summary>
+    /// <remarks>
+    /// With <c>AllowHardTerminate</c> false, Task Scheduler only asks the process to close at
+    /// <c>ExecutionTimeLimit</c>, and a console process with no window has nothing that hears the
+    /// request. So the limit the previous test pins was advisory: a wedged rotation was never
+    /// killed, held the gate for days, and everything reasoned from <c>0x41306</c> - the hook
+    /// clamp, the gate-hold rule, the run-deadline flag - described a kill that did not happen.
+    /// </remarks>
+    [Fact]
+    public void TheTimeLimitKillsRatherThanAsks() =>
+        Setting(Build(), "AllowHardTerminate").ShouldBe("true");
+
+    /// <summary>
     /// The task's time limit and the deadline it passes to the run must denote the same span.
     /// </summary>
     /// <remarks>

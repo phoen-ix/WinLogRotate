@@ -476,7 +476,8 @@ function Assert-TaskHardening {
         Every one of these fails silently. StartWhenAvailable off means a machine that was
         switched off skips the day and logs Event ID 153 that nobody reads; both battery
         settings default to true and stop the task on any laptop or any VM whose host reports a
-        battery; ExecutionTimeLimit defaults to PT72H.
+        battery; ExecutionTimeLimit defaults to PT72H, and without AllowHardTerminate it is only
+        a request to close, which a windowless console process never hears.
     #>
     param(
         [Parameter(Mandatory)][string] $TaskPath,
@@ -491,6 +492,7 @@ function Assert-TaskHardening {
     if ($s.DisallowStartIfOnBatteries) { throw 'DisallowStartIfOnBatteries is on: the task would not run on a laptop or a VM reporting a battery.' }
     if ($s.StopIfGoingOnBatteries) { throw 'StopIfGoingOnBatteries is on: the task would be killed mid-rotation.' }
     if ($s.ExecutionTimeLimit -ne 'PT1H') { throw "ExecutionTimeLimit is '$($s.ExecutionTimeLimit)', expected PT1H (the default is PT72H)." }
+    if (-not $s.AllowHardTerminate) { throw 'AllowHardTerminate is off: at ExecutionTimeLimit the task would only be asked to close, which a windowless console process ignores.' }
     if ($s.MultipleInstances -ne 'IgnoreNew') { throw "MultipleInstances is '$($s.MultipleInstances)', expected IgnoreNew." }
 
     # The deadline the task passes to the run must be the deadline the task actually enforces.
