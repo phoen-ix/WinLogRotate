@@ -77,8 +77,24 @@ Two further rules, for the same reason:
 - **Batch files are refused**, because `CreateProcess` cannot start one. Run it through the
   interpreter that can: `command:C:\Windows\System32\cmd.exe /c C:\tools\reload.bat`.
 
-Arguments are passed as a list, not as a joined string, so an argument containing a space or a
-quote cannot become two arguments — or part of the program name.
+Arguments are split the way the C runtime splits a Windows command line — the rules every
+program you have ever passed a quoted argument to already reads its own arguments by — and are
+then passed as a list, not re-joined, so an argument containing a space or a quote cannot become
+two arguments or part of the program name. Inside the arguments:
+
+- double quotes group, so `"C:\Program Files\a b.txt"` is one argument;
+- `\"` is a literal quote, so `--msg "say \"hi\""` reaches the program as `say "hi"`;
+- a run of backslashes directly before a quote is halved: `\\"` is one backslash and a real
+  quote, `\\\"` is one backslash and a literal quote;
+- backslashes anywhere else are themselves, so a path is never doubled — `C:\a\b` is `C:\a\b`;
+- `""` inside a quoted argument is one literal quote.
+
+Write the hook as a TOML literal string (`'...'`) so the backslashes and quotes reach the splitter
+as written:
+
+```toml
+postrotate = ['command:C:\tools\notify.exe --msg "say \"hi\""']
+```
 
 ### `event:` opens, never creates
 

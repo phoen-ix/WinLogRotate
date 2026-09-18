@@ -209,4 +209,48 @@ public sealed class CommandLineTests
         program.ShouldBe(@"\\server\share\reload.exe");
         arguments.ShouldBe(["-q"]);
     }
+
+    // ---- quotes inside an argument -----------------------------------------------------------
+
+    /// <summary>
+    /// A quote escaped the way every Windows program expects stays inside its argument.
+    /// </summary>
+    /// <remarks>
+    /// Every <c>"</c> used to toggle quoting and vanish, so there was no way to write one into an
+    /// argument at all: this hook reached its program as <c>--msg</c> and <c>say \hi\</c>, while
+    /// docs/hooks.md said an argument containing a quote could not be split. The rule is the C
+    /// runtime's, because it is the one an operator has already met.
+    /// </remarks>
+    [Fact]
+    public void AnEscapedQuoteStaysInsideItsArgument()
+    {
+        CommandLine.TrySplit(@"C:\tools\notify.exe --msg ""say \""hi\""""",
+            out _, out var arguments, out _, out _).ShouldBeTrue();
+
+        arguments.ShouldBe(["--msg", "say \"hi\""]);
+    }
+
+    /// <summary>
+    /// The four C-runtime rules, one row each.
+    /// </summary>
+    /// <remarks>
+    /// A backslash-quote is a literal quote; 2n backslashes before a quote are n backslashes and
+    /// the quote counts; 2n+1 are n backslashes and a literal quote; a doubled quote inside a
+    /// quoted argument is one literal quote; and a backslash not before a quote is itself, so a
+    /// path is never doubled. Expected arguments are written <c>|</c>-separated, because a theory
+    /// row cannot carry an array.
+    /// </remarks>
+    [Theory]
+    [InlineData(@"a\""b", "a\"b")]
+    [InlineData(@"""C:\dir\\"" next", "C:\\dir\\|next")]
+    [InlineData(@"a\\\""b", "a\\\"b")]
+    [InlineData(@"""say """"hi""""""", "say \"hi\"")]
+    [InlineData(@"C:\a\\b", "C:\\a\\\\b")]
+    public void TheSplitFollowsTheCRuntimeRules(string tail, string expected)
+    {
+        CommandLine.TrySplit(@"C:\tools\x.exe " + tail,
+            out _, out var arguments, out _, out _).ShouldBeTrue();
+
+        arguments.ShouldBe(expected.Split('|'));
+    }
 }

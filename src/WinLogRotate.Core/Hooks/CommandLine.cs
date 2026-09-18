@@ -221,13 +221,26 @@ public static class CommandLine
     }
 
     /// <summary>
-    /// Splits the argument tail on whitespace, with double quotes grouping.
+    /// Splits the argument tail the way the C runtime splits a Windows command line.
     /// </summary>
     /// <remarks>
+    /// <para>
     /// The result is handed to <c>ProcessStartInfo.ArgumentList</c>, which re-quotes each element
     /// correctly on the way out - so this only has to recover what the operator meant, not produce
     /// something a command interpreter would accept. There is no interpreter involved at any
     /// point, which is the property the whole scheme is built on.
+    /// </para>
+    /// <para>
+    /// "What the operator meant" is decided by the rules every Windows program already reads its
+    /// own arguments by, because those are the ones an operator has met before. Until this every
+    /// <c>"</c> toggled quoting and vanished, so there was no way to put a quote inside an
+    /// argument at all: <c>--msg "say \"hi\""</c> reached the program as <c>say \hi\</c>, and
+    /// docs/hooks.md was promising otherwise. The rules are: a run of backslashes before a quote
+    /// is halved, and if it was odd the quote is a literal one; <c>\"</c> is therefore a quote,
+    /// <c>\\"</c> is a backslash and a real quote; backslashes anywhere else are literal, so a
+    /// path never needs doubling; and <c>""</c> inside a quoted argument is one literal quote. An
+    /// unterminated quote runs to the end, as the runtime's does.
+    /// </para>
     /// </remarks>
     private static string[] SplitArguments(string tail)
     {
@@ -236,10 +249,59 @@ public static class CommandLine
         var quoted = false;
         var any = false;
 
-        foreach (var c in tail)
+        for (var i = 0; i < tail.Length; i++)
         {
+            var c = tail[i];
+
+            if (c == '\\')
+            {
+                // Count the run. What it means depends on whether a quote ends it, so nothing is
+                // emitted until that is known.
+                var run = 0;
+                while (i < tail.Length && tail[i] == '\\')
+                {
+                    run++;
+                    i++;
+                }
+
+                if (i < tail.Length && tail[i] == '"')
+                {
+                    current.Append('\\', run / 2);
+
+                    if (run % 2 == 1)
+                    {
+                        // An odd run: the last backslash escaped the quote, which is literal.
+                        current.Append('"');
+                        any = true;
+                        continue;
+                    }
+
+                    // An even run: the quote is a real one, handled below as if the backslashes
+                    // had not been there.
+                    i--;
+                    any = true;
+                    continue;
+                }
+
+                // Not before a quote: every backslash is itself.
+                current.Append('\\', run);
+                any = true;
+                i--;
+                continue;
+            }
+
             if (c == '"')
             {
+                if (quoted && i + 1 < tail.Length && tail[i + 1] == '"')
+                {
+                    // "" inside a quoted argument is one literal quote, and the argument stays
+                    // quoted - the post-2008 runtime's reading, and .NET's own.
+                    current.Append('"');
+                    i++;
+                    any = true;
+                    continue;
+                }
+
                 quoted = !quoted;
                 any = true;
                 continue;
