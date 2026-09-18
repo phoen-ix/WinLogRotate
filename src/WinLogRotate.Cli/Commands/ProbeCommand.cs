@@ -24,6 +24,19 @@ internal static class ProbeCommand
                 ctx, "probe", "it asks the OS about share modes.");
         }
 
+        return Run(ctx, path, LockProbe.Classify);
+    }
+
+    /// <summary>
+    /// The verb, with its one question to the OS handed in.
+    /// </summary>
+    /// <remarks>
+    /// The Windows guard stays on the public overload because <see cref="LockProbe"/> is what
+    /// needs Windows. Everything from the verdict on is a decision about what to say, and a test
+    /// on the Linux leg can hand in a verdict and check what the verb makes of it.
+    /// </remarks>
+    internal static int Run(CommandContext ctx, string path, Func<string, ProbeResult> classify)
+    {
         if (!File.Exists(path))
         {
             ctx.Output.Diagnostic(new CliDiagnostic
@@ -36,7 +49,7 @@ internal static class ProbeCommand
             return ctx.Output.Complete<ProbeResultDto>("probe", ExitCode.Errors, null);
         }
 
-        var result = LockProbe.Classify(path);
+        var result = classify(path);
 
         ctx.Output.Line($"{path}");
         ctx.Output.Line($"  verdict     {result.Verdict}");
@@ -75,12 +88,19 @@ internal static class ProbeCommand
 
         if (result.Verdict == ProbeVerdict.None)
         {
+            // A Warning, because the verb exits 0: it was asked what the file supports, and it
+            // answered. docs/automation.md says "ok" is exitCode == 0 and that a deliberate
+            // nothing explains itself in the diagnostics; an Error riding on exit 0 was the one
+            // shape that contract has no reading for, and CliResult showed a failure over a
+            // success. The condition is the same one the Copy verdict warns about, one step worse.
             ctx.Output.Diagnostic(new CliDiagnostic
             {
-                Severity = Severity.Error,
+                Severity = Severity.Warning,
                 Code = DiagnosticCode.FileLocked,
                 Message = "This file cannot be opened at all while its writer holds it.",
                 Path = path,
+                Remedy = "No lockstrategy can rotate it while that writer runs. The application has to "
+                       + "release it, or roll its own logs and let kind = \"manage\" tidy the results.",
             });
         }
 
