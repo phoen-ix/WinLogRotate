@@ -1464,7 +1464,7 @@ public partial class ArchitectureTests
         [nameof(DiagnosticCode.ConfigInvalid)] = ["ConfigBinder.cs", "ConfigLoader.cs", "ConfigValidator.cs", "Diagnose.cs", "ImportCommand.cs", "LogrotateImporter.cs", "SecretCommand.cs"],
         [nameof(DiagnosticCode.NoJobsConfigured)] = ["ConfigLoader.cs"],
         [nameof(DiagnosticCode.NotSupportedHere)] = ["Refusals.cs", "SecretCommand.cs"],
-        [nameof(DiagnosticCode.InternalError)] = ["CommandContext.cs", "HostCommand.cs"],
+        [nameof(DiagnosticCode.InternalError)] = ["CommandContext.cs", "HostCommand.cs", "UnhandledReporter.cs"],
         [nameof(DiagnosticCode.ArgumentUnusable)] = ["ParseErrorReporter.cs", "Refusals.cs", "SecretCommand.cs"],
         [nameof(DiagnosticCode.AlreadyRunning)] = ["GateRefusal.cs"],
         [nameof(DiagnosticCode.RotationGateHeld)] = ["DoctorCommand.cs", "GateRefusal.cs"],

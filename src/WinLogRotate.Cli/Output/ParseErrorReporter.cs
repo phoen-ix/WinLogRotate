@@ -1,4 +1,5 @@
 using System.CommandLine;
+using WinLogRotate.Cli.Commands;
 using WinLogRotate.Contracts;
 using WinLogRotate.Core;
 
@@ -21,13 +22,17 @@ internal static class ParseErrorReporter
 {
     public static int Report(ParseResult parse, IReadOnlyList<string> args)
     {
-        var verb = parse.CommandResult.Command.Name;
-        var help = verb is "winlogrotate" or "" ? "winlogrotate --help" : $"winlogrotate {verb} --help";
+        // The verb as a person wrote it, which is what every envelope carries. The leaf
+        // command's own name made "host status --nope" report verb "status" and send the caller
+        // to the help of a verb called 'status', which does not exist at the root.
+        var isRoot = ReferenceEquals(parse.CommandResult, parse.RootCommandResult);
+        var verb = CommandContext.VerbName(parse);
+        var help = isRoot ? "winlogrotate --help" : $"winlogrotate {verb} --help";
         var remedy = $"Run '{help}' for usage.";
 
-        if (WantsJson(args))
+        if (RawArguments.WantsJson(args))
         {
-            return AsEnvelope(parse, verb, remedy);
+            return AsEnvelope(parse, args, verb, remedy);
         }
 
         foreach (var error in parse.Errors)
@@ -41,24 +46,6 @@ internal static class ParseErrorReporter
     }
 
     /// <summary>
-    /// Read from the raw arguments, because the parse that would have told us failed.
-    /// </summary>
-    /// <remarks>
-    /// <para>
-    /// This is the one place in the product that cannot ask <c>ParseResult</c> what the caller
-    /// wanted: the question is being asked <i>because</i> the parse did not succeed, and a
-    /// mistyped flag anywhere on the line can leave <c>--json</c> unbound. Scanning the tokens is
-    /// crude and is the only thing available.
-    /// </para>
-    /// <para>
-    /// <c>--json-stream</c> counts, because <c>GlobalOptions</c> documents it as implying
-    /// <c>--json</c>.
-    /// </para>
-    /// </remarks>
-    private static bool WantsJson(IReadOnlyList<string> args) =>
-        args.Any(a => a is "--json" or "--json-stream");
-
-    /// <summary>
     /// The same refusal, in the channel the caller asked for.
     /// </summary>
     /// <remarks>
@@ -70,14 +57,19 @@ internal static class ParseErrorReporter
     /// to stderr"; this was the exception, and it is the one a script is likeliest to hit first.
     /// </para>
     /// <para>
+    /// To the <c>--output</c> file where one was named, for the same reason
+    /// <c>CommandContext</c> sends a verb's envelope there: the caller that names one is an
+    /// elevated child whose stdout nobody can read.
+    /// </para>
+    /// <para>
     /// The exit code does not change. A parse error means nothing was attempted, which is what
     /// <see cref="ExitCode.ConfigInvalid"/> says, and the argument for keeping it distinct from 1
     /// is unaffected by how it is rendered.
     /// </para>
     /// </remarks>
-    private static int AsEnvelope(ParseResult parse, string verb, string remedy)
+    private static int AsEnvelope(ParseResult parse, IReadOnlyList<string> args, string verb, string remedy)
     {
-        var sink = new JsonOutputSink(verbose: false, stream: false);
+        var sink = new JsonOutputSink(verbose: false, stream: false, RawArguments.OpenOutput(args));
 
         foreach (var error in parse.Errors)
         {

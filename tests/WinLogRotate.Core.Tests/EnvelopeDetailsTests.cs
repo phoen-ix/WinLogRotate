@@ -265,9 +265,9 @@ public sealed class EnvelopeDetailsTests : IDisposable
     /// The last resort reaches the dialog too.
     /// </summary>
     /// <remarks>
-    /// The inverse case: <c>UnhandledReporter</c> runs when the guard itself was not reached, so
-    /// it writes to stderr and emits no envelope at all. Driven through the real reporter rather
-    /// than a hand-written string, so this is the product's own output.
+    /// The inverse case: <c>UnhandledReporter</c> runs when the guard itself was not reached, and
+    /// without <c>--json</c> it writes to stderr and emits no envelope. Driven through the real
+    /// reporter rather than a hand-written string, so this is the product's own output.
     /// </remarks>
     [Fact]
     public void TheLastResortReachesTheDialogToo()
@@ -279,7 +279,7 @@ public sealed class EnvelopeDetailsTests : IDisposable
         try
         {
             Console.SetError(captured);
-            exit = Cli.Output.UnhandledReporter.Report(new IOException("a torn thing"));
+            exit = Cli.Output.UnhandledReporter.Report(new IOException("a torn thing"), ["run"]);
         }
         finally
         {

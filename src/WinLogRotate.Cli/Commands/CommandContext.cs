@@ -93,10 +93,17 @@ internal sealed class CommandContext(IOutputSink output, ParseResult parse)
     /// The verb as a person wrote it, so "notify status" does not come back as "status".
     /// </summary>
     /// <remarks>
+    /// <para>
     /// Walks up from the command that was parsed and drops the root, which is what every verb
     /// already passes to Complete by hand.
+    /// </para>
+    /// <para>
+    /// Internal for the two reporters that answer without a context - a parse error, and an
+    /// exception nothing guarded. Each used to name the leaf command instead, so "host status
+    /// --nope" reported verb "status" and sent the caller to a verb that does not exist.
+    /// </para>
     /// </remarks>
-    private static string VerbName(ParseResult parse)
+    internal static string VerbName(ParseResult parse)
     {
         var parts = new List<string>();
 

@@ -8,9 +8,12 @@ internal static class Program
 {
     private static int Main(string[] args)
     {
+        // Kept outside the try so the last resort can name the verb where parsing got that far.
+        ParseResult? parse = null;
+
         try
         {
-            var parse = CommandTree.Build().Parse(args);
+            parse = CommandTree.Build().Parse(args);
 
             // Handle parse failures ourselves rather than letting System.CommandLine's default
             // action exit 1 - see ParseErrorReporter for why that distinction matters.
@@ -28,7 +31,7 @@ internal static class Program
             // Building the tree and parsing happen outside every action, so the guard cannot see
             // them. CommandTree calls SecretPlatform.ForThisMachine() while constructing the
             // secret verb, which is the one thing here that touches the machine.
-            return UnhandledReporter.Report(e);
+            return UnhandledReporter.Report(e, args, parse);
         }
     }
 }

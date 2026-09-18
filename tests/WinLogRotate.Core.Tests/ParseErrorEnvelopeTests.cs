@@ -23,14 +23,38 @@ namespace WinLogRotate.Core.Tests;
 /// short-circuits here and produces no envelope.
 /// </para>
 /// </remarks>
-public sealed class ParseErrorEnvelopeTests
+public sealed class ParseErrorEnvelopeTests : IDisposable
 {
+    private readonly DirectoryInfo _dir = Directory.CreateTempSubdirectory("winlogrotate-parse-");
+
+    public void Dispose()
+    {
+        try { _dir.Delete(recursive: true); } catch (IOException) { }
+    }
+
     /// <summary>Runs the reporter with both streams captured, as a caller receives them.</summary>
     private static (int Exit, string Out, string Error) Report(params string[] args)
     {
         var parse = Cli.Commands.CommandTree.Build().Parse(args);
         parse.Errors.ShouldNotBeEmpty("the fixture has to be a parse error");
 
+        return Captured(() => ParseErrorReporter.Report(parse, args));
+    }
+
+    /// <summary>
+    /// Runs the last resort the way <c>Program</c> reaches it: with the raw arguments, and with
+    /// the parse where one was reached.
+    /// </summary>
+    private static (int Exit, string Out, string Error) Unhandled(
+        Exception e, bool parsed, params string[] args)
+    {
+        var parse = parsed ? Cli.Commands.CommandTree.Build().Parse(args) : null;
+
+        return Captured(() => UnhandledReporter.Report(e, args, parse));
+    }
+
+    private static (int Exit, string Out, string Error) Captured(Func<int> report)
+    {
         var beforeOut = Console.Out;
         var beforeError = Console.Error;
         var captureOut = new StringWriter();
@@ -40,7 +64,7 @@ public sealed class ParseErrorEnvelopeTests
         {
             Console.SetOut(captureOut);
             Console.SetError(captureError);
-            return (ParseErrorReporter.Report(parse, args), captureOut.ToString(), captureError.ToString());
+            return (report(), captureOut.ToString(), captureError.ToString());
         }
         finally
         {
@@ -131,5 +155,134 @@ public sealed class ParseErrorEnvelopeTests
             .ShouldContain("rotate-everything");
         diagnostic.GetProperty("remedy").GetString().ShouldNotBeNull()
             .ShouldNotContain("rotate-everything");
+    }
+
+    /// <summary>
+    /// The verb is the one a person wrote, and so is the help they are sent to.
+    /// </summary>
+    /// <remarks>
+    /// The reporter named the leaf command, so <c>host status --nope</c> answered with
+    /// <c>verb: "status"</c> and the remedy <c>winlogrotate status --help</c> - a verb that does not
+    /// exist, so the remedy for one error was a second one. Every other envelope carries the
+    /// space-separated verb, and <c>docs/automation.md</c> says so.
+    /// </remarks>
+    [Fact]
+    public void TheVerbIsTheOneAPersonWrote()
+    {
+        var (_, stdout, _) = Report("host", "status", "--nope", "--json");
+
+        using var document = JsonDocument.Parse(stdout);
+        var root = document.RootElement;
+
+        root.GetProperty("verb").GetString().ShouldBe("host status");
+
+        var diagnostic = root.GetProperty("diagnostics").EnumerateArray().ShouldHaveSingleItem();
+        diagnostic.GetProperty("remedy").GetString().ShouldNotBeNull()
+            .ShouldContain("winlogrotate host status --help", Case.Sensitive, "the help that exists");
+    }
+
+    /// <summary>
+    /// <c>--output</c> sends the envelope to the file, and nothing to stdout.
+    /// </summary>
+    /// <remarks>
+    /// The one caller that passes <c>--output</c> is the GUI's elevated child, whose stdout the
+    /// GUI cannot read. Its parse errors went there anyway, so the events file stayed empty and
+    /// the dialog said "the configuration has errors" with nothing underneath - the shape the
+    /// GUI is least able to explain, about a mistake in its own command line.
+    /// </remarks>
+    [Fact]
+    public void OutputSendsTheEnvelopeToTheFile()
+    {
+        var file = Path.Combine(_dir.FullName, "events.ndjson");
+
+        var (exit, stdout, stderr) = Report("run", "--dry-runn", "--json-stream", "--output", file);
+
+        exit.ShouldBe(ExitCode.ConfigInvalid);
+        stdout.ShouldBeEmpty("the envelope went to the file the caller named");
+        stderr.ShouldBeEmpty();
+
+        using var document = JsonDocument.Parse(File.ReadAllText(file));
+        var root = document.RootElement;
+
+        root.GetProperty("verb").GetString().ShouldBe("run");
+        root.GetProperty("exitCode").GetInt32().ShouldBe(ExitCode.ConfigInvalid);
+        root.GetProperty("diagnostics").EnumerateArray().ShouldHaveSingleItem()
+            .GetProperty("message").GetString().ShouldNotBeNull().ShouldContain("--dry-runn");
+    }
+
+    /// <summary>
+    /// A defect that escaped even the guard answers in JSON when JSON was asked for.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// The last resort wrote to stderr whatever the caller asked, so a script promised "one
+    /// object on stdout" got nothing on stdout and exit 4 - the exact failure the guard was added
+    /// to stop, surviving on the one path the guard cannot reach.
+    /// </para>
+    /// <para>
+    /// The diagnostic is the guard's own: <c>LR1006</c>, the exception's type and message, so a
+    /// defect reads the same whichever side of the guard it fell on.
+    /// </para>
+    /// </remarks>
+    [Fact]
+    public void ADefectUnderJsonIsAnEnvelope()
+    {
+        var (exit, stdout, stderr) = Unhandled(
+            new InvalidOperationException("a torn thing"), parsed: true, "run", "--json");
+
+        exit.ShouldBe(ExitCode.InternalError);
+        stderr.ShouldBeEmpty("a --json verb writes nothing to stderr");
+
+        using var document = JsonDocument.Parse(stdout);
+        var root = document.RootElement;
+
+        root.GetProperty("ok").GetBoolean().ShouldBeFalse();
+        root.GetProperty("exitCode").GetInt32().ShouldBe(ExitCode.InternalError);
+        root.GetProperty("verb").GetString().ShouldBe("run");
+
+        var diagnostic = root.GetProperty("diagnostics").EnumerateArray().ShouldHaveSingleItem();
+        diagnostic.GetProperty("severity").GetString().ShouldBe(nameof(Severity.Error));
+        diagnostic.GetProperty("code").GetString().ShouldBe(DiagnosticCode.InternalError);
+        var message = diagnostic.GetProperty("message").GetString().ShouldNotBeNull();
+        message.ShouldContain(nameof(InvalidOperationException), Case.Sensitive, "the type is the only structural clue");
+        message.ShouldContain("a torn thing");
+    }
+
+    /// <summary>The same defect under <c>--output</c> reaches the file the GUI is tailing.</summary>
+    [Fact]
+    public void ADefectUnderOutputReachesTheFile()
+    {
+        var file = Path.Combine(_dir.FullName, "events.ndjson");
+
+        var (exit, stdout, _) = Unhandled(
+            new InvalidOperationException("a torn thing"), parsed: true,
+            "run", "--json-stream", "--output", file);
+
+        exit.ShouldBe(ExitCode.InternalError);
+        stdout.ShouldBeEmpty();
+
+        using var document = JsonDocument.Parse(File.ReadAllText(file));
+        document.RootElement.GetProperty("exitCode").GetInt32().ShouldBe(ExitCode.InternalError);
+    }
+
+    /// <summary>
+    /// A defect before the tree was built still answers, with nothing to name the verb from.
+    /// </summary>
+    /// <remarks>
+    /// <c>CommandTree.Build</c> touches the machine while constructing the secret verb, so this
+    /// is a real path. The verb is not asserted: it is the executable's name, which is not the
+    /// same string under the test host as in the field.
+    /// </remarks>
+    [Fact]
+    public void ADefectBeforeTheTreeWasBuiltStillAnswers()
+    {
+        var (exit, stdout, _) = Unhandled(
+            new InvalidOperationException("no tree"), parsed: false, "run", "--json");
+
+        exit.ShouldBe(ExitCode.InternalError);
+
+        using var document = JsonDocument.Parse(stdout);
+        document.RootElement.GetProperty("diagnostics").EnumerateArray().ShouldHaveSingleItem()
+            .GetProperty("code").GetString().ShouldBe(DiagnosticCode.InternalError);
     }
 }

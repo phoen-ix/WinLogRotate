@@ -79,6 +79,11 @@ $ winlogrotate run --dry-runn --json
    "remedy":"Run 'winlogrotate run --help' for usage."}]}
 ```
 
+**A defect answers in JSON too.** Exit 4 carries `LR1006` as its diagnostic in the same envelope,
+even when the exception escaped before the verb was reached, and `--output` is honoured for
+both — a parse error or a defect in an elevated child lands in the file the GUI is tailing,
+not on a console nobody can read.
+
 **Nothing else is written to stdout.** Progress lines, tables and confirmations are suppressed
 under `--json`, so the whole of stdout is one object and `ConvertFrom-Json` can take all of it.
 
