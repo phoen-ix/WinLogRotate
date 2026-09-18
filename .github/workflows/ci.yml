@@ -1239,11 +1239,21 @@ jobs:
           $before = (Get-UninstallEntry -Scope machine).InstallLocation
 
           $seconds = Measure-MutexHeldUpgrade -MutexName $env:ROTATION_MUTEX `
-            -Setup (Resolve-Path setup.exe) -Arguments @('/S','/NORUNTIME') -HoldSeconds 20
+            -Setup (Resolve-Path setup.exe) -Arguments @('/S','/NORUNTIME','/RESTART') -HoldSeconds 20
 
           "  upgrade took {0:N1}s" -f $seconds
           if ($seconds -lt 12) { throw "The upgrade finished in ${seconds}s - it did not wait for the rotation mutex." }
           if ($seconds -gt 90) { throw "The upgrade took ${seconds}s - that is the timeout path, not the mutex." }
+
+          # /RESTART is what an in-app update passes, and its whole job is to bring the window
+          # back once the files are in place. Whether the window then works is the GUI's own
+          # business (this runner may or may not have a Desktop Runtime for it); what is asserted
+          # is that the installer started it, through the shell, and did not wait for it.
+          Wait-Until -TimeoutSeconds 30 -Because '/RESTART to start the GUI after the upgrade' -Condition {
+            $null -ne (Get-Process -Name winlogrotate-gui -ErrorAction SilentlyContinue)
+          }
+          Get-Process -Name winlogrotate-gui -ErrorAction SilentlyContinue | Stop-Process -Force
+          '  /RESTART brought the window back'
 
           $entry = Get-UninstallEntry -Scope machine
           if ($entry.InstallLocation -ne $before) { throw 'The upgrade relocated the install.' }

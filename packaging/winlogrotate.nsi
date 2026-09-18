@@ -644,6 +644,37 @@ Section /o "Desktop shortcut" SEC_DESK
 SectionEnd
 
 ; =======================================================================================
+; After a successful install
+; =======================================================================================
+
+; /RESTART starts the window again once the files are in place. This is what an in-app update
+; passes: the GUI launched `update apply`, which handed over to this installer and exited, and
+; CloseGui then asked the window to close - so nothing is left to bring it back except us.
+;
+; Through explorer.exe, not directly. A per-machine install runs elevated, and a window started
+; by an elevated process inherits that token: the console would then run as administrator for
+; the rest of its life, and everything it launched would too. Handing the path to the shell
+; starts it with the desktop user's ordinary token instead. Server Core has no explorer.exe and
+; no desktop to speak of; there the window is started directly, which is the best that can be
+; done, and it is at least started.
+Function .onInstSuccess
+  Push $0
+  Push $1
+  ClearErrors
+  ${GetParameters} $0
+  ${GetOptions} $0 "/RESTART" $1
+  ${IfNot} ${Errors}
+    ${If} ${FileExists} "$WINDIR\explorer.exe"
+      Exec '"$WINDIR\explorer.exe" "$INSTDIR\${GUI}"'
+    ${Else}
+      Exec '"$INSTDIR\${GUI}"'
+    ${EndIf}
+  ${EndIf}
+  Pop $1
+  Pop $0
+FunctionEnd
+
+; =======================================================================================
 ; Init
 ; =======================================================================================
 
