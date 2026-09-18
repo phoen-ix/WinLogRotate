@@ -252,6 +252,53 @@ public sealed partial class GuiArchitectureTests
     }
 
     /// <summary>
+    /// The theme keeps a label's role.
+    /// </summary>
+    /// <remarks>
+    /// <c>Theme.Walk</c> had no arm for a plain <c>Label</c>, so its default arm gave every one
+    /// the body colour on every navigation: a muted caption stopped being muted, and the job
+    /// editor's opening warning stopped being a warning. The arm has to know the roles a label
+    /// can carry, which is what is asserted - not merely that the arm exists.
+    /// </remarks>
+    [Fact]
+    public void TheThemeKeepsALabelsRole()
+    {
+        var theme = Code(Path.Combine(Gui, "Ui", "Theme.cs"));
+        var arm = theme.IndexOf("case Label ", StringComparison.Ordinal);
+
+        arm.ShouldBeGreaterThanOrEqualTo(0, "Theme.Walk needs a Label arm; its default arm gives every label the body colour");
+
+        foreach (var role in new[] { "Muted", "Warning", "Danger" })
+        {
+            theme[arm..].ShouldContain(role, Case.Sensitive, $"a label painted {role} is a role the walk has to keep");
+        }
+    }
+
+    /// <summary>
+    /// The Jobs toolbar and the main window take their widths from the layouts.
+    /// </summary>
+    /// <remarks>
+    /// <c>WindowLayoutTests</c> adds the toolbar up against the narrowest window, which is worth
+    /// nothing if either side types its own number beside its control. And Edit with nothing
+    /// selected opened "New job", because the editor takes a null name to mean a new one.
+    /// </remarks>
+    [Fact]
+    public void TheJobsToolbarAndTheMainWindowTakeTheirWidthsFromTheLayouts()
+    {
+        var jobs = Code(Path.Combine(Gui, "Pages", "JobsPage.cs"));
+
+        Regex.IsMatch(jobs, @"Width\s*=\s*\d").ShouldBeFalse("a toolbar width typed on the page is one WindowLayoutTests cannot add up");
+        jobs.ShouldContain("JobsToolbar.");
+        jobs.ShouldContain("WrapContents = false", Case.Sensitive, "a wrapped button in a one-row toolbar is a hidden one");
+        jobs.ShouldNotContain("EditAsync(Selected())", Case.Sensitive, "Edit with nothing selected must not open New job");
+
+        var main = Code(Path.Combine(Gui, "MainForm.cs"));
+
+        Regex.IsMatch(main, @"new Size\(\s*\d").ShouldBeFalse("a window size typed on the form is one WindowLayoutTests cannot add up");
+        main.ShouldContain("MainWindowLayout.");
+    }
+
+    /// <summary>
     /// The window catches what its handlers let escape.
     /// </summary>
     /// <remarks>

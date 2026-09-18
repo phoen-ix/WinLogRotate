@@ -23,7 +23,16 @@ public sealed class JobsPage : UserControl
 
     private readonly Label _status = new() { Dock = DockStyle.Bottom, Height = 24 };
 
-    private readonly FlowLayoutPanel _toolbar = new() { Dock = DockStyle.Top, Height = 40, AutoSize = false };
+    // Never wrapping: the panel is one row high, so a wrapped button was a hidden one - which
+    // is what Check configuration and Open folder were at the narrowest window. The widths come
+    // from JobsToolbar, and WindowLayoutTests adds them up against that window.
+    private readonly FlowLayoutPanel _toolbar = new()
+    {
+        Dock = DockStyle.Top,
+        Height = 40,
+        AutoSize = false,
+        WrapContents = false,
+    };
 
     /// <summary>Whether an action is in flight, so a second click during it does nothing.</summary>
     private bool _busy;
@@ -49,25 +58,25 @@ public sealed class JobsPage : UserControl
         _grid.Columns.Add("paths", "Paths");
         _grid.Columns.Add("policy", "Policy");
 
-        var refresh = new Button { Text = "Refresh", Width = 90, FlatStyle = FlatStyle.System };
+        var refresh = Tool(JobsToolbar.Refresh);
         refresh.Click += async (_, _) => await OneAtATimeAsync(() => LoadAsync()).ConfigureAwait(true);
 
-        var check = new Button { Text = "Check configuration", Width = 160, FlatStyle = FlatStyle.System };
+        var check = Tool(JobsToolbar.Check);
         check.Click += async (_, _) => await OneAtATimeAsync(CheckAsync).ConfigureAwait(true);
 
-        var open = new Button { Text = "Open folder", Width = 110, FlatStyle = FlatStyle.System };
+        var open = Tool(JobsToolbar.Open);
         open.Click += async (_, _) => await OneAtATimeAsync(OpenFolderAsync).ConfigureAwait(true);
 
-        var add = new Button { Text = "New", Width = 70, FlatStyle = FlatStyle.System };
+        var add = Tool(JobsToolbar.New);
         add.Click += async (_, _) => await OneAtATimeAsync(() => EditAsync(null)).ConfigureAwait(true);
 
-        var edit = new Button { Text = "Edit", Width = 70, FlatStyle = FlatStyle.System };
-        edit.Click += async (_, _) => await OneAtATimeAsync(() => EditAsync(Selected())).ConfigureAwait(true);
+        var edit = Tool(JobsToolbar.Edit);
+        edit.Click += async (_, _) => await OneAtATimeAsync(EditSelectedAsync).ConfigureAwait(true);
 
-        var toggle = new Button { Text = "Enable/Disable", Width = 120, FlatStyle = FlatStyle.System };
+        var toggle = Tool(JobsToolbar.Toggle);
         toggle.Click += async (_, _) => await OneAtATimeAsync(ToggleAsync).ConfigureAwait(true);
 
-        var remove = new Button { Text = "Remove", Width = 90, FlatStyle = FlatStyle.System };
+        var remove = Tool(JobsToolbar.Remove);
         remove.Click += async (_, _) => await OneAtATimeAsync(RemoveAsync).ConfigureAwait(true);
 
         // A double-click opens the row under the pointer rather than whatever was selected
@@ -92,6 +101,14 @@ public sealed class JobsPage : UserControl
         ResumeLayout(false);
         PerformAutoScale();
     }
+
+    /// <summary>A toolbar button as the layout describes it.</summary>
+    private static Button Tool(ToolbarButton button) => new()
+    {
+        Text = button.Text,
+        Width = button.Width,
+        FlatStyle = FlatStyle.System,
+    };
 
     /// <summary>
     /// Runs one action at a time, with the toolbar disabled while it runs.
@@ -253,6 +270,24 @@ public sealed class JobsPage : UserControl
         _grid.SelectedRows.Count > 0
             ? _grid.SelectedRows[0].Cells["name"].Value as string
             : null;
+
+    /// <summary>Opens the selected job, or says that there is not one.</summary>
+    /// <remarks>
+    /// Edit with nothing selected used to open "New job", because the editor takes a null name
+    /// to mean a job that does not exist yet. That is the right meaning for New and the wrong
+    /// answer to Edit, which the other two buttons that need a row already give.
+    /// </remarks>
+    private Task EditSelectedAsync()
+    {
+        if (Selected() is not { } job)
+        {
+            _status.Text = "Select a job first.";
+            _status.ForeColor = Theme.Current.Muted;
+            return Task.CompletedTask;
+        }
+
+        return EditAsync(job);
+    }
 
     /// <summary>Opens the editor, and reloads only if it wrote something.</summary>
     /// <remarks>

@@ -25,12 +25,10 @@ namespace WinLogRotate.Gui;
 public sealed class MainForm : Form
 {
     private readonly CliRunner _cli = CliRunner.Resolve();
-    private readonly Panel _content = new() { Dock = DockStyle.Fill, Padding = new Padding(16) };
-    private readonly ListBox _nav = new() { Dock = DockStyle.Left, Width = 170, BorderStyle = BorderStyle.None, IntegralHeight = false };
+    private readonly Panel _content = new() { Dock = DockStyle.Fill, Padding = new Padding(MainWindowLayout.ContentPadding) };
+    private readonly ListBox _nav = new() { Dock = DockStyle.Left, Width = MainWindowLayout.NavigationWidth, BorderStyle = BorderStyle.None, IntegralHeight = false };
     private readonly Label _banner = new() { Dock = DockStyle.Top, Height = 0, Padding = new Padding(12, 8, 12, 8), Visible = false };
     private readonly string? _configDir;
-
-    private Severity? _bannerSeverity;
 
     public MainForm(string? configDir = null)
     {
@@ -55,8 +53,9 @@ public sealed class MainForm : Form
         AutoScaleDimensions = new SizeF(96F, 96F);
 
         Text = $"{ProductInfo.Name} {ProductInfo.Version}";
-        MinimumSize = new Size(880, 560);
-        ClientSize = new Size(1000, 640);
+        // From the layout, where WindowLayoutTests can add them up against the Jobs toolbar.
+        MinimumSize = new Size(MainWindowLayout.MinimumWidth, MainWindowLayout.MinimumHeight);
+        ClientSize = new Size(MainWindowLayout.Width, MainWindowLayout.Height);
         StartPosition = FormStartPosition.CenterScreen;
 
         _nav.Items.AddRange(["Jobs", "Run", "History", "Scheduling", "Notifications", "Settings"]);
@@ -143,15 +142,12 @@ public sealed class MainForm : Form
     /// Puts a message across the top of the window.
     /// </summary>
     /// <remarks>
-    /// The severity is kept, not just used, because <c>Theme.Walk</c> has no arm for a plain
-    /// <c>Label</c> and its default one assigns the body colour - so <c>Theme.Apply</c>, which
-    /// runs on every navigation, repainted a red banner to look like ordinary text. The words
-    /// survived, which is presumably why nobody noticed.
+    /// The colour is a role, and <c>Theme.Walk</c> keeps a label's role when it runs again on
+    /// the next navigation - so a red banner stays red. It used to be repainted as ordinary
+    /// text, and the words survived, which is presumably why nobody noticed.
     /// </remarks>
     private void ShowBanner(string text, Severity severity)
     {
-        _bannerSeverity = severity;
-
         _banner.Text = text;
         _banner.ForeColor = Tone(severity);
 
@@ -197,12 +193,6 @@ public sealed class MainForm : Form
         page.Dock = DockStyle.Fill;
         _content.Controls.Add(page);
         Theme.Apply(this, Theme.IsDark);
-
-        // After Theme.Apply, which walks every control and gives a plain Label the body colour.
-        if (_bannerSeverity is { } severity)
-        {
-            _banner.ForeColor = Tone(severity);
-        }
     }
 
     /// <summary>

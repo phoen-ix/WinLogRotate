@@ -68,6 +68,9 @@ public sealed class JobEditor : Form
     private readonly DataGridView _advanced = new()
     {
         AutoSizeColumnsMode = DataGridViewAutoSizeColumnsMode.Fill,
+
+        // So that a hook row of several commands is as tall as its lines.
+        AutoSizeRowsMode = DataGridViewAutoSizeRowsMode.AllCells,
         AllowUserToAddRows = false,
         AllowUserToDeleteRows = false,
         RowHeadersVisible = false,
@@ -408,6 +411,16 @@ public sealed class JobEditor : Form
         {
             var row = _advanced.Rows[_advanced.Rows.Add(field.Key, field.Value ?? string.Empty, State(field))];
 
+            if (JobEditorModel.Hooks.Contains(field.Key, StringComparer.OrdinalIgnoreCase))
+            {
+                // One command per line, which a single-line cell could neither show nor take:
+                // two commands were drawn on one line, and Enter in the cell ended the edit
+                // instead of starting a line. Wrapped, the cell shows every line, and the grid's
+                // editing control takes Shift+Enter as a new one.
+                row.Cells["value"].Style.WrapMode = DataGridViewTriState.True;
+                row.Cells["value"].ToolTipText = "One command per line. Shift+Enter starts a new line.";
+            }
+
             if (_hookWarning is not null
                 && JobEditorModel.Hooks.Contains(field.Key, StringComparer.OrdinalIgnoreCase))
             {
@@ -467,10 +480,11 @@ public sealed class JobEditor : Form
                 continue;
             }
 
+            // The model's comparison, not a text one: a hook of two commands comes back from a
+            // wrapped cell with Windows line endings, and compared as text that was a change.
             var now = row.Cells["value"].Value as string ?? string.Empty;
-            var was = field.Value ?? string.Empty;
 
-            row.Cells["state"].Value = string.Equals(now.Trim(), was, StringComparison.Ordinal)
+            row.Cells["state"].Value = JobEditorModel.Unchanged(field, now)
                 ? State(field)
                 : now.Trim().Length == 0 ? "will inherit again" : "will be set here";
         }

@@ -422,6 +422,17 @@ public static class JobEditorModel
         return string.Equals(was, now, StringComparison.Ordinal);
     }
 
+    /// <summary>
+    /// Whether what a box holds is what the file says, allowing for how a box holds it.
+    /// </summary>
+    /// <remarks>
+    /// The same judgement <see cref="SaveArgs"/> makes, for the grid's Source column: a wrapped
+    /// cell hands a hook's commands back with Windows line endings and a trailing one, and the
+    /// column said "will be set here" about a value nobody had touched.
+    /// </remarks>
+    public static bool Unchanged(JobField field, string? now) =>
+        Same(field.Key, field.Kind, field.Value, Blank(now) ? null : now!.Trim());
+
     /// <summary>An <c>enabled</c> value with the default spelled the way the form spells it.</summary>
     private static string? Enabled(string? value) =>
         string.Equals(value, "true", StringComparison.OrdinalIgnoreCase) ? null : value;

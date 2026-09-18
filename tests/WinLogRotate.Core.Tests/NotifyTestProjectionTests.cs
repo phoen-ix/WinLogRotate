@@ -1,4 +1,7 @@
+using System.Text.Json;
 using Shouldly;
+using WinLogRotate.Cli.Output;
+using WinLogRotate.Contracts;
 using WinLogRotate.Core;
 using WinLogRotate.Gui.Cli;
 using Xunit;
@@ -31,6 +34,78 @@ public sealed class NotifyTestProjectionTests
         StdErr = "",
         Verb = "notify test",
     };
+
+    /// <summary>
+    /// A test's channels, through the CLI's own serializer, so the shape is the verb's and not
+    /// this file's.
+    /// </summary>
+    private static CliResult Tested(params NotifyTestChannelDto[] channels) => new()
+    {
+        ExitCode = ExitCode.Ok,
+        StdOut = JsonSerializer.Serialize(
+            new CliEnvelope<NotifyTestResult>
+            {
+                Schema = 1,
+                Product = "winlogrotate",
+                Version = "0.0.0",
+                Verb = "notify test",
+                Ok = true,
+                ExitCode = 0,
+                Result = new NotifyTestResult
+                {
+                    Sent = channels.Count(c => c.Ok),
+                    Failed = channels.Count(c => !c.Ok),
+                    Channels = channels,
+                },
+                Diagnostics = [],
+            },
+            typeof(CliEnvelope<NotifyTestResult>),
+            Cli.CliJsonContext.Default),
+        StdErr = "",
+        Verb = "notify test",
+    };
+
+    /// <summary>
+    /// The details name each channel and what became of it.
+    /// </summary>
+    /// <remarks>
+    /// The verb reports every channel it reached for - whether it answered, how long it took,
+    /// the HTTP status, an error it has already redacted, and whether a real run would have
+    /// skipped it - and the page appended the JSON it came in. Somebody asking "which webhook did
+    /// not answer, and why" was handed an envelope to read.
+    /// </remarks>
+    [Fact]
+    public void TheDetailsNameEachChannelAndWhatBecameOfIt()
+    {
+        var view = NotifyTestProjection.From(Tested(
+            new NotifyTestChannelDto
+            {
+                Channel = "webhook:ops",
+                Display = "ops-webhook",
+                Ok = true,
+                Milliseconds = 120,
+                Status = 200,
+                WouldBeSkipped = false,
+            },
+            new NotifyTestChannelDto
+            {
+                Channel = "smtp:mail",
+                Display = "mail-ops",
+                Ok = false,
+                Milliseconds = 3012,
+                Error = "connection refused",
+                WouldBeSkipped = true,
+            }));
+
+        view.Tone.ShouldBe(CheckTone.Warning);
+        view.Details.ShouldContain("ops-webhook: delivered in 120 ms (HTTP 200)");
+        view.Details.ShouldContain("mail-ops: failed in 3012 ms - connection refused");
+        view.Details.ShouldContain("a real run would skip it");
+
+        // The envelope the answer came in is not the answer.
+        view.Details.ShouldNotContain("\"channels\"");
+        view.Details.ShouldNotContain("{");
+    }
 
     /// <summary>A test that reached every channel says how many.</summary>
     [Fact]

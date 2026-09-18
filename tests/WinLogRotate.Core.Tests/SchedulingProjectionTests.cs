@@ -1,6 +1,8 @@
 using Shouldly;
+using WinLogRotate.Cli.Commands;
 using WinLogRotate.Core;
 using WinLogRotate.Gui.Cli;
+using WinLogRotate.Hosting.Hosts;
 using Xunit;
 
 namespace WinLogRotate.Core.Tests;
@@ -34,6 +36,36 @@ public sealed class SchedulingProjectionTests
         StdOut = $$"""{ "result": { "runHost": "{{host}}", "runHostDetail": "{{detail}}" } }""",
         StdErr = "",
     };
+
+    /// <summary>
+    /// An option is offered exactly when the verb would accept it.
+    /// </summary>
+    /// <remarks>
+    /// <c>host use service</c> refuses unconditionally - the service host is not implemented -
+    /// and the page offered it as a radio button anyway, so it was one click and a UAC prompt
+    /// away from an error dialog. Tied to the verb's own judgement, so that a build which gains
+    /// the host offers it without anybody remembering the page.
+    /// </remarks>
+    [Theory]
+    [InlineData(RunHostChoice.Task, RunHostKind.Task)]
+    [InlineData(RunHostChoice.Service, RunHostKind.Service)]
+    [InlineData(RunHostChoice.None, RunHostKind.None)]
+    public void AnOptionIsOfferedExactlyWhenTheVerbWouldAcceptIt(RunHostChoice choice, RunHostKind kind)
+    {
+        SchedulingProjection.Offered(choice).ShouldBe(HostCommand.Unsupported(kind) is null);
+
+        // And the note under an option is there exactly when the option is not.
+        (SchedulingProjection.Unavailable(choice) is null).ShouldBe(SchedulingProjection.Offered(choice));
+    }
+
+    /// <summary>The service host is not offered, and the note names the verb that would refuse it.</summary>
+    [Fact]
+    public void TheServiceHostIsNotOfferedAndTheNoteNamesTheVerb()
+    {
+        SchedulingProjection.Offered(RunHostChoice.Service).ShouldBeFalse();
+        SchedulingProjection.Unavailable(RunHostChoice.Service).ShouldNotBeNull()
+            .ShouldContain("host use service");
+    }
 
     /// <summary>
     /// The option offered is the one that is registered.

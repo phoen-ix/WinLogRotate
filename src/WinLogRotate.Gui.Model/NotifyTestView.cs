@@ -1,3 +1,4 @@
+using System.Text;
 using System.Text.Json;
 
 namespace WinLogRotate.Gui.Cli;
@@ -33,6 +34,7 @@ public static class NotifyTestProjection
 
         int sent;
         int failed;
+        string channels;
 
         try
         {
@@ -41,6 +43,7 @@ public static class NotifyTestProjection
 
             sent = payload.GetProperty("sent").GetInt32();
             failed = payload.GetProperty("failed").GetInt32();
+            channels = Channels(payload);
         }
         catch (Exception e) when (e is JsonException
                                       or KeyNotFoundException
@@ -54,8 +57,11 @@ public static class NotifyTestProjection
             };
         }
 
+        // The channels, one per line, under whatever the verb had to say about the run as a
+        // whole. The raw envelope used to be appended here instead, which put a JSON document
+        // in front of somebody who wanted to know which webhook had not answered.
         var details = EnvelopeDiagnostics.Render(
-            EnvelopeDiagnostics.From(result.StdOut, "diagnostics")) + result.StdOut;
+            EnvelopeDiagnostics.From(result.StdOut, "diagnostics")) + channels;
 
         if (failed > 0)
         {
@@ -91,4 +97,70 @@ public static class NotifyTestProjection
             Details = details,
         };
     }
+
+    /// <summary>
+    /// Each channel the test reached for, and what came of it, one per line.
+    /// </summary>
+    /// <remarks>
+    /// <c>result.channels[]</c> carries a display name, whether the channel answered, how long it
+    /// took, the HTTP status where the transport had one, an error the verb has already redacted,
+    /// and whether a real run would have skipped the channel because its breaker is open. That
+    /// is the whole answer to "did my message arrive, and if not, why not". Every field is read
+    /// as optional, because the GUI ships separately and may be reading an older verb's answer.
+    /// </remarks>
+    private static string Channels(JsonElement payload)
+    {
+        if (!payload.TryGetProperty("channels", out var channels)
+            || channels.ValueKind != JsonValueKind.Array)
+        {
+            return string.Empty;
+        }
+
+        var text = new StringBuilder();
+
+        foreach (var channel in channels.EnumerateArray())
+        {
+            var name = Text(channel, "display") is { Length: > 0 } display
+                ? display
+                : Text(channel, "channel");
+
+            var ok = channel.TryGetProperty("ok", out var answered)
+                && answered.ValueKind == JsonValueKind.True;
+
+            var took = channel.TryGetProperty("milliseconds", out var ms)
+                && ms.ValueKind == JsonValueKind.Number
+                && ms.TryGetInt64(out var milliseconds)
+                    ? milliseconds
+                    : 0;
+
+            var line = $"{name}: {(ok ? "delivered" : "failed")} in {took} ms";
+
+            if (channel.TryGetProperty("status", out var status)
+                && status.ValueKind == JsonValueKind.Number
+                && status.TryGetInt32(out var http))
+            {
+                line += $" (HTTP {http})";
+            }
+
+            if (Text(channel, "error") is { Length: > 0 } error)
+            {
+                line += $" - {error}";
+            }
+
+            if (channel.TryGetProperty("wouldBeSkipped", out var skipped)
+                && skipped.ValueKind == JsonValueKind.True)
+            {
+                line += " - suppressed after repeated failures, so a real run would skip it";
+            }
+
+            text.AppendLine(line);
+        }
+
+        return text.ToString();
+    }
+
+    private static string Text(JsonElement element, string name) =>
+        element.TryGetProperty(name, out var value) && value.ValueKind == JsonValueKind.String
+            ? value.GetString() ?? string.Empty
+            : string.Empty;
 }

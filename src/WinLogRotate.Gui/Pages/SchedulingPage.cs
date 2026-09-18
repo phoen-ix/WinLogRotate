@@ -17,7 +17,15 @@ public sealed class SchedulingPage : UserControl
     private readonly string? _configDir;
 
     private readonly RadioButton _task = new() { Text = "Scheduled task (recommended)", AutoSize = true };
-    private readonly RadioButton _service = new() { Text = "Windows service", AutoSize = true };
+    // Disabled when the build cannot register one, which the model decides. It used to be
+    // selectable, and `host use service` refuses unconditionally, so choosing it was a UAC
+    // prompt followed by an error dialog.
+    private readonly RadioButton _service = new()
+    {
+        Text = "Windows service",
+        AutoSize = true,
+        Enabled = SchedulingProjection.Offered(RunHostChoice.Service),
+    };
     private readonly RadioButton _none = new() { Text = "Neither - I will trigger it myself", AutoSize = true };
     // Disabled until the first refresh says which host is registered. An Apply that is
     // clickable before the page knows anything is an Apply that acts on a selection nobody made.
@@ -59,10 +67,12 @@ public sealed class SchedulingPage : UserControl
         LrDialog.AddShield(_apply);
         _apply.Click += async (_, _) => await ApplyAsync().ConfigureAwait(true);
 
+        // Three radios of 19 pixels and three hints of 18, each with 6 of margin, are 147: at
+        // 130 the last hint lost its bottom line.
         var options = new FlowLayoutPanel
         {
             Dock = DockStyle.Top,
-            Height = 130,
+            Height = 150,
             FlowDirection = FlowDirection.TopDown,
             WrapContents = false,
         };
@@ -70,7 +80,8 @@ public sealed class SchedulingPage : UserControl
         options.Controls.Add(_task);
         options.Controls.Add(Hint("Runs daily as SYSTEM. Nothing stays resident, and a run missed while the machine was off is caught up afterwards."));
         options.Controls.Add(_service);
-        options.Controls.Add(Hint("A resident agent with its own timer."));
+        options.Controls.Add(Hint(
+            SchedulingProjection.Unavailable(RunHostChoice.Service) ?? "A resident agent with its own timer."));
         options.Controls.Add(_none);
         options.Controls.Add(Hint("Nothing runs on its own. Trigger it from your own scheduler."));
 

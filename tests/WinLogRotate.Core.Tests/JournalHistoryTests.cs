@@ -1,3 +1,4 @@
+using System.Globalization;
 using System.Reflection;
 using System.Text.Json;
 using Microsoft.Extensions.Time.Testing;
@@ -51,8 +52,8 @@ public sealed class JournalHistoryTests : IDisposable
         return File.ReadAllLines(file).Last(l => l.Contains("\"schema\"", StringComparison.Ordinal));
     }
 
-    /// <summary>One envelope carrying one event, through the CLI's own serializer.</summary>
-    private static string EnvelopeCarrying(CliEvent entry) =>
+    /// <summary>One envelope carrying these events, in this order, through the CLI's own serializer.</summary>
+    private static string EnvelopeCarrying(params CliEvent[] entries) =>
         JsonSerializer.Serialize(
             new CliEnvelope<JournalResult>
             {
@@ -65,15 +66,81 @@ public sealed class JournalHistoryTests : IDisposable
                 Result = new JournalResult
                 {
                     Directory = @"C:\ProgramData\WinLogRotate\journal",
-                    Count = 1,
+                    Count = entries.Length,
                     SkippedLines = 0,
                     UnreadableFiles = [],
-                    Entries = [entry],
+                    Entries = entries,
                 },
                 Diagnostics = [],
             },
             typeof(CliEnvelope<JournalResult>),
             Cli.CliJsonContext.Default);
+
+    /// <summary>A deletion that happened, at this time, to this file.</summary>
+    private static CliEvent Deleted(string ts, string file) => new()
+    {
+        Ts = ts,
+        Run = "R",
+        Operation = Op.Delete,
+        Phase = Phase.Apply,
+        Result = OpResult.Ok,
+        Job = "app",
+        Src = file,
+        Reason = "rotate 2",
+    };
+
+    /// <summary>
+    /// The newest operation is first.
+    /// </summary>
+    /// <remarks>
+    /// The journal is oldest-first, which is right for a record and wrong for a page whose
+    /// question is "what happened last night": the answer was at the bottom of the grid.
+    /// </remarks>
+    [Fact]
+    public void TheNewestOperationIsFirst()
+    {
+        var rows = JournalHistory.From(EnvelopeCarrying(
+            Deleted("2026-09-11T03:00:00.0000000+00:00", @"C:\logs\app.log.3"),
+            Deleted("2026-09-12T03:00:00.0000000+00:00", @"C:\logs\app.log.4"))).Rows;
+
+        rows.Select(r => r.File).ShouldBe([@"C:\logs\app.log.4", @"C:\logs\app.log.3"]);
+    }
+
+    /// <summary>
+    /// The time is the operator's own, in their own format.
+    /// </summary>
+    /// <remarks>
+    /// The grid showed the journal's UTC round-trip string as written, to an operator whose
+    /// GUI project turned invariant globalisation off precisely so that dates would not look
+    /// like that. Three in the morning UTC is five in the morning in Vienna, and the row says so.
+    /// </remarks>
+    [Fact]
+    public void TheTimeIsTheOperatorsOwn()
+    {
+        var twoEast = TimeZoneInfo.CreateCustomTimeZone("two east", TimeSpan.FromHours(2), "two east", "two east");
+        var envelope = EnvelopeCarrying(Deleted("2026-09-11T03:00:00.0000000+00:00", @"C:\logs\app.log.3"));
+
+        JournalHistory.From(envelope, new OperatorLocale(twoEast, CultureInfo.InvariantCulture))
+            .Rows.ShouldHaveSingleItem().When.ShouldBe("09/11/2026 05:00:00");
+
+        var austrian = JournalHistory.From(envelope, new OperatorLocale(twoEast, CultureInfo.GetCultureInfo("de-AT")))
+            .Rows.ShouldHaveSingleItem().When;
+
+        austrian.ShouldContain("11.09.");
+        austrian.ShouldContain("05:00:00");
+    }
+
+    /// <summary>A timestamp that cannot be read is shown as written, last.</summary>
+    [Fact]
+    public void ATimestampThatCannotBeReadIsShownAsWrittenAndLast()
+    {
+        var rows = JournalHistory.From(EnvelopeCarrying(
+            Deleted("not a time", @"C:\logs\app.log.9"),
+            Deleted("2026-09-11T03:00:00.0000000+00:00", @"C:\logs\app.log.3"))).Rows;
+
+        rows.Select(r => r.File).ShouldBe([@"C:\logs\app.log.3", @"C:\logs\app.log.9"]);
+        rows[1].When.ShouldBe("not a time");
+    }
 
     /// <summary>
     /// The page has an opinion about every journal operation.

@@ -62,6 +62,25 @@ public sealed record SchedulingView
 /// </remarks>
 public static class SchedulingProjection
 {
+    /// <summary>
+    /// Whether this build can register a host of this kind, and so whether the page may offer it.
+    /// </summary>
+    /// <remarks>
+    /// <c>HostCommand.Unsupported</c> refuses the service host unconditionally - it is not
+    /// implemented - and the page offered it as a radio button anyway, so it was one click and a
+    /// UAC prompt away from an error dialog. The option stays visible and disabled, with the
+    /// reason under it, because a machine whose registry still names a service from an older
+    /// build has to be able to show that state; what it must not be is selectable.
+    /// </remarks>
+    public static bool Offered(RunHostChoice choice) => choice != RunHostChoice.Service;
+
+    /// <summary>What to say under an option this build does not offer, or null when it does.</summary>
+    public static string? Unavailable(RunHostChoice choice) =>
+        Offered(choice)
+            ? null
+            : "Not in this build: 'winlogrotate host use service' is refused. A scheduled task is "
+              + "the better fit anyway.";
+
     /// <summary>What to show when the CLI could not be asked, or answered badly.</summary>
     /// <remarks>
     /// <c>None</c> is deliberately not the fallback, even though it is the safe-sounding one:

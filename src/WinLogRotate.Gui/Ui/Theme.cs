@@ -158,6 +158,15 @@ public static partial class Theme
                 link.ForeColor = colors.Text;
                 break;
 
+            // A label's colour is a role - a muted caption, a warning, a danger - and the default
+            // arm flattened every one of them to the body colour on every navigation: the job
+            // editor's opening status lost its warning, and every caption its muting. The role
+            // is kept, whichever palette it was painted from, and coloured again from this one -
+            // which is also what carries it through a switch between light and dark.
+            case Label label:
+                label.ForeColor = SameRole(label.ForeColor, colors);
+                break;
+
             default:
                 control.BackColor = control.Parent is null ? colors.Window : control.BackColor;
                 control.ForeColor = colors.Text;
@@ -168,6 +177,38 @@ public static partial class Theme
         {
             Walk(child, colors);
         }
+    }
+
+    /// <summary>
+    /// The colour in <paramref name="now"/> with the role <paramref name="was"/> has in either
+    /// palette, or the body colour for anything that is not a role.
+    /// </summary>
+    private static Color SameRole(Color was, ThemeColors now)
+    {
+        foreach (var palette in new[] { ThemeColors.Light, ThemeColors.Dark })
+        {
+            if (was == palette.Muted)
+            {
+                return now.Muted;
+            }
+
+            if (was == palette.Warning)
+            {
+                return now.Warning;
+            }
+
+            if (was == palette.Danger)
+            {
+                return now.Danger;
+            }
+
+            if (was == palette.Accent)
+            {
+                return now.Accent;
+            }
+        }
+
+        return now.Text;
     }
 
     [LibraryImport("dwmapi.dll")]

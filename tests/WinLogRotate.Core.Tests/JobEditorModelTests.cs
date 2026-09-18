@@ -198,6 +198,42 @@ public sealed class JobEditorModelTests
             .ShouldBe(["job", "set", "iis"]);
     }
 
+    /// <summary>
+    /// A hook of several commands is one line each, and comes back one <c>--set</c> each.
+    /// </summary>
+    /// <remarks>
+    /// The grid's value cell was single-line, so <c>prerotate = ["a", "b"]</c> was drawn as one
+    /// line and could not be given a second; the cell wraps now, and hands its lines back with
+    /// Windows line endings. That is not a change, and the Source column has to know it as well
+    /// as Save does - it compared the text and said "will be set here" about an untouched hook.
+    /// </remarks>
+    [Fact]
+    public void AHookOfSeveralCommandsIsOneLineEachAndComesBackOneSetEach()
+    {
+        var view = JobEditorModel.From(
+            ShownWith(("prerotate", "[\"C:/tools/quiesce.exe\", \"C:/tools/flush.exe\"]")));
+
+        var field = view.Fields.Single(f => f.Key == "prerotate");
+        field.Value.ShouldBe("C:/tools/quiesce.exe\nC:/tools/flush.exe");
+
+        JobEditorModel.Unchanged(field, "C:/tools/quiesce.exe\r\nC:/tools/flush.exe\r\n").ShouldBeTrue();
+        JobEditorModel.Unchanged(field, "C:/tools/quiesce.exe").ShouldBeFalse();
+
+        var edited = view.Fields.ToDictionary(f => f.Key, f => f.Value);
+        edited["prerotate"] = "C:/tools/quiesce.exe\r\nC:/tools/flush.exe\r\nC:/tools/reload.exe";
+
+        var args = JobEditorModel.SaveArgs(null, "iis", isNew: false, view, edited);
+
+        args.ShouldBe(
+        [
+            "job", "set", "iis",
+            "--set", "prerotate=C:/tools/quiesce.exe",
+            "--set", "prerotate=C:/tools/flush.exe",
+            "--set", "prerotate=C:/tools/reload.exe",
+        ]);
+        ShouldParse(args);
+    }
+
     /// <summary>A scalar is trimmed before it is compared or sent.</summary>
     /// <remarks>
     /// <c>" 30"</c> is what a box holds after a stray space, and the verb refuses it as not a

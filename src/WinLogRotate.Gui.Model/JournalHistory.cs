@@ -1,3 +1,4 @@
+using System.Globalization;
 using System.Text.Json;
 using WinLogRotate.Contracts;
 
@@ -6,11 +7,26 @@ namespace WinLogRotate.Gui.Cli;
 /// <summary>One thing that happened to one file.</summary>
 public sealed record HistoryRow
 {
+    /// <summary>When, in the operator's time zone and date format, or as written if it could not be read.</summary>
     public required string When { get; init; }
     public required string Job { get; init; }
     public required string What { get; init; }
     public required string File { get; init; }
     public required string Why { get; init; }
+}
+
+/// <summary>
+/// Whose clock and whose date format a page shows a time in.
+/// </summary>
+/// <remarks>
+/// One value rather than two optional parameters, because a method with an optional
+/// <c>IFormatProvider</c> is one the globalisation analyser makes every caller spell out - and
+/// the page is the caller, where "the operator's own" is the only right answer.
+/// </remarks>
+public sealed record OperatorLocale(TimeZoneInfo Zone, CultureInfo Culture)
+{
+    /// <summary>The operator's own: the machine's time zone and the process's culture.</summary>
+    public static OperatorLocale Here => new(TimeZoneInfo.Local, CultureInfo.CurrentCulture);
 }
 
 /// <summary>Everything the History page needs, and nothing that needs a window.</summary>
@@ -48,6 +64,12 @@ public sealed record HistoryView
 /// twice costs a pass and changes nothing, and doing it on this side is what makes the page's fix
 /// provable by a test that runs where the tests run.
 /// </para>
+/// <para>
+/// Newest first, in the operator's own time. The journal is written in UTC and oldest-first,
+/// which is right for a record and wrong for a page whose question is "what happened last
+/// night": the answer was at the bottom, in a time zone the operator had to convert, in a
+/// format the GUI project turned off invariant globalisation precisely so as not to show.
+/// </para>
 /// </remarks>
 public static class JournalHistory
 {
@@ -77,8 +99,12 @@ public static class JournalHistory
     /// <c>catch (JsonException)</c> catches, and both of which reached an <c>async void</c>
     /// handler in a process that installs no unhandled-exception handler at all.
     /// </remarks>
-    public static HistoryView From(string json)
+    /// <param name="json">The <c>journal --json</c> envelope.</param>
+    /// <param name="locale">Whose time zone and date format the timestamps are shown in. The operator's own by default.</param>
+    public static HistoryView From(string json, OperatorLocale? locale = null)
     {
+        var shown = locale ?? OperatorLocale.Here;
+
         JsonDocument document;
 
         try
@@ -137,7 +163,12 @@ public static class JournalHistory
                 [
                     .. CliEventLastWord.Collapse(events)
                         .Where(e => !IsBookkeeping(e.Operation))
-                        .Select(Row),
+                        .Select(e => (Event: e, At: Parse(e.Ts)))
+
+                        // A stable sort, so two records with one timestamp keep the journal's
+                        // order; one that cannot be read sorts last, where it displaces nothing.
+                        .OrderByDescending(x => x.At ?? DateTimeOffset.MinValue)
+                        .Select(x => Row(x.Event, x.At, shown)),
                 ],
                 SkippedLines = skipped,
                 Unreadable = false,
@@ -145,9 +176,17 @@ public static class JournalHistory
         }
     }
 
-    private static HistoryRow Row(CliEvent e) => new()
+    /// <summary>The timestamp as the journal writes it - round-trip, with its offset - or null.</summary>
+    private static DateTimeOffset? Parse(string ts) =>
+        DateTimeOffset.TryParse(ts, CultureInfo.InvariantCulture, DateTimeStyles.RoundtripKind, out var at)
+            ? at
+            : null;
+
+    private static HistoryRow Row(CliEvent e, DateTimeOffset? at, OperatorLocale shown) => new()
     {
-        When = e.Ts,
+        When = at is { } when
+            ? TimeZoneInfo.ConvertTime(when, shown.Zone).ToString("G", shown.Culture)
+            : e.Ts,
         Job = e.Job ?? string.Empty,
 
         // The product's own words for what was done, so the grid and the console cannot end up
