@@ -139,10 +139,53 @@ public sealed record FieldPresentation
     public bool InheritedChecked { get; init; }
 }
 
+/// <summary>
+/// How a log is taken away from the program that writes it, as the Basics view asks it.
+/// </summary>
+/// <remarks>
+/// Three of the four are <c>lockstrategy</c> values and one is <c>kind = manage</c>, because
+/// that is how the person thinks about it: "the program already writes new files itself" is an
+/// answer to the same question as "the program keeps the file open". <c>lockstrategy = copy</c>
+/// has no answer here and is left to Advanced.
+/// </remarks>
+public enum HowRotated
+{
+    /// <summary>Probe the file and take the best the writer permits (<c>lockstrategy = auto</c>).</summary>
+    Auto,
+
+    /// <summary>Copy the contents out and empty the file in place (<c>copytruncate</c>).</summary>
+    CopyTruncate,
+
+    /// <summary>Rename the file and create a fresh one (<c>rename</c>).</summary>
+    Rename,
+
+    /// <summary>The application starts new files itself; only tidy up (<c>kind = manage</c>).</summary>
+    Manage,
+}
+
+/// <summary>Whether and how old copies are compressed, as the Basics view asks it.</summary>
+public enum ArchiveCompression
+{
+    Zip,
+    Gzip,
+    None,
+}
+
 /// <summary>What the Basics view asked, ready to be turned into edits.</summary>
-/// <param name="Manage">The second radio: the application starts new files itself.</param>
+/// <param name="How">The radio, or null when the file's strategy has no radio and is left alone.</param>
 /// <param name="Schedule">The combo's item, or null for the default entry.</param>
-public sealed record BasicsAnswers(bool Manage, string? Schedule, string? MaxSize, string? Rotate, string? MaxAge);
+/// <param name="Dated">Old copies named by date rather than by number.</param>
+/// <param name="OldDir">The folder old copies go to, or blank for beside the log.</param>
+public sealed record BasicsAnswers(
+    HowRotated? How,
+    string? Schedule,
+    string? MaxSize,
+    string? Rotate,
+    string? MaxAge,
+    bool Dated,
+    ArchiveCompression Compression,
+    string? OldDir,
+    bool CreateOldDir);
 
 /// <summary>
 /// The decisions a job editor makes, with nothing that needs a window.
@@ -182,7 +225,11 @@ public static class JobEditorModel
     /// decisions somebody adding a log file has to make. Everything else has a default the summary
     /// sentence states. The Advanced view offers these too - Basics is a subset, never a third place.
     /// </remarks>
-    public static IReadOnlyList<string> Basics { get; } = ["schedule", "maxsize", "rotate", "maxage"];
+    public static IReadOnlyList<string> Basics { get; } =
+    [
+        "schedule", "maxsize", "rotate", "maxage",
+        "lockstrategy", "dateext", "compress", "compresstype", "olddir", "createolddir",
+    ];
 
     /// <summary>
     /// The five keys that spell a schedule as a flag. Never shown: the schedule field shows what
@@ -370,23 +417,118 @@ public static class JobEditorModel
     public static string? KindValue(bool manage, string? original) =>
         manage ? "manage" : original is null ? null : "rotate";
 
+    /// <summary>The "how" radio the file means, or null when its strategy has no radio.</summary>
+    public static HowRotated? HowRotatedShown(JobEditorView view)
+    {
+        if (IsManaged(view))
+        {
+            return HowRotated.Manage;
+        }
+
+        var strategy = view.Fields.FirstOrDefault(f =>
+            string.Equals(f.Key, "lockstrategy", StringComparison.OrdinalIgnoreCase))?.Value;
+
+        return strategy?.Trim().ToLowerInvariant() switch
+        {
+            null or "rename" => HowRotated.Rename,
+            "auto" => HowRotated.Auto,
+            "copytruncate" => HowRotated.CopyTruncate,
+            _ => null,
+        };
+    }
+
+    /// <summary>
+    /// What the radio says <c>lockstrategy</c> should be.
+    /// </summary>
+    /// <remarks>
+    /// The engine's own default is <c>rename</c>, so the Rename answer on a job that says
+    /// nothing says nothing. The editor's default for a new job is the probe, and that one is
+    /// written, because it differs from what silence would mean.
+    /// </remarks>
+    public static string? StrategyValue(HowRotated? how, string? original) => how switch
+    {
+        HowRotated.Auto => "auto",
+        HowRotated.CopyTruncate => "copytruncate",
+        HowRotated.Rename => original is null ? null : "rename",
+        _ => original,
+    };
+
+    /// <summary>
+    /// A flag as a tick box wants it: the original when the file already means that, else the word.
+    /// </summary>
+    public static string? FlagValue(bool want, string? original, bool defaultTrue)
+    {
+        var means = original is null
+            ? defaultTrue
+            : string.Equals(original, "true", StringComparison.OrdinalIgnoreCase);
+
+        return means == want ? original : want ? "true" : "false";
+    }
+
+    /// <summary>The compression the file means: none when compress is off, else the type or zip.</summary>
+    public static ArchiveCompression CompressionShown(string? compress, string? compressType)
+    {
+        if (string.Equals(compress, "false", StringComparison.OrdinalIgnoreCase))
+        {
+            return ArchiveCompression.None;
+        }
+
+        return compressType?.Trim().ToLowerInvariant() switch
+        {
+            "gzip" => ArchiveCompression.Gzip,
+            "none" => ArchiveCompression.None,
+            _ => ArchiveCompression.Zip,
+        };
+    }
+
+    /// <summary>
+    /// The compress and compresstype edits one choice stands for, writing only what changes.
+    /// </summary>
+    public static (string? Compress, string? CompressType) CompressionEdits(
+        string? compress, string? compressType, ArchiveCompression choice)
+    {
+        if (CompressionShown(compress, compressType) == choice)
+        {
+            return (compress, compressType);
+        }
+
+        if (choice == ArchiveCompression.None)
+        {
+            return ("false", compressType);
+        }
+
+        var on = string.Equals(compress, "false", StringComparison.OrdinalIgnoreCase) ? "true" : compress;
+        return (on, choice == ArchiveCompression.Gzip ? "gzip" : "zip");
+    }
+
     /// <summary>The edits the Basics view stands for, over the job as it was read.</summary>
     /// <remarks>
-    /// Under "only tidy up" the schedule and the early trigger mean nothing, so they are handed
-    /// back as they were: a size typed before the radio was flipped is not written.
+    /// Under "only tidy up" the schedule, the early trigger, the naming and the folder mean
+    /// nothing, so they are handed back as they were: a size typed before the radio was flipped
+    /// is not written. A null <paramref name="answers"/>.How leaves kind and lockstrategy alone.
     /// </remarks>
     public static IReadOnlyDictionary<string, string?> BasicsEdits(JobEditorView original, BasicsAnswers answers)
     {
         string? Was(string key) =>
             original.Fields.FirstOrDefault(f => string.Equals(f.Key, key, StringComparison.OrdinalIgnoreCase))?.Value;
 
+        var manage = answers.How == HowRotated.Manage;
+        var (compress, compressType) = CompressionEdits(Was("compress"), Was("compresstype"), answers.Compression);
+        var oldDir = string.IsNullOrWhiteSpace(answers.OldDir) ? null : answers.OldDir.Trim();
+
         return new Dictionary<string, string?>(StringComparer.OrdinalIgnoreCase)
         {
-            ["kind"] = KindValue(answers.Manage, Was("kind")),
-            ["schedule"] = answers.Manage ? Was("schedule") : ChoiceValue(answers.Schedule),
-            ["maxsize"] = answers.Manage ? Was("maxsize") : answers.MaxSize,
+            ["kind"] = answers.How is null ? Was("kind") : KindValue(manage, Was("kind")),
+            ["lockstrategy"] = manage ? Was("lockstrategy") : StrategyValue(answers.How, Was("lockstrategy")),
+            ["schedule"] = manage ? Was("schedule") : ChoiceValue(answers.Schedule),
+            ["maxsize"] = manage ? Was("maxsize") : answers.MaxSize,
             ["rotate"] = answers.Rotate,
             ["maxage"] = answers.MaxAge,
+            ["dateext"] = manage ? Was("dateext") : FlagValue(answers.Dated, Was("dateext"), defaultTrue: false),
+            ["compress"] = compress,
+            ["compresstype"] = compressType,
+            ["olddir"] = manage ? Was("olddir") : oldDir,
+            ["createolddir"] = manage ? Was("createolddir") : FlagValue(answers.CreateOldDir, Was("createolddir"), defaultTrue: false),
         };
     }
 

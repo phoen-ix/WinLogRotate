@@ -16,6 +16,50 @@ public static class JobEditorText
 
     public const string Browse = "Browse…";
 
+    // ---- how the log is taken away ---------------------------------------------------------
+
+    public const string HowAuto = "Let WinLogRotate check what the program allows (recommended)";
+
+    public const string HowAutoHint =
+        "Renamed when the program allows it, otherwise copied out and emptied in place. "
+        + "If the program never reopens its log, choose the next answer.";
+
+    public const string HowCopyTruncate = "The program keeps the log open and never starts a new file";
+
+    public const string HowCopyTruncateHint =
+        "The contents are copied to the old copy and the file is emptied in place; the program never "
+        + "notices. A few lines written during the copy can be lost.";
+
+    public const string HowRename = "The program closes the log between writes, or reopens it after it moves";
+
+    public const string HowRenameHint = "The file is renamed and a fresh, empty one is created for the program to find.";
+
+    public const string HowManage = "The program already writes new files itself (IIS does); only tidy up";
+
+    public const string HowManageHint = "The newest file is never touched; older ones are compressed and deleted.";
+
+    public const string HowLocked = "This job uses 'copy' (see Advanced settings).";
+
+    public const string NamesNumbered = "Numbered: app.log.1, app.log.2 \u2026";
+
+    public const string NamesDated = "Dated: app.log-20260918";
+
+    public const string CompressZip = "zip (opens in Explorer)";
+
+    public const string CompressGzip = "gzip (what log tools expect)";
+
+    public const string CompressNone = "not compressed";
+
+    public const string OldDirPlaceholder = "beside the log";
+
+    public const string CreateOldDir = "create it if missing";
+
+    public const string PreviewButton = "What would happen\u2026";
+
+    public const string PreviewSaveFirst = "Save first: the preview runs the job as it is on disk.";
+
+    public const string PreviewTitle = "What would happen";
+
     public const string RotateRadio = "WinLogRotate moves the log aside";
 
     public const string RotateHint = "The live log is renamed so the program starts a fresh one.";

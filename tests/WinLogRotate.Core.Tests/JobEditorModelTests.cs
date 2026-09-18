@@ -1004,7 +1004,7 @@ public sealed class JobEditorModelTests
         JobEditorModel.KindValue(manage: false, original: "manage").ShouldBe("rotate", "silence would leave the file as it was");
         JobEditorModel.KindValue(manage: false, original: "rotate").ShouldBe("rotate");
 
-        var fresh = JobEditorModel.BasicsEdits(JobEditorModel.Blank(), new BasicsAnswers(false, null, null, null, null));
+        var fresh = JobEditorModel.BasicsEdits(JobEditorModel.Blank(), Answers(HowRotated.Rename));
         var args = JobEditorModel.SaveArgs(null, "iis", isNew: true, JobEditorModel.Blank(),
             new Dictionary<string, string?>(fresh) { ["paths"] = "C:/logs/*.log" });
 
@@ -1016,7 +1016,7 @@ public sealed class JobEditorModelTests
     public void AManagedJobLeavesTheRotateRowAlone()
     {
         var edits = JobEditorModel.BasicsEdits(
-            JobEditorModel.Blank(), new BasicsAnswers(Manage: true, Schedule: "weekly", MaxSize: "100M", Rotate: null, MaxAge: null));
+            JobEditorModel.Blank(), Answers(HowRotated.Manage, schedule: "weekly", maxSize: "100M"));
 
         var args = JobEditorModel.SaveArgs(null, "iis", isNew: true, JobEditorModel.Blank(),
             new Dictionary<string, string?>(edits) { ["paths"] = "C:/logs/*.log" });
@@ -1030,7 +1030,7 @@ public sealed class JobEditorModelTests
     {
         var edits = JobEditorModel.BasicsEdits(
             JobEditorModel.Blank(),
-            new BasicsAnswers(Manage: false, Schedule: "weekly", MaxSize: "100M", Rotate: "14", MaxAge: "90"));
+            Answers(HowRotated.Rename, schedule: "weekly", maxSize: "100M", rotate: "14", maxAge: "90"));
 
         var args = JobEditorModel.SaveArgs(null, "iis", isNew: true, JobEditorModel.Blank(),
             new Dictionary<string, string?>(edits) { ["paths"] = "C:/logs/*.log" });
@@ -1091,4 +1091,179 @@ public sealed class JobEditorModelTests
         JobEditorText.FilesHint.ShouldNotContain("glob", Case.Insensitive);
         JobEditorText.FilesHint.ShouldNotContain("pattern", Case.Insensitive);
     }
+
+    // ---- how the log is taken away, how copies are named and compressed, and where ---------
+
+    private static BasicsAnswers Answers(
+        HowRotated? how, string? schedule = null, string? maxSize = null, string? rotate = null, string? maxAge = null,
+        bool dated = false, ArchiveCompression compression = ArchiveCompression.Zip, string? oldDir = null, bool createOldDir = false) =>
+        new(how, schedule, maxSize, rotate, maxAge, dated, compression, oldDir, createOldDir);
+
+    /// <summary>A new job needs its files; an existing one is saved with the Basics answers alone.</summary>
+    private static IReadOnlyList<string> Saved(JobEditorView original, BasicsAnswers answers, bool isNew)
+    {
+        var edited = new Dictionary<string, string?>(JobEditorModel.BasicsEdits(original, answers));
+        if (isNew)
+        {
+            edited["paths"] = "C:/logs/*.log";
+        }
+
+        return JobEditorModel.SaveArgs(null, "iis", isNew, original, edited);
+    }
+
+    /// <summary>
+    /// The editor's default for a new job is the probe, which differs from the engine's default,
+    /// so it is written; the Rename answer on a job that says nothing says nothing.
+    /// </summary>
+    [Fact]
+    public void ANewJobOnTheRecommendedAnswerWritesAutoAndOnRenameWritesNothing()
+    {
+        var auto = Saved(JobEditorModel.Blank(), Answers(HowRotated.Auto), isNew: true);
+        auto.ShouldBe(["job", "add", "iis", "--set", "paths=C:/logs/*.log", "--set", "lockstrategy=auto"]);
+        ShouldParse(auto);
+
+        var rename = Saved(JobEditorModel.Blank(), Answers(HowRotated.Rename), isNew: true);
+        rename.ShouldBe(["job", "add", "iis", "--set", "paths=C:/logs/*.log"]);
+
+        var held = Saved(JobEditorModel.Blank(), Answers(HowRotated.CopyTruncate), isNew: true);
+        held.ShouldContain("lockstrategy=copytruncate");
+        ShouldParse(held);
+    }
+
+    [Fact]
+    public void TheHowRadioShowsWhatTheFileMeans()
+    {
+        JobEditorModel.HowRotatedShown(JobEditorModel.Blank()).ShouldBe(HowRotated.Rename, "silence means the engine's default");
+        JobEditorModel.HowRotatedShown(JobEditorModel.From(ShownWith(("name", "\"iis\""), ("lockstrategy", "\"AUTO\""))))
+            .ShouldBe(HowRotated.Auto);
+        JobEditorModel.HowRotatedShown(JobEditorModel.From(ShownWith(("name", "\"iis\""), ("lockstrategy", "\"copytruncate\""))))
+            .ShouldBe(HowRotated.CopyTruncate);
+        JobEditorModel.HowRotatedShown(JobEditorModel.From(ShownWith(("name", "\"iis\""), ("kind", "\"manage\""))))
+            .ShouldBe(HowRotated.Manage);
+        JobEditorModel.HowRotatedShown(JobEditorModel.From(ShownWith(("name", "\"iis\""), ("lockstrategy", "\"copy\""))))
+            .ShouldBeNull("copy has no radio and is left to Advanced");
+    }
+
+    /// <summary>A strategy with no radio is handed back untouched, whatever the other answers do.</summary>
+    [Fact]
+    public void AStrategyWithoutARadioIsLeftAlone()
+    {
+        var view = JobEditorModel.From(ShownWith(("name", "\"iis\""), ("lockstrategy", "\"copy\"")));
+
+        var args = Saved(view, Answers(how: null, rotate: "14"), isNew: false);
+
+        args.ShouldBe(["job", "set", "iis", "--set", "rotate=14"]);
+        ShouldParse(args);
+    }
+
+    [Fact]
+    public void SwitchingAnExistingJobBackToRenameSaysSo()
+    {
+        var view = JobEditorModel.From(ShownWith(("name", "\"iis\""), ("lockstrategy", "\"auto\"")));
+
+        Saved(view, Answers(HowRotated.Rename), isNew: false)
+            .ShouldBe(["job", "set", "iis", "--set", "lockstrategy=rename"]);
+        Saved(view, Answers(HowRotated.Auto), isNew: false)
+            .ShouldBe(["job", "set", "iis"], "unchanged");
+    }
+
+    [Fact]
+    public void AManagedJobLeavesNamingAndFolderAlone()
+    {
+        var view = JobEditorModel.From(ShownWith(
+            ("name", "\"iis\""), ("dateext", "true"), ("olddir", "\"D:/a\""), ("lockstrategy", "\"auto\"")));
+
+        var edits = JobEditorModel.BasicsEdits(view, Answers(HowRotated.Manage, dated: false, oldDir: "", createOldDir: true));
+
+        edits["kind"].ShouldBe("manage");
+        edits["dateext"].ShouldBe("true", "handed back as it was");
+        edits["olddir"].ShouldBe("D:/a");
+        edits["lockstrategy"].ShouldBe("auto");
+        edits["createolddir"].ShouldBeNull();
+    }
+
+    [Theory]
+    [InlineData(false, null, false, null)]
+    [InlineData(true, null, false, "true")]
+    [InlineData(false, "true", false, "false")]
+    [InlineData(true, "true", false, "true")]
+    [InlineData(true, "false", false, "true")]
+    [InlineData(true, null, true, null)]
+    [InlineData(false, null, true, "false")]
+    public void AFlagIsWrittenOnlyWhenTheFileMeansSomethingElse(bool want, string? original, bool defaultTrue, string? written) =>
+        JobEditorModel.FlagValue(want, original, defaultTrue).ShouldBe(written);
+
+    [Fact]
+    public void DatedCopiesWriteDateextOnlyWhenTheyChangeIt()
+    {
+        Saved(JobEditorModel.Blank(), Answers(HowRotated.Rename, dated: true), isNew: true)
+            .ShouldBe(["job", "add", "iis", "--set", "paths=C:/logs/*.log", "--set", "dateext=true"]);
+
+        var dated = JobEditorModel.From(ShownWith(("name", "\"iis\""), ("dateext", "true")));
+        Saved(dated, Answers(HowRotated.Rename, dated: true), isNew: false).ShouldBe(["job", "set", "iis"]);
+        Saved(dated, Answers(HowRotated.Rename, dated: false), isNew: false)
+            .ShouldBe(["job", "set", "iis", "--set", "dateext=false"]);
+    }
+
+    [Theory]
+    [InlineData(null, null, ArchiveCompression.Zip)]
+    [InlineData("true", null, ArchiveCompression.Zip)]
+    [InlineData(null, "gzip", ArchiveCompression.Gzip)]
+    [InlineData(null, "none", ArchiveCompression.None)]
+    [InlineData("false", "gzip", ArchiveCompression.None)]
+    public void TheCompressionShownIsWhatTheFileMeans(string? compress, string? type, ArchiveCompression shown) =>
+        JobEditorModel.CompressionShown(compress, type).ShouldBe(shown);
+
+    [Fact]
+    public void ACompressionChoiceWritesOnlyWhatChanges()
+    {
+        JobEditorModel.CompressionEdits(null, null, ArchiveCompression.Zip).ShouldBe((null, null));
+        JobEditorModel.CompressionEdits(null, null, ArchiveCompression.Gzip).ShouldBe((null, "gzip"));
+        JobEditorModel.CompressionEdits(null, null, ArchiveCompression.None).ShouldBe(("false", null));
+        JobEditorModel.CompressionEdits("false", "gzip", ArchiveCompression.Gzip).ShouldBe(("true", "gzip"));
+        JobEditorModel.CompressionEdits("false", null, ArchiveCompression.Zip).ShouldBe(("true", "zip"));
+        JobEditorModel.CompressionEdits(null, "gzip", ArchiveCompression.Zip).ShouldBe((null, "zip"));
+        JobEditorModel.CompressionEdits("true", "gzip", ArchiveCompression.Gzip).ShouldBe(("true", "gzip"));
+
+        var args = Saved(JobEditorModel.Blank(), Answers(HowRotated.Rename, compression: ArchiveCompression.None), isNew: true);
+        args.ShouldBe(["job", "add", "iis", "--set", "paths=C:/logs/*.log", "--set", "compress=false"]);
+        ShouldParse(args);
+    }
+
+    [Fact]
+    public void AFolderIsWrittenTrimmedAndClearedWhenBlank()
+    {
+        Saved(JobEditorModel.Blank(), Answers(HowRotated.Rename, oldDir: "  D:/archive ", createOldDir: true), isNew: true)
+            .ShouldBe(["job", "add", "iis", "--set", "paths=C:/logs/*.log", "--set", "olddir=D:/archive", "--set", "createolddir=true"]);
+
+        var view = JobEditorModel.From(ShownWith(("name", "\"iis\""), ("olddir", "\"D:/a\""), ("createolddir", "true")));
+        var args = Saved(view, Answers(HowRotated.Rename, oldDir: "", createOldDir: false), isNew: false);
+        args.ShouldBe(["job", "set", "iis", "--unset", "olddir", "--set", "createolddir=false"]);
+        ShouldParse(args);
+    }
+
+    [Fact]
+    public void TheNewBasicsSentencesSpeakPlainly()
+    {
+        foreach (var text in new[]
+                 {
+                     JobEditorText.HowAuto, JobEditorText.HowAutoHint, JobEditorText.HowCopyTruncate,
+                     JobEditorText.HowCopyTruncateHint, JobEditorText.HowRename, JobEditorText.HowRenameHint,
+                     JobEditorText.HowManage, JobEditorText.HowManageHint, JobEditorText.NamesNumbered,
+                     JobEditorText.NamesDated, JobEditorText.CompressZip, JobEditorText.CompressGzip,
+                     JobEditorText.CompressNone, JobEditorText.OldDirPlaceholder, JobEditorText.CreateOldDir,
+                 })
+        {
+            text.ShouldNotContain("glob", Case.Insensitive);
+            text.ShouldNotContain("pattern", Case.Insensitive);
+            text.ShouldNotContain("lockstrategy", Case.Insensitive);
+            text.ShouldNotContain("dateext", Case.Insensitive);
+        }
+
+        JobEditorModel.Basics.ShouldContain("lockstrategy");
+        JobEditorModel.Basics.ShouldContain("olddir");
+        JobEditorModel.AdvancedSetCount(JobEditorModel.From(ShownWith(("name", "\"iis\""), ("olddir", "\"D:/a\""))))
+            .ShouldBe(0, "a key Basics shows is not counted as beyond it");
+    }
 }
+

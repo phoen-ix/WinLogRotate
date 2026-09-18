@@ -625,11 +625,15 @@ public sealed class JobEditor : Form
     }
 
     private BasicsAnswers Answers() => new(
-        _manageRadio.Checked,
+        _manageRadio.Checked ? HowRotated.Manage : HowRotated.Rename,
         _schedule.SelectedItem as string,
         _maxSize.Text,
         _rotate.Text,
-        _maxAge.Text);
+        _maxAge.Text,
+        Dated: false,
+        ArchiveCompression.Zip,
+        OldDir: null,
+        CreateOldDir: false);
 
     private void CarryBasicsToAdvanced()
     {
@@ -729,17 +733,15 @@ public sealed class JobEditor : Form
             return;
         }
 
-        bool? compress = _rows.TryGetValue("compress", out var row) && row.Explicit && row.Editor is CheckBox box
-            ? box.Checked
-            : null;
-
         _summary.Text = JobSummary.Sentence(
-            _manageRadio.Checked,
+            _manageRadio.Checked ? HowRotated.Manage : HowRotated.Rename,
             ScheduleShown(),
             _maxSize.Text,
             _rotate.Text,
             _maxAge.Text,
-            compress,
+            dated: false,
+            ArchiveCompression.Zip,
+            oldDir: null,
             _files.Lines.FirstOrDefault(l => l.Trim().Length > 0));
     }
 
