@@ -142,24 +142,32 @@ public sealed class RotationRunner(
         new(journal, hookHost, hookGate ?? HookGate.Unknown, clock);
 
     /// <summary>
-    /// One enumerator for the run, so a link is resolved and reported once however many patterns
-    /// or jobs meet it.
-    /// </summary>
-    private readonly IFileSource _files = files ?? new FileEnumerator(guard);
-
-    /// <summary>
-    /// Where a rotate job looks for the archives it wrote last time.
+    /// Where the live logs and last time's archives are looked for.
     /// </summary>
     /// <remarks>
-    /// Optional, so every existing caller is unchanged, and injectable because discovery is the
-    /// code that decides which files the planner may delete - and that decision deserves tests
-    /// that do not need a file system.
+    /// Both optional, so every existing caller is unchanged, and injectable because discovery is
+    /// the code that decides which files the planner may delete - and that decision deserves tests
+    /// that do not need a file system. When neither is supplied the two share ONE enumerator, so
+    /// a link is resolved and reported once however many patterns, jobs or globs meet it; with an
+    /// enumerator each, a junction met by the live glob and again by the archive glob was named
+    /// twice in the same run.
     /// </remarks>
-    private readonly IArchiveSource _archives = archiveSource ?? new FileArchiveSource(new FileEnumerator(guard));
+    private readonly (IFileSource Files, IArchiveSource Archives) _sources = Sources(files, archiveSource, guard);
+
+    private static (IFileSource, IArchiveSource) Sources(IFileSource? files, IArchiveSource? archives, PathGuard guard)
+    {
+        var enumerator = files is null || archives is null ? new FileEnumerator(guard) : null;
+        return (files ?? enumerator!, archives ?? new FileArchiveSource(enumerator!));
+    }
 
     public RunReport Run(LoadedConfig config, RunOptions options)
     {
-        var now = clock.GetUtcNow();
+        // Local, not UTC. The task fires at 03:00 local time, and 'daily', 'monthly', the weekday
+        // and the dateext stamp are calendar questions the operator asks in local time - so a
+        // machine east of UTC+3 rotated on the previous UTC day: monthly on the 2nd, a weekday a
+        // day late, yesterday's date on every archive. The journal's own timestamps stay UTC, and
+        // the state file stores each clock with its offset, so they still compare as instants.
+        var now = clock.GetLocalNow();
         var plans = new List<JobPlan>();
         var errors = new List<string>();
         var diagnostics = new List<CliDiagnostic>();

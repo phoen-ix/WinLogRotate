@@ -82,6 +82,13 @@ says so as it reads: `note: 'daily' overrides previously specified 'size'`.
 | `weekday` | 0–7 | `0` | 0 is Sunday through 6 Saturday. 7 means every seven days regardless of weekday. |
 | `monthday` | 0–31 | `0` | Day of the month for `monthly`. |
 
+The calendar is the machine's local one: `daily` means a new local day has begun since the last
+rotation, `weekday` and `monthday` are read off the local date, and a `dateext` stamp carries it.
+Earlier releases read the calendar in UTC, so on a machine east of UTC+3 the scheduled 03:00 run
+fell on the previous UTC day - `monthly` fired on the 2nd, a `weekday` a day late, and every
+archive carried yesterday's date. After upgrading, the next scheduled run simply uses the local
+calendar; the rotation clocks it inherits are instants and need no resetting.
+
 ### Retention
 
 | Key | Type | Default | What it does |

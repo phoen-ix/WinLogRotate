@@ -86,13 +86,15 @@ public sealed class RotationOutcomeTests : IDisposable
     };
 
     private RunReport Run(
-        EffectiveJob job, FakeFiles files, FakeApplier applier, StateStore state, IHookHost? host = null) =>
-        Run([job], files, applier, state, host);
+        EffectiveJob job, FakeFiles files, FakeApplier applier, StateStore state, IHookHost? host = null,
+        TimeProvider? clock = null) =>
+        Run([job], files, applier, state, host, clock);
 
     private RunReport Run(
-        EffectiveJob[] jobs, FakeFiles files, FakeApplier applier, StateStore state, IHookHost? host = null) =>
+        EffectiveJob[] jobs, FakeFiles files, FakeApplier applier, StateStore state, IHookHost? host = null,
+        TimeProvider? clock = null) =>
         new RotationRunner(
-                new NullJournal(), new PathGuard(new GuardOptions()), state, _clock,
+                new NullJournal(), new PathGuard(new GuardOptions()), state, clock ?? _clock,
                 archiveSource: files, hookHost: host, hookGate: HookGate.Open,
                 files: new FakeFileSource(files), applier: applier)
             .Run(
@@ -104,6 +106,35 @@ public sealed class RotationOutcomeTests : IDisposable
                     Quarantined = [],
                 },
                 new RunOptions());
+
+    /// <summary>
+    /// The run's calendar is the machine's, not Greenwich's.
+    /// </summary>
+    /// <remarks>
+    /// The task fires at 03:00 local time. 03:00 on 1 September in a UTC+10 zone is 17:00 on
+    /// 31 August in UTC, and the calendar used to be read in UTC: a daily job rotated at 03:00
+    /// local on the 31st was "already rotated today", and a dateext archive carried the 31st.
+    /// </remarks>
+    [Fact]
+    public void TheCalendarIsReadInLocalTime()
+    {
+        var clock = new FakeTimeProvider(new DateTimeOffset(2026, 8, 31, 17, 0, 0, TimeSpan.Zero));
+        clock.SetLocalTimeZone(TimeZoneInfo.CreateCustomTimeZone("Test+10", TimeSpan.FromHours(10), "Test+10", "Test+10"));
+
+        var files = new FakeFiles().Add(Live, bytes: 100);
+        var state = StateStore.Load(Path.Combine(_dir.FullName, "state.json"), out _);
+        state.Set(Live, new PathState
+        {
+            Path = Live,
+            LastRotated = new DateTimeOffset(2026, 8, 31, 3, 0, 0, TimeSpan.FromHours(10)),
+        });
+
+        Run(Job() with { DateExt = true, DateFormat = "-yyyyMMdd" }, files, new FakeApplier(files), state, clock: clock);
+
+        files.Exists(@"C:\logs\app.log-20260901").ShouldBeTrue("1 September in the machine's calendar, and due");
+        files.Exists(@"C:\logs\app.log-20260831").ShouldBeFalse();
+        state.Get(Live).ShouldNotBeNull().LastRotated.ShouldBe(clock.GetUtcNow(), "a clock is an instant whichever way it is written");
+    }
 
     /// <summary>
     /// An exception nothing expected costs the job it happened in, and nothing else.
