@@ -103,8 +103,8 @@ public sealed class MainForm : Form
     private async Task CheckEnvironmentAsync()
     {
         // Deliberately not CliArgs.For. The root verb declares no --config-dir, so appending one
-        // makes this a parse error: it short-circuits to ParseErrorReporter, which writes to
-        // stderr and exits 2, and there is no envelope at all. The GUI is launched with a
+        // makes this a parse error: it short-circuits to ParseErrorReporter, which exits 2 with
+        // an LR1007 envelope under --json - never the answer wanted. The GUI is launched with a
         // directory often enough that this would report a broken CLI to the people least able to
         // explain it. CliIdentityTests.AConfigDirectoryTurnsTheProbeIntoAParseError is the pin.
         var identity = CliIdentity.Inspect(

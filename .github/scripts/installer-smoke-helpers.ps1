@@ -495,6 +495,13 @@ function Assert-TaskHardening {
     if (-not $s.AllowHardTerminate) { throw 'AllowHardTerminate is off: at ExecutionTimeLimit the task would only be asked to close, which a windowless console process ignores.' }
     if ($s.MultipleInstances -ne 'IgnoreNew') { throw "MultipleInstances is '$($s.MultipleInstances)', expected IgnoreNew." }
 
+    # A StartBoundary already in the past, with StartWhenAvailable on, runs the task the moment it
+    # is registered - a daytime rotation on 'host use task'. The builder takes the next occurrence.
+    $boundary = [datetime]@($task.Triggers)[0].StartBoundary
+    if ($boundary -le (Get-Date)) {
+        throw "StartBoundary $boundary is not in the future, so StartWhenAvailable would run the task at registration."
+    }
+
     # The deadline the task passes to the run must be the deadline the task actually enforces.
     # Both come from one property, and a unit test pins that they agree in the generated XML -
     # this is the same assertion against a task Windows really registered, which is the only

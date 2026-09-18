@@ -14,7 +14,8 @@ namespace WinLogRotate.Gui.Cli;
 /// The configuration directory is appended <b>unconditionally</b> whenever there is one. That is
 /// right for every verb the GUI runs today and wrong for anything the root command owns -
 /// <c>--version</c> most of all, which declares no <c>--config-dir</c> at all, so passing one
-/// turns the invocation into a parse error that never reaches a handler and emits no envelope.
+/// turns the invocation into a parse error that never reaches a handler and answers with an
+/// LR1007 envelope instead of the one asked for.
 /// A caller that wants a root-level verb must not come through here.
 /// </para>
 /// </remarks>

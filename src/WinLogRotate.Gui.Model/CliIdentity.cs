@@ -60,8 +60,8 @@ public sealed record CliIdentity
     /// Built here and never through <see cref="CliArgs"/>. The root command declares no
     /// <c>--config-dir</c> - <c>CommandTree.Build</c> calls
     /// <c>GlobalOptions.AddTo(root, configDir: false)</c> - so appending one turns this into a
-    /// parse error: the invocation short-circuits to <c>ParseErrorReporter</c>, which writes to
-    /// stderr and exits 2, and no envelope is produced at all. The GUI is launched with a
+    /// parse error: the invocation short-circuits to <c>ParseErrorReporter</c>, which exits 2 with an
+    /// LR1007 envelope under <c>--json</c> - never the answer this probe wants. The GUI is launched with a
     /// directory often enough that going through the ordinary builder would report a broken CLI
     /// to exactly the people least able to explain it.
     /// </para>
