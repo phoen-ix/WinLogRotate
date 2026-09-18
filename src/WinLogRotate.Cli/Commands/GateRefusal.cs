@@ -1,6 +1,7 @@
 using WinLogRotate.Contracts;
 using WinLogRotate.Core;
 using WinLogRotate.Core.Engine;
+using WinLogRotate.Hosting;
 
 namespace WinLogRotate.Cli.Commands;
 
@@ -15,10 +16,14 @@ namespace WinLogRotate.Cli.Commands;
 /// </remarks>
 internal static class GateRefusal
 {
+    /// <param name="hold">How long the gate has been refusing runs, judged from the record.</param>
+    /// <param name="since">When the record says the refusals began.</param>
+    /// <param name="heldExitCode">What the invocation asked to exit with when the gate is held.</param>
+    /// <param name="outcome">What the gate itself said, which tells a held gate from one that could not be opened.</param>
     public static (CliDiagnostic Diagnostic, int ExitCode) For(
-        GateHold hold, DateTimeOffset? since, int heldExitCode) => hold switch
+        GateHold hold, DateTimeOffset? since, int heldExitCode, GateOutcome outcome) => (hold, outcome) switch
         {
-            GateHold.Implausible => (new CliDiagnostic
+            (GateHold.Implausible, _) => (new CliDiagnostic
             {
                 Severity = Severity.Error,
                 Code = DiagnosticCode.RotationGateHeld,
@@ -36,6 +41,23 @@ internal static class GateRefusal
             // machine on which nothing rotates at all, and letting it do so is the whole of why
             // this was silent: Task Scheduler showed 0x0 every night for a week.
             ExitCode.Errors),
+
+            // The same code and the same exit as a held gate, because the run did the same
+            // thing - nothing - and the same record is kept, so a name still unusable four
+            // hours on is reported above as a gate held too long, with the remedy that fits:
+            // find what holds the name and end it. Said in its own words here, because
+            // "another rotation is already running" is not what happened, and an operator told
+            // that would wait for a rotation that is not there to finish.
+            (_, GateOutcome.Unopenable) => (new CliDiagnostic
+            {
+                Severity = Severity.Info,
+                Code = DiagnosticCode.AlreadyRunning,
+                Message = "The rotation gate could not be opened: its name is held by a kernel "
+                        + "object that is not a mutex, so this run cannot tell whether another "
+                        + "rotation is running; nothing was done.",
+                Remedy = "Global\\WinLogRotate.Rotation should be a mutex. Find what holds the "
+                       + "name with Process Explorer or handle.exe and end it.",
+            }, heldExitCode),
 
             _ => (new CliDiagnostic
             {

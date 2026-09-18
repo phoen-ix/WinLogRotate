@@ -72,7 +72,7 @@ internal static class RunCommand
             var since = GateHoldStore.Read(paths.RunDirectory, trusted);
 
             var (diagnostic, exitCode) = GateRefusal.For(
-                GateHoldRule.Judge(since, now), since, locks.HeldExitCode);
+                GateHoldRule.Judge(since, now), since, locks.HeldExitCode, gate.Outcome);
 
             ctx.Output.Diagnostic(diagnostic);
 

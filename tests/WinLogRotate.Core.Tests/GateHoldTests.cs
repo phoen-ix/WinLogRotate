@@ -4,6 +4,7 @@ using WinLogRotate.Contracts;
 using WinLogRotate.Core;
 using WinLogRotate.Core.Engine;
 using WinLogRotate.Core.State;
+using WinLogRotate.Hosting;
 using Xunit;
 
 namespace WinLogRotate.Core.Tests;
@@ -76,21 +77,46 @@ public sealed class GateHoldTests
     [Fact]
     public void AnImplausibleHoldDoesNotBorrowTheScheduledTasksZeroExitCode()
     {
-        var (held, heldExit) = GateRefusal.For(GateHold.Implausible, Night, heldExitCode: 0);
+        var (held, heldExit) = GateRefusal.For(GateHold.Implausible, Night, heldExitCode: 0, GateOutcome.Busy);
 
         heldExit.ShouldBe(ExitCode.Errors);
         held.Severity.ShouldBe(Severity.Error);
         held.Code.ShouldBe(DiagnosticCode.RotationGateHeld);
         held.Message.ShouldContain("2026-09-12 03:00:00Z");
 
-        var (overlap, overlapExit) = GateRefusal.For(GateHold.Overlapping, Night, heldExitCode: 0);
+        var (overlap, overlapExit) = GateRefusal.For(GateHold.Overlapping, Night, heldExitCode: 0, GateOutcome.Busy);
 
         overlapExit.ShouldBe(0, "an overlapping manual run is why --lock-held-exit exists");
         overlap.Severity.ShouldBe(Severity.Info);
         overlap.Code.ShouldBe(DiagnosticCode.AlreadyRunning);
 
         // And with no record at all, which is a first refusal: today's behaviour exactly.
-        GateRefusal.For(GateHold.Unknown, null, heldExitCode: 0).ExitCode.ShouldBe(0);
+        GateRefusal.For(GateHold.Unknown, null, heldExitCode: 0, GateOutcome.Busy).ExitCode.ShouldBe(0);
+    }
+
+    /// <summary>
+    /// A gate that could not be opened is refused like a held one, and says what it is.
+    /// </summary>
+    /// <remarks>
+    /// The same code and exit as an overlap, because the run did the same thing - nothing - and
+    /// the same record is kept, so a name still unusable four hours on becomes the held-too-long
+    /// report whose remedy fits a squatter too. But not the same words: "another rotation is
+    /// already running" would have the operator wait for a rotation that is not there.
+    /// </remarks>
+    [Fact]
+    public void AGateThatCannotBeOpenedIsRefusedInItsOwnWords()
+    {
+        var (first, firstExit) = GateRefusal.For(GateHold.Unknown, null, heldExitCode: 0, GateOutcome.Unopenable);
+
+        firstExit.ShouldBe(0);
+        first.Code.ShouldBe(DiagnosticCode.AlreadyRunning);
+        first.Message.ShouldContain("not a mutex", Case.Sensitive, "the operator is told what actually holds the name");
+        first.Message.ShouldNotContain("already running");
+
+        var (later, laterExit) = GateRefusal.For(GateHold.Implausible, Night, heldExitCode: 0, GateOutcome.Unopenable);
+
+        laterExit.ShouldBe(ExitCode.Errors);
+        later.Code.ShouldBe(DiagnosticCode.RotationGateHeld, "four hours of an unusable name is reported the way a held gate is");
     }
 
     /// <summary>

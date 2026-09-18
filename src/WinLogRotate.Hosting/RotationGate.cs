@@ -17,6 +17,20 @@ public enum GateOutcome
 
     /// <summary>Acquired, but the previous holder died without releasing it.</summary>
     AcquiredAfterAbandon,
+
+    /// <summary>
+    /// The gate could not be opened at all: its name is held by a kernel object that is not a
+    /// mutex, or the gate vanished under every attempt to join it. Not entered - the run cannot
+    /// tell whether another rotation is running, so it must not proceed.
+    /// </summary>
+    /// <remarks>
+    /// An outcome rather than an exception, because an exception here ended the run with exit 4
+    /// and <c>LR1006</c>, "a defect in the product", for a condition that is somebody else's
+    /// object. The run refuses it the way it refuses a held gate: the refusal is recorded, and a
+    /// name still unusable hours later is reported as a gate held too long, whose remedy - find
+    /// the holder and end it - is the right one here too.
+    /// </remarks>
+    Unopenable,
 }
 
 /// <summary>
@@ -51,10 +65,10 @@ public sealed class RotationGate : IDisposable
     /// </remarks>
     private const MutexRights Rights = MutexRights.Synchronize | MutexRights.Modify;
 
-    private readonly Mutex _mutex;
+    private readonly Mutex? _mutex;
     private readonly bool _held;
 
-    private RotationGate(Mutex mutex, bool held, GateOutcome outcome, bool createdNew)
+    private RotationGate(Mutex? mutex, bool held, GateOutcome outcome, bool createdNew)
     {
         _mutex = mutex;
         _held = held;
@@ -64,7 +78,7 @@ public sealed class RotationGate : IDisposable
 
     public GateOutcome Outcome { get; }
 
-    public bool Entered => Outcome != GateOutcome.Busy;
+    public bool Entered => Outcome is GateOutcome.Acquired or GateOutcome.AcquiredAfterAbandon;
 
     /// <summary>
     /// Whether this process brought the gate into existence, rather than joining one already
@@ -93,7 +107,14 @@ public sealed class RotationGate : IDisposable
     /// </remarks>
     internal static RotationGate Enter(string name, TimeSpan wait)
     {
-        var (mutex, createdNew) = OpenOrCreate(name);
+        // Retried, because the join can lose a race with the holder closing its last handle;
+        // bounded, because a name that is not a mutex never becomes one. See GateOpenRetry.
+        if (!GateOpenRetry.Try(() => OpenOrCreate(name), Thread.Sleep, out var opened))
+        {
+            return new RotationGate(null, held: false, GateOutcome.Unopenable, createdNew: false);
+        }
+
+        var (mutex, createdNew) = opened;
 
         try
         {
@@ -171,6 +192,11 @@ public sealed class RotationGate : IDisposable
 
     public void Dispose()
     {
+        if (_mutex is null)
+        {
+            return;
+        }
+
         if (_held)
         {
             try
@@ -185,9 +211,5 @@ public sealed class RotationGate : IDisposable
         }
 
         _mutex.Dispose();
-
-        // Without this the JIT may collect the mutex while it is still meant to be held,
-        // because nothing else references it after the last use. A classic and very quiet bug.
-        GC.KeepAlive(_mutex);
     }
 }

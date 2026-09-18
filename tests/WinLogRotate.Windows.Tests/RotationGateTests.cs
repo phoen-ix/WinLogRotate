@@ -167,4 +167,30 @@ public sealed class RotationGateTests
         using var second = RotationGate.Enter(name, TimeSpan.Zero);
         second.Outcome.ShouldBe(GateOutcome.Acquired);
     }
+
+    /// <summary>
+    /// A name held by something that is not a mutex is reported, not thrown.
+    /// </summary>
+    /// <remarks>
+    /// Any local account can create a kernel object under the gate's name - the namespace is
+    /// Global and the name is public. When it is not a mutex the create is refused with
+    /// <c>WaitHandleCannotBeOpenedException</c>, which used to escape <c>run</c> as exit 4 and
+    /// <c>LR1006</c>, "a defect in the product". The gate now says it could not be opened and
+    /// the run refuses itself the way it refuses a held gate.
+    /// </remarks>
+    [Fact]
+    public void ANameHeldByAnotherKindOfObjectIsReportedNotThrown()
+    {
+        WindowsOnly.Require();
+
+        var name = Name();
+
+        using var squatter = new EventWaitHandle(false, EventResetMode.ManualReset, name);
+
+        using var gate = RotationGate.Enter(name, TimeSpan.Zero);
+
+        gate.Outcome.ShouldBe(GateOutcome.Unopenable);
+        gate.Entered.ShouldBeFalse("the run cannot tell whether another rotation is running");
+        gate.CreatedNew.ShouldBeFalse();
+    }
 }
