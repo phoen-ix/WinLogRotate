@@ -49,4 +49,20 @@ public sealed class WindowLayoutTests
             - MainWindowLayout.FrameWidth
             - MainWindowLayout.NavigationWidth
             - (2 * MainWindowLayout.ContentPadding));
+
+    /// <summary>The empty state's button has room for its caption, by the same coarse rule as the toolbar's.</summary>
+    [Fact]
+    public void TheEmptyStateButtonHasRoomForItsCaption() =>
+        JobsEmptyState.Add.Width.ShouldBeGreaterThanOrEqualTo((JobsEmptyState.Add.Text.Length * 6) + 12);
+
+    /// <summary>The first thing a new user reads says what a job is, in words with no jargon in them.</summary>
+    [Fact]
+    public void TheEmptyStateSpeaksPlainly()
+    {
+        JobsEmptyState.Sentence.ShouldContain("log files", Case.Sensitive);
+        JobsEmptyState.Sentence.ShouldNotContain("glob", Case.Insensitive);
+        JobsEmptyState.Sentence.ShouldNotContain("pattern", Case.Insensitive);
+        JobsEmptyState.Hint.ShouldContain("winlogrotate import", Case.Sensitive);
+    }
 }
+

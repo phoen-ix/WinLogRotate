@@ -61,3 +61,22 @@ public static class JobsToolbar
     /// <summary>What the row of them takes, margins included.</summary>
     public static int Width => Buttons.Sum(b => b.Width + (2 * Margin));
 }
+
+/// <summary>
+/// What the Jobs page shows when there are no jobs: what a job is, and one thing to press.
+/// </summary>
+/// <remarks>
+/// The first thing a new user reads. A grid with no rows and seven toolbar buttons said nothing
+/// about what to do; three sentences and a button do.
+/// </remarks>
+public static class JobsEmptyState
+{
+    public const string Sentence =
+        "No jobs yet. A job says which log files to look after, who starts a fresh file, "
+        + "and how many old copies to keep. The scheduled task runs every enabled job each night.";
+
+    public const string Hint = "Have a Linux logrotate configuration? 'winlogrotate import' converts it.";
+
+    public static ToolbarButton Add { get; } = new("Add a job\u2026", 110);
+}
+
