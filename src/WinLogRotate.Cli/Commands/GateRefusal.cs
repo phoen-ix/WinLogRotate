@@ -48,15 +48,20 @@ internal static class GateRefusal
             // find what holds the name and end it. Said in its own words here, because
             // "another rotation is already running" is not what happened, and an operator told
             // that would wait for a rotation that is not there to finish.
+            // Warning, unlike a gate that is merely busy: a busy gate is a normal night, a name
+            // nothing can open is not, and at Info - with the task's --lock-held-exit 0 - the
+            // first night of it reached neither the Event Log nor Task Scheduler's result column.
             (_, GateOutcome.Unopenable) => (new CliDiagnostic
             {
-                Severity = Severity.Info,
+                Severity = Severity.Warning,
                 Code = DiagnosticCode.AlreadyRunning,
                 Message = "The rotation gate could not be opened: its name is held by a kernel "
-                        + "object that is not a mutex, so this run cannot tell whether another "
-                        + "rotation is running; nothing was done.",
-                Remedy = "Global\\WinLogRotate.Rotation should be a mutex. Find what holds the "
-                       + "name with Process Explorer or handle.exe and end it.",
+                        + "object that is not a mutex, or by a mutex this account may not open, "
+                        + "so this run cannot tell whether another rotation is running; nothing "
+                        + "was done.",
+                Remedy = "Global\\WinLogRotate.Rotation should be a mutex every local account may "
+                       + "synchronise on. Find what holds the name with Process Explorer or "
+                       + "handle.exe and end it.",
             }, heldExitCode),
 
             _ => (new CliDiagnostic

@@ -163,7 +163,18 @@ public sealed class RotationGate : IDisposable
         {
             // Somebody created it between the open and the create - the very race this method
             // exists to survive. The object is there now, so join it.
-            return (MutexAcl.OpenExisting(name, Rights), false);
+            try
+            {
+                return (MutexAcl.OpenExisting(name, Rights), false);
+            }
+            catch (UnauthorizedAccessException e)
+            {
+                // It is a mutex, and its creator granted this account nothing - not ours, then,
+                // because ours lets every local account synchronise. The same answer as a name
+                // held by a non-mutex: unusable, said as such, not a defect.
+                throw new WaitHandleCannotBeOpenedException(
+                    "The gate's name is held by a mutex this account may not open.", e);
+            }
         }
     }
 
