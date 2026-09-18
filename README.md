@@ -133,6 +133,11 @@ winlogrotate run --dry-run            # exactly what would happen. changes nothi
 winlogrotate doctor                   # paths, permissions, schedule — in one place
 ```
 
+Or open the GUI. With no jobs it says what a job is and offers to add one: pick a log file,
+say whether WinLogRotate or the application starts the fresh file, choose how often and how many
+copies to keep, and one sentence restates what will happen. Every other setting is under
+**Advanced settings**, captioned in plain words with its default and where its value comes from.
+
 `--dry-run` is the same code path as a real run, stopped one step earlier — not a separate
 description that can drift from what the executor does. `job set --dry-run` works the same way:
 validate and save differ by that one flag, so a form cannot show a green tick through one route

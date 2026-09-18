@@ -239,10 +239,15 @@ any other.
 Repeat `--paths` for more than one pattern. Nothing is split on a separator, because a Windows
 path may contain any of them.
 
-The GUI's Jobs page does the same thing through a form — New, Edit, Enable/Disable, Remove — and
-sends exactly the keys you changed. A field it shows as **inherited** stays inherited unless you
-type in it, and the Source column says which is which while you edit. Check validates without
-writing and without asking for administrator rights; Save asks once.
+The GUI's Jobs page does the same thing through a form and sends exactly the keys you changed.
+**Basics** asks the three things a new job needs — which files (Browse picks a log and offers
+the wildcard that names its series, and a line underneath says how many files that matches),
+who rotates them, and how much to keep — and restates the answer as one sentence. **Advanced**
+is every key on this page as a typed control, captioned in plain words with the key name beside
+it, its default shown, a label saying whether the value is *set here* or *inherited*, and one
+line saying what it does; a value the CLI would refuse is said beside the box before Check is
+pressed. A field shown as inherited stays inherited unless you type in it. Check validates
+without writing and without asking for administrator rights; Save asks once.
 
 ## Other tables
 

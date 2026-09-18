@@ -23,6 +23,24 @@ public sealed class JobsPage : UserControl
 
     private readonly Label _status = new() { Dock = DockStyle.Bottom, Height = 24 };
 
+    /// <summary>
+    /// What the page shows instead of an empty grid: what a job is, and one button that adds one.
+    /// </summary>
+    /// <remarks>
+    /// A grid with no rows under seven toolbar buttons said nothing about what to do next, and
+    /// the first thing a new user wants is to add the log file they installed this for. The
+    /// sentences are <see cref="JobsEmptyState"/>'s, so a test can read them; the width the
+    /// text wraps at is the narrowest window's, from the layout.
+    /// </remarks>
+    private readonly FlowLayoutPanel _empty = new()
+    {
+        Dock = DockStyle.Fill,
+        FlowDirection = FlowDirection.TopDown,
+        WrapContents = false,
+        Padding = new Padding(24),
+        Visible = false,
+    };
+
     // Never wrapping: the panel is one row high, so a wrapped button was a hidden one - which
     // is what Check configuration and Open folder were at the narrowest window. The widths come
     // from JobsToolbar, and WindowLayoutTests adds them up against that window.
@@ -92,7 +110,28 @@ public sealed class JobsPage : UserControl
 
         _toolbar.Controls.AddRange([add, edit, toggle, remove, refresh, check, open]);
 
+        var addFirst = Tool(JobsEmptyState.Add);
+        addFirst.Click += async (_, _) => await OneAtATimeAsync(() => EditAsync(null)).ConfigureAwait(true);
+
+        _empty.Controls.Add(new Label
+        {
+            Text = JobsEmptyState.Sentence,
+            AutoSize = true,
+            MaximumSize = new Size(MainWindowLayout.NarrowestContentWidth, 0),
+            Margin = new Padding(0, 0, 0, 12),
+        });
+        _empty.Controls.Add(addFirst);
+        _empty.Controls.Add(new Label
+        {
+            Text = JobsEmptyState.Hint,
+            AutoSize = true,
+            MaximumSize = new Size(MainWindowLayout.NarrowestContentWidth, 0),
+            ForeColor = Theme.Current.Muted,
+            Margin = new Padding(0, 12, 0, 0),
+        });
+
         Controls.Add(_grid);
+        Controls.Add(_empty);
         Controls.Add(_toolbar);
         Controls.Add(_status);
 
@@ -198,6 +237,11 @@ public sealed class JobsPage : UserControl
         _status.Text = said is null ? view.Summary : $"{said}  {view.Summary}";
         _status.ForeColor = view.Unreadable ? Theme.Current.Danger : Theme.Current.Muted;
 
+        // No jobs: say what one is and offer to add it, instead of an empty grid.
+        var empty = view.Rows.Count == 0 && !view.Unreadable;
+        _grid.Visible = !empty;
+        _empty.Visible = empty;
+
         if (view.Unreadable)
         {
             // A malformed envelope means a version mismatch far more often than a bug, so say
@@ -297,11 +341,14 @@ public sealed class JobsPage : UserControl
     /// </remarks>
     private async Task EditAsync(string? job)
     {
+        var wasEmpty = _empty.Visible;
         var said = await JobEditor.ShowAsync(this, _cli, _configDir, job).ConfigureAwait(true);
 
         if (said is not null && !IsDisposed)
         {
-            await LoadAsync(said).ConfigureAwait(true);
+            // The first job ever written gets one more sentence: what to do next, and that it
+            // changes nothing. A dialog would be one click too many for a hint.
+            await LoadAsync(wasEmpty ? $"{said}  {JobEditorText.FirstJobFollowUp}" : said).ConfigureAwait(true);
         }
     }
 
