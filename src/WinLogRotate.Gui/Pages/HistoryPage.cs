@@ -34,6 +34,13 @@ public sealed class HistoryPage : UserControl
         _cli = cli;
         _configDir = configDir;
 
+        // Scaled with the monitor, in the order MainForm explains: layout suspended, the mode
+        // and the dimensions, the controls, and then the one scale. A page is created after
+        // that window has scaled, so it is not scaled by it and does this for itself.
+        SuspendLayout();
+        AutoScaleMode = AutoScaleMode.Dpi;
+        AutoScaleDimensions = new SizeF(96F, 96F);
+
         _grid.Columns.Add("when", "When");
         _grid.Columns.Add("job", "Job");
         _grid.Columns.Add("what", "What");
@@ -55,6 +62,9 @@ public sealed class HistoryPage : UserControl
         Controls.Add(_status);
 
         Load += async (_, _) => await LoadAsync().ConfigureAwait(true);
+
+        ResumeLayout(false);
+        PerformAutoScale();
     }
 
     private async Task LoadAsync()

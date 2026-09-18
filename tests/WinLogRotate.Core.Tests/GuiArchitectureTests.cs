@@ -154,6 +154,9 @@ public sealed partial class GuiArchitectureTests
     public void EveryWindowTakesItsPositionsFromALayout()
     {
         GuiFiles()
+            // Boxes.cs is the bridge: the one place a layout's Box becomes a Rectangle, and every
+            // rectangle it builds is a box the layout tests have already seen.
+            .Where(f => Path.GetFileName(f) != "Boxes.cs")
             .Where(f => Code(f).Contains("new Rectangle(", StringComparison.Ordinal))
             .Select(Path.GetFileName)
             .ShouldBeEmpty("a hand-typed position is one the layout tests cannot see");
@@ -172,6 +175,80 @@ public sealed partial class GuiArchitectureTests
             code.ShouldContain(layout, customMessage: $"{file} must ask its layout");
             code.ShouldContain("layout.ClientHeight", customMessage: $"{file}'s client size is the layout's too");
         }
+    }
+
+    [GeneratedRegex(@":\s*(?:Form|UserControl)\b|new\s+Form\b", RegexOptions.Compiled)]
+    private static partial Regex IsAWindow();
+
+    /// <summary>
+    /// Every window and every page scales with the monitor.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// <c>ApplicationHighDpiMode</c> is PerMonitorV2, which scales the fonts, and no form set an
+    /// <c>AutoScaleMode</c>, so nothing scaled the pixels: at 125 per cent a 24-pixel box on a
+    /// 30-pixel pitch held 30-pixel text, and an 18-pixel caption clipped its own descenders.
+    /// </para>
+    /// <para>
+    /// Pages as well as forms, and for a reason rather than for symmetry: a page is created after
+    /// the main window has scaled, so the window does not scale it, and it has to scale itself.
+    /// Dimensions of 96 are what say that every number in this project is a logical pixel at 100
+    /// per cent.
+    /// </para>
+    /// <para>
+    /// The order is the mechanism, so the order is what is asserted. The framework scales a
+    /// window once, at the first layout after its dimensions are set, and scales whatever exists
+    /// at that moment; with layout running, setting the dimensions is that layout, before a
+    /// single control has been added, and the two lines are then true and do nothing. So layout
+    /// is suspended first, the controls come after the dimensions, and <c>PerformAutoScale</c>
+    /// after the controls is the one scale.
+    /// </para>
+    /// </remarks>
+    [Fact]
+    public void EveryWindowScalesWithTheMonitor()
+    {
+        var windows = GuiFiles()
+            .Select(f => (Name: Path.GetFileName(f), Code: Code(f)))
+            .Where(f => IsAWindow().IsMatch(f.Code))
+            .ToArray();
+
+        // Self-check: the main window, the editor, two dialogs and six pages.
+        windows.Length.ShouldBeGreaterThan(7, "found almost no windows, so the scan has stopped recognising them");
+
+        string[] order =
+        [
+            "SuspendLayout()",
+            "AutoScaleMode = AutoScaleMode.Dpi",
+            "AutoScaleDimensions = new SizeF(96F, 96F)",
+            "ResumeLayout(",
+            "PerformAutoScale()",
+        ];
+
+        windows
+            .Where(f => !InOrder(f.Code, order))
+            .Select(f => f.Name)
+            .ShouldBeEmpty(
+                "a window scales with the monitor only when it suspends layout, sets AutoScaleMode.Dpi "
+                + "and 96-pixel dimensions, builds its controls, resumes, and then calls PerformAutoScale - "
+                + "in that order; any other keeps 100 per cent boxes under 125 per cent text");
+    }
+
+    /// <summary>Whether every phrase appears, each after the one before it.</summary>
+    private static bool InOrder(string code, IReadOnlyList<string> phrases)
+    {
+        var at = -1;
+
+        foreach (var phrase in phrases)
+        {
+            at = code.IndexOf(phrase, at + 1, StringComparison.Ordinal);
+
+            if (at < 0)
+            {
+                return false;
+            }
+        }
+
+        return true;
     }
 
     /// <summary>

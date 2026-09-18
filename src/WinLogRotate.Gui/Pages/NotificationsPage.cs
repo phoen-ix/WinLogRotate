@@ -40,6 +40,13 @@ public sealed class NotificationsPage : UserControl
         _cli = cli;
         _configDir = configDir;
 
+        // Scaled with the monitor, in the order MainForm explains: layout suspended, the mode
+        // and the dimensions, the controls, and then the one scale. A page is created after
+        // that window has scaled, so it is not scaled by it and does this for itself.
+        SuspendLayout();
+        AutoScaleMode = AutoScaleMode.Dpi;
+        AutoScaleDimensions = new SizeF(96F, 96F);
+
         var refresh = new Button { Text = "Refresh", Width = 90, FlatStyle = FlatStyle.System };
         refresh.Click += async (_, _) => await LoadAsync().ConfigureAwait(true);
 
@@ -70,6 +77,9 @@ public sealed class NotificationsPage : UserControl
         Controls.Add(_summary);
 
         Load += async (_, _) => await LoadAsync().ConfigureAwait(true);
+
+        ResumeLayout(false);
+        PerformAutoScale();
     }
 
     /// <summary>The provider named by the selected row, if that row is a provider.</summary>

@@ -40,6 +40,13 @@ public sealed class SchedulingPage : UserControl
         _cli = cli;
         _configDir = configDir;
 
+        // Scaled with the monitor, in the order MainForm explains: layout suspended, the mode
+        // and the dimensions, the controls, and then the one scale. A page is created after
+        // that window has scaled, so it is not scaled by it and does this for itself.
+        SuspendLayout();
+        AutoScaleMode = AutoScaleMode.Dpi;
+        AutoScaleDimensions = new SizeF(96F, 96F);
+
         _log = new TextBox
         {
             Dock = DockStyle.Fill,
@@ -79,6 +86,9 @@ public sealed class SchedulingPage : UserControl
         // and RefreshStatusAsync is what learns it; pre-selecting one turned "I did not touch
         // this page" into "remove the service".
         Load += async (_, _) => await RefreshStatusAsync().ConfigureAwait(true);
+
+        ResumeLayout(false);
+        PerformAutoScale();
     }
 
     private static Label Hint(string text) =>

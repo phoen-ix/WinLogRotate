@@ -94,8 +94,19 @@ public sealed class JobEditor : Form
         BackColor = Theme.Current.Window;
         ForeColor = Theme.Current.Text;
 
+        // Scaled with the monitor, in the order MainForm explains: layout suspended, the mode
+        // and the dimensions, the controls, and then the one scale. The layout's numbers are
+        // logical pixels at 100 per cent, and PerformAutoScale is what turns them into the
+        // monitor's.
+        SuspendLayout();
+        AutoScaleMode = AutoScaleMode.Dpi;
+        AutoScaleDimensions = new SizeF(96F, 96F);
+
         Build();
         Fill();
+
+        ResumeLayout(false);
+        PerformAutoScale();
 
         // After the controls exist, because a dialog is built long after the main window was
         // themed - and an unthemed DataGridView keeps light headers on a dark window.

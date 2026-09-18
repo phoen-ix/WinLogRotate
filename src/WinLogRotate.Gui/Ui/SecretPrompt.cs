@@ -55,10 +55,16 @@ public static class SecretPrompt
             StartPosition = FormStartPosition.CenterParent,
             MinimizeBox = false,
             MaximizeBox = false,
-            ClientSize = new Size(layout.ClientWidth, layout.ClientHeight),
             BackColor = colors.Window,
             ForeColor = colors.Text,
         };
+
+        // Scaled with the monitor, in the order MainForm explains: layout suspended, the mode
+        // and the dimensions, the controls, and then the one scale.
+        form.SuspendLayout();
+        form.AutoScaleMode = AutoScaleMode.Dpi;
+        form.AutoScaleDimensions = new SizeF(96F, 96F);
+        form.ClientSize = new Size(layout.ClientWidth, layout.ClientHeight);
 
         var picked = new List<RadioButton>();
 
@@ -125,6 +131,9 @@ public static class SecretPrompt
         form.Controls.Add(cancel);
         form.AcceptButton = ok;
         form.CancelButton = cancel;
+
+        form.ResumeLayout(false);
+        form.PerformAutoScale();
 
         // The same walk the main window got. It was coloured by hand here, which left the text
         // boxes drawing their own white on a dark form - survivable, inconsistent, and one more

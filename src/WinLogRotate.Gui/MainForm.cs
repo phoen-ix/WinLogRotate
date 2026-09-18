@@ -36,6 +36,24 @@ public sealed class MainForm : Form
     {
         _configDir = configDir;
 
+        // Scaled with the monitor. ApplicationHighDpiMode is PerMonitorV2, which scales the
+        // fonts, and nothing scaled the pixels: at 125 per cent a 24-pixel box on a 30-pixel
+        // pitch held 30-pixel text, and an 18-pixel caption clipped its own descenders. The
+        // dimensions say that every number in this project is a logical pixel at 100 per cent.
+        //
+        // The order is the mechanism. The framework scales a window once, at the first layout
+        // after its dimensions are set, and scales whatever exists at that moment - and with
+        // layout running, setting the dimensions is that layout, before a single control has
+        // been added. So layout is suspended for the whole build, and PerformAutoScale at the
+        // end scales everything that exists by then - what was placed by hand and what kept its
+        // default size - and records that it has, so nothing is scaled twice.
+        //
+        // Every window and every page does the same, because a page is created after this
+        // window has scaled and so is not scaled by it.
+        SuspendLayout();
+        AutoScaleMode = AutoScaleMode.Dpi;
+        AutoScaleDimensions = new SizeF(96F, 96F);
+
         Text = $"{ProductInfo.Name} {ProductInfo.Version}";
         MinimumSize = new Size(880, 560);
         ClientSize = new Size(1000, 640);
@@ -49,6 +67,9 @@ public sealed class MainForm : Form
         Controls.Add(_banner);
 
         Load += OnLoad;
+
+        ResumeLayout(false);
+        PerformAutoScale();
     }
 
     private async void OnLoad(object? sender, EventArgs e)
@@ -133,7 +154,10 @@ public sealed class MainForm : Form
 
         _banner.Text = text;
         _banner.ForeColor = Tone(severity);
-        _banner.Height = 40;
+
+        // In device units: this runs after the window has scaled, so a logical 40 here would be
+        // the one height on the form that did not grow with the monitor.
+        _banner.Height = LogicalToDeviceUnits(40);
         _banner.Visible = true;
     }
 

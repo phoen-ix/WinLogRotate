@@ -93,6 +93,12 @@ public static partial class LrDialog
             ForeColor = colors.Text,
         };
 
+        // Scaled with the monitor, in the order MainForm explains: layout suspended, the mode
+        // and the dimensions, the controls, and then the one scale.
+        form.SuspendLayout();
+        form.AutoScaleMode = AutoScaleMode.Dpi;
+        form.AutoScaleDimensions = new SizeF(96F, 96F);
+
         var label = new Label
         {
             Text = message,
@@ -186,35 +192,38 @@ public static partial class LrDialog
             form.CancelButton = affirmative;
         }
 
+        // Placed rather than converted: the first call runs before the form has scaled, and
+        // PerformAutoScale below scales what it finds, while a click on the expander runs
+        // afterwards and has to scale for itself. Boxes.Placed knows which is which.
         void Arrange(bool showing)
         {
             var layout = DialogLayout.Compute(hasDetails, showing, yesNo);
 
-            form.ClientSize = new Size(layout.ClientWidth, layout.ClientHeight);
-            label.Bounds = layout.Message.ToRectangle();
+            form.ClientSize = Boxes.Placed(layout.ClientWidth, layout.ClientHeight, form);
+            label.Bounds = layout.Message.Placed(form);
 
             if (expander is not null && layout.Expander is { } e)
             {
-                expander.Bounds = e.ToRectangle();
+                expander.Bounds = e.Placed(form);
                 expander.Text = showing ? "Hide details" : "Show details";
             }
 
             if (copy is not null && layout.Copy is { } c)
             {
-                copy.Bounds = c.ToRectangle();
+                copy.Bounds = c.Placed(form);
             }
 
             if (detailBox is not null)
             {
                 detailBox.Visible = layout.Details is not null;
-                detailBox.Bounds = (layout.Details ?? new Box(layout.Message.X, layout.Message.Bottom, layout.Message.Width, 0)).ToRectangle();
+                detailBox.Bounds = (layout.Details ?? new Box(layout.Message.X, layout.Message.Bottom, layout.Message.Width, 0)).Placed(form);
             }
 
-            affirmative.Bounds = layout.Affirmative.ToRectangle();
+            affirmative.Bounds = layout.Affirmative.Placed(form);
 
             if (negative is not null && layout.Negative is { } n)
             {
-                negative.Bounds = n.ToRectangle();
+                negative.Bounds = n.Placed(form);
             }
         }
 
@@ -224,6 +233,9 @@ public static partial class LrDialog
         {
             expander.LinkClicked += (_, _) => Arrange(showing: !detailBox.Visible);
         }
+
+        form.ResumeLayout(false);
+        form.PerformAutoScale();
 
         return form;
     }

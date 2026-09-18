@@ -31,6 +31,13 @@ public sealed class RunPage : UserControl
         _cli = cli;
         _configDir = configDir;
 
+        // Scaled with the monitor, in the order MainForm explains: layout suspended, the mode
+        // and the dimensions, the controls, and then the one scale. A page is created after
+        // that window has scaled, so it is not scaled by it and does this for itself.
+        SuspendLayout();
+        AutoScaleMode = AutoScaleMode.Dpi;
+        AutoScaleDimensions = new SizeF(96F, 96F);
+
         _output = new TextBox
         {
             Dock = DockStyle.Fill,
@@ -63,6 +70,9 @@ public sealed class RunPage : UserControl
         Controls.Add(hint);
         Controls.Add(toolbar);
         Controls.Add(_status);
+
+        ResumeLayout(false);
+        PerformAutoScale();
     }
 
     private async Task ExecuteAsync(bool dryRun)
