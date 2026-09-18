@@ -2,6 +2,7 @@ using System.Xml.Linq;
 using Microsoft.Extensions.Time.Testing;
 using Shouldly;
 using WinLogRotate.Hosting;
+using WinLogRotate.Hosting.Diagnostics;
 using WinLogRotate.Hosting.Hosts;
 using WinLogRotate.Hosting.Security;
 using Xunit;
@@ -511,6 +512,20 @@ public class InstallerNamePinningTests
     public void TheEventLogKeyMatches() =>
         Define(Nsi(), "EVENTLOG_KEY")
             .ShouldBe($@"SYSTEM\CurrentControlSet\Services\EventLog\{Names.EventLogName}\{Names.EventLogSource}");
+
+    /// <summary>
+    /// The writer looks for the source exactly where the installer registers it.
+    /// </summary>
+    /// <remarks>
+    /// <c>EventLogWriter.IsRegistered</c> asks the registry now rather than
+    /// <c>RegisterEventSourceW</c>, which succeeds for any name. The key it asks about is composed
+    /// from the same two names the installer's define is pinned against above, and this binds the
+    /// composition to the define so the two cannot drift apart.
+    /// </remarks>
+    [Fact]
+    public void TheWriterLooksWhereTheInstallerRegistersTheSource() =>
+        EventLogSourceKey.PathFor(Names.EventLogName, Names.EventLogSource)
+            .ShouldBe(Define(Nsi(), "EVENTLOG_KEY"));
 
     /// <summary>
     /// Drift is "this was set up and is now gone", not "there is nothing".

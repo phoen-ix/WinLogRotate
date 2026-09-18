@@ -1,5 +1,6 @@
 using System.Runtime.InteropServices;
 using System.Runtime.Versioning;
+using Microsoft.Win32;
 using WinLogRotate.Contracts;
 
 namespace WinLogRotate.Hosting.Diagnostics;
@@ -14,10 +15,12 @@ namespace WinLogRotate.Hosting.Diagnostics;
 /// diagnostic channel that can take down the thing it reports on is worse than no channel.
 /// </para>
 /// <para>
-/// The source is registered by the installer, because <c>RegisterEventSource</c> only succeeds
-/// for a source already present in the registry and creating one needs administrator. A
-/// per-user install deliberately registers nothing, so being unavailable is an ordinary,
-/// expected outcome and not a fault to report.
+/// The source is registered by the installer, because creating one needs administrator. Whether
+/// it exists is asked of the registry, not of <c>RegisterEventSource</c>: that call succeeds for
+/// any name at all, quietly attaching an unregistered source to the Application log with no
+/// message file behind it, so that every event written through it renders in Event Viewer as
+/// "the description for Event ID cannot be found". A per-user install deliberately registers
+/// nothing, so being unavailable is an ordinary, expected outcome and not a fault to report.
 /// </para>
 /// <para>
 /// The handle is opened once and released on process exit rather than being owned by a caller.
@@ -53,12 +56,49 @@ public static class EventLogWriter
     private static readonly EventLogBudget Mirrored = EventLogBudget.ForDiagnostics();
     private static readonly EventLogBudget Digests = EventLogBudget.ForDigests();
 
-    /// <summary>True if the source is registered and writable on this machine.</summary>
+    /// <summary>
+    /// True if the source is registered under the Application log on this machine, and so can be
+    /// written with a message file behind it.
+    /// </summary>
+    /// <remarks>
+    /// This was true on every Windows machine for a release, because it trusted
+    /// <c>RegisterEventSourceW</c> - which succeeds for a name nothing has registered. So
+    /// <c>doctor</c> reported a per-user install as writable, the <c>eventlog:</c> target's
+    /// per-user refusal never fired, and the events that were written could not be rendered.
+    /// </remarks>
     public static bool IsRegistered(string source)
     {
         lock (Gate)
         {
             return Open(source) != 0;
+        }
+    }
+
+    /// <summary>
+    /// Whether Windows has <paramref name="source"/> on record under <paramref name="log"/>.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// The registry is the only place that knows. <c>RegisterEventSourceW</c> answers yes to any
+    /// name, and there is no query call beside it; the key the installer writes is the fact
+    /// itself.
+    /// </para>
+    /// <para>
+    /// Internal, remembering nothing, and taking the log name, so the Windows suite can drive it
+    /// against a scratch source under a scratch log without consulting the product's own. Never
+    /// throws: a key this account may not read is a source it cannot vouch for.
+    /// </para>
+    /// </remarks>
+    internal static bool SourceIsRegistered(string log, string source)
+    {
+        try
+        {
+            using var key = Registry.LocalMachine.OpenSubKey(EventLogSourceKey.PathFor(log, source), writable: false);
+            return key is not null;
+        }
+        catch (Exception e) when (e is System.Security.SecurityException or UnauthorizedAccessException or IOException)
+        {
+            return false;
         }
     }
 
@@ -159,7 +199,10 @@ public static class EventLogWriter
         }
     }
 
-    /// <summary>Opens the source once per process. Caller holds <see cref="Gate"/>.</summary>
+    /// <summary>
+    /// Opens the source once per process, and only if Windows has it on record. Caller holds
+    /// <see cref="Gate"/>.
+    /// </summary>
     private static nint Open(string source)
     {
         if (_tried)
@@ -168,6 +211,14 @@ public static class EventLogWriter
         }
 
         _tried = true;
+
+        // Asked first, because the call below cannot say no. Zero is what every caller already
+        // reads as "not registered", so an absent source writes nothing rather than writing
+        // events Event Viewer cannot render.
+        if (!SourceIsRegistered(Names.EventLogName, source))
+        {
+            return _handle;
+        }
 
         try
         {
