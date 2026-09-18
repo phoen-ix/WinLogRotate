@@ -210,4 +210,69 @@ public sealed class NotifyCredentialTests : IDisposable
         config.Notify.Threshold.ShouldBe(Severity.Critical);
         config.Notify.WouldSend.ShouldBeTrue();
     }
+
+    // ---- references the resolver will refuse ------------------------------------------------
+
+    /// <summary>
+    /// A credential the resolver refuses is reported by config check, not first by a send.
+    /// </summary>
+    /// <remarks>
+    /// <c>@command:</c> parses cleanly and <c>SecretResolver</c> refuses it permanently, so a
+    /// configuration that could never authenticate passed <c>config check</c> in silence and the
+    /// first anyone heard was a notification that did not go. Under LR5001, the code a target
+    /// missing its credential already gets, at the value's own line and column.
+    /// </remarks>
+    [Fact]
+    public void ACommandReferenceIsWarnedAboutAtConfigTime()
+    {
+        var config = Load("""
+            schema = 1
+            [notify.email.ses]
+            host = "smtp.example.com"
+            password = "@command:vault read -field=pw kv/smtp"
+            """, new KnownSecrets());
+
+        var d = config.Diagnostics.Where(x => x.Code == DiagnosticCode.NotifyMisconfigured)
+            .ShouldHaveSingleItem();
+
+        d.Severity.ShouldBe(Severity.Warning);
+        d.Line.ShouldBe(4);
+        d.Message.ShouldContain("@command:");
+        d.Message.ShouldNotContain("vault read", Case.Sensitive, "the command line is not repeated");
+        d.Remedy.ShouldNotBeNull().ShouldContain("secret set");
+        config.HasErrors.ShouldBeFalse();
+    }
+
+    /// <summary>An <c>@env:</c> with no variable name can resolve to nothing, and is said so.</summary>
+    [Fact]
+    public void AnEnvironmentReferenceWithNoNameIsWarnedAboutAtConfigTime()
+    {
+        var config = Load("""
+            schema = 1
+            [notify.email.ses]
+            host = "smtp.example.com"
+            password = "@env:"
+            """, new KnownSecrets());
+
+        var d = config.Diagnostics.Where(x => x.Code == DiagnosticCode.NotifyMisconfigured)
+            .ShouldHaveSingleItem();
+
+        d.Severity.ShouldBe(Severity.Warning);
+        d.Line.ShouldBe(4);
+        d.Remedy.ShouldNotBeNull().ShouldContain("@env:VARIABLE_NAME");
+        config.HasErrors.ShouldBeFalse();
+    }
+
+    /// <summary>A named <c>@env:</c> is fine at config time; whether it is set is the run's question.</summary>
+    [Fact]
+    public void ANamedEnvironmentReferenceIsSilent()
+    {
+        Load("""
+            schema = 1
+            [notify.email.ses]
+            host = "smtp.example.com"
+            password = "@env:WLR_SMTP_PW"
+            """, new KnownSecrets())
+            .Diagnostics.ShouldNotContain(d => d.Code == DiagnosticCode.NotifyMisconfigured);
+    }
 }

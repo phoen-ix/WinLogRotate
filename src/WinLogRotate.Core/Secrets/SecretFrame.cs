@@ -57,6 +57,11 @@ public static class SecretFrame
 
         var length = BinaryPrimitives.ReadInt32LittleEndian(prefix);
 
-        return length > 0 && length <= MaxPayloadBytes && length % 64 == 0 ? length : -1;
+        // The padding's own boundary, not a literal 64: a payload PlaintextPadding did not
+        // produce is refused here, so the two have to agree, and a constant written twice is one
+        // that eventually does not.
+        return length > 0 && length <= MaxPayloadBytes && length % PlaintextPadding.Boundary == 0
+            ? length
+            : -1;
     }
 }

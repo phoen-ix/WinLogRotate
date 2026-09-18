@@ -577,6 +577,32 @@ public static class ConfigLoader
                             reference.Line, reference.Column,
                             remedy: $"winlogrotate secret set {reference.Key}");
                         break;
+
+                    // The two references SecretResolver refuses outright, said here rather than
+                    // at send time. Both parsed cleanly, so config check passed them, and the
+                    // first anyone learned was a notification that did not go - under the same
+                    // LR5001 a mistyped target gets, because a credential that can never resolve
+                    // is a target missing its credential.
+                    case SecretSource.Command:
+                        diagnostics.Warn(file, DiagnosticCode.NotifyMisconfigured,
+                            $"The {field} for '{provider.Name}' is an @command: reference, which is "
+                            + "not supported: the command line would sit in this file, and a "
+                            + "vault's own credentials with it. The credential will be refused when "
+                            + "it is needed.",
+                            reference.Line, reference.Column,
+                            remedy: $"winlogrotate secret set {SuggestSecretName(provider.Name, field)}   "
+                                  + $"then set {field} = \"@secret:{SuggestSecretName(provider.Name, field)}\", "
+                                  + "or @env:NAME where a container supplies it.");
+                        break;
+
+                    case SecretSource.Environment when string.IsNullOrWhiteSpace(reference.Key):
+                        diagnostics.Warn(file, DiagnosticCode.NotifyMisconfigured,
+                            $"The {field} for '{provider.Name}' is '@env:' with no variable name, so "
+                            + "there is nothing it could resolve to.",
+                            reference.Line, reference.Column,
+                            remedy: $"Write {field} = \"@env:VARIABLE_NAME\", naming the variable the "
+                                  + "run host sets.");
+                        break;
                 }
             }
         }

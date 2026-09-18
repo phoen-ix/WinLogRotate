@@ -16,8 +16,16 @@ namespace WinLogRotate.Core.Secrets;
 /// </remarks>
 public static class PlaintextPadding
 {
-    /// <summary>Everything is padded up to a multiple of this many bytes.</summary>
-    private const int Boundary = 64;
+    /// <summary>
+    /// Everything is padded up to a multiple of this many bytes.
+    /// </summary>
+    /// <remarks>
+    /// Internal rather than private so that <see cref="SecretFrame"/>, which refuses a payload
+    /// length that is not a multiple of it, reads the number from here instead of repeating it.
+    /// Changing it would change the wire format and the file format alike, so a test pins the
+    /// value.
+    /// </remarks>
+    internal const int Boundary = 64;
 
     private const int LengthPrefixBytes = 4;
 

@@ -135,6 +135,32 @@ public sealed class SecretInputTests
         SecretFrame.PayloadLength(prefix).ShouldBe(-1);
     }
 
+    /// <summary>
+    /// The frame's plausibility rule is the padding's boundary, read from the padding.
+    /// </summary>
+    /// <remarks>
+    /// <c>SecretFrame</c> wrote <c>% 64</c> by hand while <c>PlaintextPadding</c> kept its own
+    /// private 64. Two copies of one number agree until somebody changes one of them, and the
+    /// symptom would be every credential the GUI sends refused as implausible. The value itself
+    /// is pinned too: it is the on-disk and on-the-wire format, and changing it is a migration.
+    /// </remarks>
+    [Fact]
+    public void TheFrameAcceptsExactlyWhatThePaddingProduces()
+    {
+        PlaintextPadding.Boundary.ShouldBe(64);
+
+        Span<byte> prefix = stackalloc byte[4];
+
+        System.Buffers.Binary.BinaryPrimitives.WriteInt32LittleEndian(prefix, PlaintextPadding.Boundary);
+        SecretFrame.PayloadLength(prefix).ShouldBe(PlaintextPadding.Boundary);
+
+        System.Buffers.Binary.BinaryPrimitives.WriteInt32LittleEndian(prefix, PlaintextPadding.Boundary + 1);
+        SecretFrame.PayloadLength(prefix).ShouldBe(-1);
+
+        SecretFrame.PayloadLength(SecretFrame.Wrap(new string('x', 200)).AsSpan(0, 4))
+            .ShouldBe(4 * PlaintextPadding.Boundary, "4 + 200 bytes rounds up to the fourth boundary");
+    }
+
     // ---- the wiring ---------------------------------------------------------------------------
 
     /// <summary>

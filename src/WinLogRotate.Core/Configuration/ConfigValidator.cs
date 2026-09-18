@@ -14,9 +14,14 @@ public static class ConfigValidator
         var file = job.SourceFile ?? job.Name;
 
         // Entries are judged before any pattern consults them, so a job can never be rescued by
-        // an override too broad to honour. A refused entry is dropped rather than disabling the
-        // rest: an operator who wrote one good entry and one careless one should have the good
-        // one keep working, and the careless one named.
+        // an override too broad to honour. A refused entry is an Error, and an Error makes the
+        // job Invalid - so a job with one good entry and one careless one does not run until the
+        // careless one is fixed, and the careless one is named. That is the safe reading: the
+        // point of allowdangerous is that somebody looked, and an entry the guard will not honour
+        // is evidence that they did not. The good entries are still collected below, so every
+        // pattern is judged against the overrides that would apply and reported in one pass
+        // rather than one refusal per run. (This comment used to say the refused entry was
+        // dropped while the rest kept working. It never was; the Error saw to that.)
         var honoured = new List<string>();
         foreach (var entry in job.AllowDangerous)
         {
