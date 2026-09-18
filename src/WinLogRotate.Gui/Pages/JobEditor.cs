@@ -9,9 +9,10 @@ namespace WinLogRotate.Gui.Pages;
 /// </summary>
 /// <remarks>
 /// <para>
-/// Two views of one job. <b>Basics</b> asks the three things somebody adding a log file has to
-/// decide - which files, who rotates them, how much to keep - in their own words, and restates
-/// the answer as one sentence. <b>Advanced</b> is every key the schema knows, each a typed
+/// Two views of one job. <b>Basics</b> asks what somebody adding a log file has to decide -
+/// which files, how the log is taken away from the program writing it, how often, how many old
+/// copies to keep and for how long, how they are named and compressed, and where they go - in
+/// their own words, and restates the answer as one sentence. <b>Advanced</b> is every key the schema knows, each a typed
 /// control with the schema's caption, its default, where its value comes from, and one line
 /// saying what it does; there is no grid of raw keys, and nothing is called by its TOML name
 /// alone. The header - the name and the files - is shared, with a Browse button that turns a
@@ -67,8 +68,15 @@ public sealed class JobEditor : Form
     // ---- the Basics body --------------------------------------------------------------------
 
     private readonly List<Control> _basics = [];
-    private readonly RadioButton _rotateRadio = new() { Text = JobEditorText.RotateRadio, Checked = true };
-    private readonly RadioButton _manageRadio = new() { Text = JobEditorText.ManageRadio };
+    private readonly RadioButton[] _how =
+    [
+        new() { Text = JobEditorText.HowAuto, Checked = true },
+        new() { Text = JobEditorText.HowCopyTruncate },
+        new() { Text = JobEditorText.HowRename },
+        new() { Text = JobEditorText.HowManage },
+    ];
+
+    private readonly Label _howHint = new() { ForeColor = Theme.Current.Muted, AutoEllipsis = true };
     private readonly ComboBox _schedule = new() { DropDownStyle = ComboBoxStyle.DropDownList };
     private readonly Label _earlyLead = new() { Text = JobEditorText.EarlyLead, ForeColor = Theme.Current.Muted };
     private readonly TextBox _maxSize = new() { PlaceholderText = "100M" };
@@ -77,6 +85,11 @@ public sealed class JobEditor : Form
     private readonly Label _keepLead = new() { Text = JobEditorText.KeepLead, ForeColor = Theme.Current.Muted };
     private readonly TextBox _maxAge = new() { PlaceholderText = "never" };
     private readonly Label _keepUnit = new() { Text = JobEditorText.KeepUnit, ForeColor = Theme.Current.Muted };
+    private readonly ComboBox _names = new() { DropDownStyle = ComboBoxStyle.DropDownList };
+    private readonly ComboBox _compression = new() { DropDownStyle = ComboBoxStyle.DropDownList };
+    private readonly TextBox _oldDir = new() { PlaceholderText = JobEditorText.OldDirPlaceholder };
+    private readonly Button _browseFolder = new() { Text = JobEditorText.Browse, FlatStyle = FlatStyle.System };
+    private readonly CheckBox _createOldDir = new() { Text = JobEditorText.CreateOldDir };
     private readonly Label _summary = new() { ForeColor = Theme.Current.Muted };
 
     // ---- the Advanced body ------------------------------------------------------------------
@@ -92,6 +105,7 @@ public sealed class JobEditor : Form
 
     private readonly Label _status = new() { ForeColor = Theme.Current.Muted };
     private readonly LinkLabel _toggle = new();
+    private readonly Button _whatWouldHappen = new() { Text = JobEditorText.PreviewButton, FlatStyle = FlatStyle.System };
     private readonly Button _check = new() { Text = "Check", FlatStyle = FlatStyle.System };
     private readonly Button _save = new() { Text = "Save", FlatStyle = FlatStyle.System };
 
@@ -257,11 +271,14 @@ public sealed class JobEditor : Form
         _files.TextChanged += (_, _) => UpdateSummary();
 
         // Basics.
-        Basic(Caption("Who rotates", layout.WhoCaption));
-        Basic(_rotateRadio, layout.RotateRadio);
-        Basic(Caption(JobEditorText.RotateHint, layout.RotateHint));
-        Basic(_manageRadio, layout.ManageRadio);
-        Basic(Caption(JobEditorText.ManageHint, layout.ManageHint));
+        Basic(Caption("How", layout.HowCaption));
+        for (var i = 0; i < _how.Length; i++)
+        {
+            Basic(_how[i], layout.How[i]);
+            _how[i].CheckedChanged += (_, _) => HowChanged();
+        }
+
+        Basic(_howHint, layout.HowHint);
         Basic(Caption("How often", layout.WhenCaption));
         Basic(_schedule, layout.Schedule);
         Basic(_earlyLead, layout.EarlyLead);
@@ -273,6 +290,13 @@ public sealed class JobEditor : Form
         Basic(_maxAge, layout.MaxAge);
         Basic(_keepUnit, layout.KeepUnit);
         Basic(Caption(JobEditorText.KeepHint, layout.KeepHint));
+        Basic(Caption("Old copies", layout.CopiesCaption));
+        Basic(_names, layout.Names);
+        Basic(_compression, layout.Compression);
+        Basic(Caption("Put them in", layout.FolderCaption));
+        Basic(_oldDir, layout.OldDir);
+        Basic(_browseFolder, layout.BrowseFolder);
+        Basic(_createOldDir, layout.CreateOldDir);
         Basic(_summary, layout.Summary);
 
         _schedule.Items.Add(JobEditorModel.DefaultChoice(JobSchema.Find("schedule")?.Default));
@@ -284,11 +308,17 @@ public sealed class JobEditor : Form
             }
         }
 
-        _rotateRadio.CheckedChanged += (_, _) => WhoChanged();
+        _names.Items.AddRange([JobEditorText.NamesNumbered, JobEditorText.NamesDated]);
+        _compression.Items.AddRange([JobEditorText.CompressZip, JobEditorText.CompressGzip, JobEditorText.CompressNone]);
+
         _schedule.SelectedIndexChanged += (_, _) => ScheduleChanged();
         _maxSize.TextChanged += (_, _) => UpdateSummary();
         _rotate.TextChanged += (_, _) => UpdateSummary();
         _maxAge.TextChanged += (_, _) => UpdateSummary();
+        _names.SelectedIndexChanged += (_, _) => UpdateSummary();
+        _compression.SelectedIndexChanged += (_, _) => UpdateSummary();
+        _oldDir.TextChanged += (_, _) => UpdateSummary();
+        _browseFolder.Click += (_, _) => BrowseForFolder();
         JudgeOnLeave(_maxSize, "maxsize");
         JudgeOnLeave(_rotate, "rotate");
         JudgeOnLeave(_maxAge, "maxage");
@@ -333,6 +363,7 @@ public sealed class JobEditor : Form
         Place(_status, layout.Status);
         Controls.Add(Caption(JobEditorText.ButtonsHint, layout.ButtonsHint));
         Place(_toggle, layout.Toggle);
+        Place(_whatWouldHappen, layout.WhatWouldHappen);
         Place(_check, layout.Check);
         Place(_save, layout.Save);
 
@@ -352,6 +383,7 @@ public sealed class JobEditor : Form
         LrDialog.AddShield(_save);
 
         _toggle.LinkClicked += (_, _) => ShowAdvanced(!_showingAdvanced);
+        _whatWouldHappen.Click += async (_, _) => await OneAtATimeAsync(PreviewRunAsync).ConfigureAwait(true);
         _check.Click += async (_, _) => await OneAtATimeAsync(CheckAsync).ConfigureAwait(true);
         _save.Click += async (_, _) => await OneAtATimeAsync(SaveAsync).ConfigureAwait(true);
     }
@@ -504,9 +536,21 @@ public sealed class JobEditor : Form
         _enabled.Checked = !string.Equals(Field("enabled")?.Value, "false", StringComparison.OrdinalIgnoreCase);
 
         // Basics, from the file.
-        var managed = JobEditorModel.IsManaged(_original);
-        _manageRadio.Checked = managed;
-        _rotateRadio.Checked = !managed;
+        var how = JobEditorModel.HowRotatedShown(_original);
+        if (_isNew)
+        {
+            how = HowRotated.Auto;
+        }
+
+        foreach (var radio in _how)
+        {
+            radio.Enabled = how is not null;
+        }
+
+        if (how is { } answer)
+        {
+            _how[(int)answer].Checked = true;
+        }
 
         var schedule = Field("schedule")?.Value;
         if (JobEditorModel.SizeApplies(schedule))
@@ -521,6 +565,15 @@ public sealed class JobEditor : Form
         _maxSize.Text = Field("maxsize")?.Value ?? string.Empty;
         _rotate.Text = Field("rotate")?.Value ?? string.Empty;
         _maxAge.Text = Field("maxage")?.Value ?? string.Empty;
+        _names.SelectedIndex = string.Equals(Field("dateext")?.Value, "true", StringComparison.OrdinalIgnoreCase) ? 1 : 0;
+        _compression.SelectedIndex = (int)JobEditorModel.CompressionShown(Field("compress")?.Value, Field("compresstype")?.Value);
+        _oldDir.Text = Field("olddir")?.Value ?? string.Empty;
+        _createOldDir.Checked = string.Equals(Field("createolddir")?.Value, "true", StringComparison.OrdinalIgnoreCase);
+
+        _whatWouldHappen.Enabled = !_isNew;
+        _tips.SetToolTip(_whatWouldHappen, _isNew
+            ? "Save the job first; the preview runs the job as it is on disk."
+            : "Runs a dry run of this job, as if it were due tonight, and lists what it would do. Nothing is changed.");
 
         // Advanced, from the file.
         foreach (var row in _rows.Values)
@@ -530,7 +583,7 @@ public sealed class JobEditor : Form
 
         _filling = false;
 
-        WhoChanged();
+        HowChanged();
         ScheduleChanged();
         UpdateSummary();
         ShowAdvanced(false);
@@ -624,16 +677,35 @@ public sealed class JobEditor : Form
         _toggle.Text = JobEditorModel.AdvancedLinkText(JobEditorModel.AdvancedSetCount(_original), advanced);
     }
 
+    /// <summary>The radio that is on, or null when the file's strategy has no radio and the row is disabled.</summary>
+    private HowRotated? HowShown()
+    {
+        if (!_how[0].Enabled)
+        {
+            return null;
+        }
+
+        for (var i = 0; i < _how.Length; i++)
+        {
+            if (_how[i].Checked)
+            {
+                return (HowRotated)i;
+            }
+        }
+
+        return null;
+    }
+
     private BasicsAnswers Answers() => new(
-        _manageRadio.Checked ? HowRotated.Manage : HowRotated.Rename,
+        HowShown(),
         _schedule.SelectedItem as string,
         _maxSize.Text,
         _rotate.Text,
         _maxAge.Text,
-        Dated: false,
-        ArchiveCompression.Zip,
-        OldDir: null,
-        CreateOldDir: false);
+        Dated: _names.SelectedIndex == 1,
+        (ArchiveCompression)Math.Max(_compression.SelectedIndex, 0),
+        _oldDir.Text,
+        _createOldDir.Checked);
 
     private void CarryBasicsToAdvanced()
     {
@@ -650,55 +722,77 @@ public sealed class JobEditor : Form
     {
         _filling = true;
 
-        if (_rows.TryGetValue("kind", out var kind))
-        {
-            var managed = string.Equals(ReadRow(kind), "manage", StringComparison.OrdinalIgnoreCase);
-            _manageRadio.Checked = managed;
-            _rotateRadio.Checked = !managed;
-        }
+        string? Read(string key) => _rows.TryGetValue(key, out var row) ? ReadRow(row) : null;
 
-        if (_rows.TryGetValue("schedule", out var schedule))
-        {
-            var value = ReadRow(schedule);
-            if (JobEditorModel.SizeApplies(value))
+        var managed = string.Equals(Read("kind"), "manage", StringComparison.OrdinalIgnoreCase);
+        var how = managed
+            ? HowRotated.Manage
+            : Read("lockstrategy")?.Trim().ToLowerInvariant() switch
             {
-                _schedule.SelectedIndex = 0;
-            }
-            else
-            {
-                Select(_schedule, value ?? JobEditorModel.DefaultChoice(JobSchema.Find("schedule")?.Default));
-            }
+                null or "rename" => HowRotated.Rename,
+                "auto" => HowRotated.Auto,
+                "copytruncate" => HowRotated.CopyTruncate,
+                _ => (HowRotated?)null,
+            };
+
+        foreach (var radio in _how)
+        {
+            radio.Enabled = how is not null;
         }
 
-        if (_rows.TryGetValue("maxsize", out var maxSize))
+        if (how is { } answer)
         {
-            _maxSize.Text = ReadRow(maxSize) ?? string.Empty;
+            _how[(int)answer].Checked = true;
         }
 
-        if (_rows.TryGetValue("rotate", out var rotate))
+        var schedule = Read("schedule");
+        if (JobEditorModel.SizeApplies(schedule))
         {
-            _rotate.Text = ReadRow(rotate) ?? string.Empty;
+            _schedule.SelectedIndex = 0;
+        }
+        else
+        {
+            Select(_schedule, schedule ?? JobEditorModel.DefaultChoice(JobSchema.Find("schedule")?.Default));
         }
 
-        if (_rows.TryGetValue("maxage", out var maxAge))
-        {
-            _maxAge.Text = ReadRow(maxAge) ?? string.Empty;
-        }
+        _maxSize.Text = Read("maxsize") ?? string.Empty;
+        _rotate.Text = Read("rotate") ?? string.Empty;
+        _maxAge.Text = Read("maxage") ?? string.Empty;
+        _names.SelectedIndex = string.Equals(Read("dateext"), "true", StringComparison.OrdinalIgnoreCase) ? 1 : 0;
+        _compression.SelectedIndex = (int)JobEditorModel.CompressionShown(Read("compress"), Read("compresstype"));
+        _oldDir.Text = Read("olddir") ?? string.Empty;
+        _createOldDir.Checked = string.Equals(Read("createolddir"), "true", StringComparison.OrdinalIgnoreCase);
 
         _filling = false;
-        WhoChanged();
+        HowChanged();
         UpdateSummary();
     }
 
-    private void WhoChanged()
+    /// <summary>
+    /// The rows a "how" answer makes meaningless are disabled, and the hint says what the answer does.
+    /// </summary>
+    private void HowChanged()
     {
-        var managed = _manageRadio.Checked;
+        var how = HowShown();
+        var managed = how == HowRotated.Manage;
         var bySize = !_showingAdvanced && JobEditorModel.SizeApplies(ScheduleShown());
+
+        _howHint.Text = how switch
+        {
+            HowRotated.Auto => JobEditorText.HowAutoHint,
+            HowRotated.CopyTruncate => JobEditorText.HowCopyTruncateHint,
+            HowRotated.Rename => JobEditorText.HowRenameHint,
+            HowRotated.Manage => JobEditorText.HowManageHint,
+            _ => JobEditorText.HowLocked,
+        };
+        _tips.SetToolTip(_howHint, _howHint.Text);
 
         _schedule.Enabled = _maxSize.Enabled = _earlyLead.Enabled = !managed && !bySize;
         _whenHint.Text = managed
             ? JobEditorText.WhenManaged
             : bySize ? JobEditorText.WhenBySize : JobEditorText.WhenHint;
+
+        _names.Enabled = _oldDir.Enabled = _browseFolder.Enabled = _createOldDir.Enabled = !managed;
 
         UpdateSummary();
     }
@@ -734,15 +828,16 @@ public sealed class JobEditor : Form
         }
 
         _summary.Text = JobSummary.Sentence(
-            _manageRadio.Checked ? HowRotated.Manage : HowRotated.Rename,
+            HowShown(),
             ScheduleShown(),
             _maxSize.Text,
             _rotate.Text,
             _maxAge.Text,
-            dated: false,
-            ArchiveCompression.Zip,
-            oldDir: null,
+            dated: _names.SelectedIndex == 1,
+            (ArchiveCompression)Math.Max(_compression.SelectedIndex, 0),
+            _oldDir.Text,
             _files.Lines.FirstOrDefault(l => l.Trim().Length > 0));
+        _tips.SetToolTip(_summary, _summary.Text);
     }
 
     // ---- judging a value before the CLI sees it --------------------------------------------
@@ -785,7 +880,74 @@ public sealed class JobEditor : Form
         Say(problem, Theme.Current.Danger);
     }
 
+    // ---- what would happen -------------------------------------------------------------------
+
+    /// <summary>
+    /// Runs a dry run of the saved job and shows what it would do.
+    /// </summary>
+    /// <remarks>
+    /// Unelevated, like the Run page's dry run: a dry run writes no state, journal or
+    /// notification and runs no hook. The verb reads the job from disk, so unsaved changes are
+    /// not what it would preview; the status line says so instead of previewing the wrong job.
+    /// </remarks>
+    private async Task PreviewRunAsync()
+    {
+        if (_isNew)
+        {
+            Say(JobEditorText.PreviewSaveFirst, Theme.Current.Muted);
+            return;
+        }
+
+        if (JobEditorModel.Changes(Args(dryRun: false)))
+        {
+            Say(JobEditorText.PreviewSaveFirst, Theme.Current.Warning);
+            return;
+        }
+
+        var result = await _cli.RunAsync(DryRunPreviewProjection.Arguments(_configDir, _original.Job)).ConfigureAwait(true);
+
+        if (IsDisposed)
+        {
+            return;
+        }
+
+        if (result.IsDefect)
+        {
+            LrDialog.Error(this, JobEditorText.PreviewTitle, result.Describe(), result.Details);
+            return;
+        }
+
+        var preview = DryRunPreviewProjection.From(result, _original.Job);
+
+        LrDialog.Show(this, preview.Tone switch
+        {
+            CheckTone.Error => DialogKind.Error,
+            CheckTone.Warning => DialogKind.Warning,
+            _ => DialogKind.Info,
+        }, JobEditorText.PreviewTitle, preview.Message, preview.Details.Length > 0 ? preview.Details : null);
+    }
+
     // ---- files -----------------------------------------------------------------------------
+
+    private void BrowseForFolder()
+    {
+        using var dialog = new FolderBrowserDialog
+        {
+            Description = "Where old copies go",
+            UseDescriptionForTitle = true,
+            ShowNewFolderButton = true,
+        };
+
+        if (_oldDir.Text.Trim().Length > 0)
+        {
+            dialog.InitialDirectory = _oldDir.Text.Trim().Replace('/', '\\');
+        }
+
+        if (dialog.ShowDialog(this) == DialogResult.OK)
+        {
+            _oldDir.Text = dialog.SelectedPath.Replace('\\', '/');
+        }
+    }
 
     private void BrowseForFile()
     {

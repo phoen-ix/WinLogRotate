@@ -65,11 +65,13 @@ public sealed record EditorLayout
 
     // ---- the Basics body -------------------------------------------------------------------
 
-    public required Box WhoCaption { get; init; }
-    public required Box RotateRadio { get; init; }
-    public required Box RotateHint { get; init; }
-    public required Box ManageRadio { get; init; }
-    public required Box ManageHint { get; init; }
+    public required Box HowCaption { get; init; }
+
+    /// <summary>The four answers to "how is the log taken away", top to bottom.</summary>
+    public required IReadOnlyList<Box> How { get; init; }
+
+    /// <summary>One line under the radios that follows the chosen answer.</summary>
+    public required Box HowHint { get; init; }
     public required Box WhenCaption { get; init; }
     public required Box Schedule { get; init; }
     public required Box EarlyLead { get; init; }
@@ -81,6 +83,13 @@ public sealed record EditorLayout
     public required Box MaxAge { get; init; }
     public required Box KeepUnit { get; init; }
     public required Box KeepHint { get; init; }
+    public required Box CopiesCaption { get; init; }
+    public required Box Names { get; init; }
+    public required Box Compression { get; init; }
+    public required Box FolderCaption { get; init; }
+    public required Box OldDir { get; init; }
+    public required Box BrowseFolder { get; init; }
+    public required Box CreateOldDir { get; init; }
     public required Box Summary { get; init; }
 
     // ---- the Advanced body -----------------------------------------------------------------
@@ -105,6 +114,10 @@ public sealed record EditorLayout
     public required Box Status { get; init; }
     public required Box ButtonsHint { get; init; }
     public required Box Toggle { get; init; }
+
+    /// <summary>The preview of what a rotation of the saved job would do.</summary>
+    public required Box WhatWouldHappen { get; init; }
+
     public required Box Check { get; init; }
     public required Box Save { get; init; }
     public required Box Cancel { get; init; }
@@ -135,6 +148,7 @@ public sealed record EditorLayout
             yield return ("status", Status);
             yield return ("buttons hint", ButtonsHint);
             yield return ("toggle", Toggle);
+            yield return ("what would happen", WhatWouldHappen);
             yield return ("check", Check);
             yield return ("save", Save);
             yield return ("cancel", Cancel);
@@ -146,11 +160,13 @@ public sealed record EditorLayout
     {
         get
         {
-            yield return ("who caption", WhoCaption);
-            yield return ("rotate radio", RotateRadio);
-            yield return ("rotate hint", RotateHint);
-            yield return ("manage radio", ManageRadio);
-            yield return ("manage hint", ManageHint);
+            yield return ("how caption", HowCaption);
+            for (var i = 0; i < How.Count; i++)
+            {
+                yield return ($"how {i}", How[i]);
+            }
+
+            yield return ("how hint", HowHint);
             yield return ("when caption", WhenCaption);
             yield return ("schedule", Schedule);
             yield return ("early lead", EarlyLead);
@@ -162,6 +178,13 @@ public sealed record EditorLayout
             yield return ("maxage", MaxAge);
             yield return ("keep unit", KeepUnit);
             yield return ("keep hint", KeepHint);
+            yield return ("copies caption", CopiesCaption);
+            yield return ("names", Names);
+            yield return ("compression", Compression);
+            yield return ("folder caption", FolderCaption);
+            yield return ("olddir", OldDir);
+            yield return ("browse folder", BrowseFolder);
+            yield return ("create olddir", CreateOldDir);
             yield return ("summary", Summary);
         }
     }
@@ -223,28 +246,34 @@ public sealed record EditorLayout
         var save = cancel with { X = cancel.X - 8 - ButtonWidth };
         var check = save with { X = save.X - 8 - ButtonWidth };
         var toggle = new Box(Margin, cancel.Y + 4, 220, CaptionHeight);
+        var whatWouldHappen = new Box(check.X - 8 - 150, cancel.Y, 150, ButtonHeight);
         var buttonsHint = new Box(Margin, cancel.Y - 8 - 32, Right - Margin, 32);
         var status = new Box(Margin, buttonsHint.Y - 8 - 34, Right - Margin, 34);
         var bodyBottom = status.Y - 8;
 
-        // Basics body.
-        var rotateRadio = new Box(Editor, bodyTop, HintWidth, 22);
-        var rotateHint = new Box(Editor + 18, rotateRadio.Bottom, HintWidth - 18, CaptionHeight);
-        var manageRadio = new Box(Editor, rotateHint.Bottom + 4, HintWidth, 22);
-        var manageHint = new Box(Editor + 18, manageRadio.Bottom, HintWidth - 18, CaptionHeight);
+        // Basics body: four answers to "how", and one hint that follows the chosen one.
+        var how = Enumerable.Range(0, 4).Select(i => new Box(Editor, bodyTop + (i * 20), HintWidth, 20)).ToArray();
+        var howHint = new Box(Editor + 18, how[^1].Bottom, HintWidth - 18, CaptionHeight);
 
-        var schedule = new Box(Editor, manageHint.Bottom + 12, 150, EditorHeight);
+        var schedule = new Box(Editor, howHint.Bottom + 8, 150, EditorHeight);
         var earlyLead = new Box(schedule.Right + 8, schedule.Y + 4, 170, CaptionHeight);
         var maxSize = new Box(earlyLead.Right + 4, schedule.Y, 80, EditorHeight);
         var whenHint = new Box(Editor, schedule.Bottom + 4, HintWidth, CaptionHeight);
 
-        var rotate = new Box(Editor, whenHint.Bottom + 12, 56, EditorHeight);
+        var rotate = new Box(Editor, whenHint.Bottom + 6, 56, EditorHeight);
         var keepLead = new Box(rotate.Right + 8, rotate.Y + 4, 230, CaptionHeight);
         var maxAge = new Box(keepLead.Right + 4, rotate.Y, 56, EditorHeight);
         var keepUnit = new Box(maxAge.Right + 8, rotate.Y + 4, 60, CaptionHeight);
         var keepHint = new Box(Editor, rotate.Bottom + 4, HintWidth, CaptionHeight);
 
-        var summary = new Box(Editor, keepHint.Bottom + 8, HintWidth, 36);
+        var names = new Box(Editor, keepHint.Bottom + 6, 260, EditorHeight);
+        var compression = new Box(names.Right + 8, names.Y, 200, EditorHeight);
+
+        var oldDir = new Box(Editor, names.Bottom + 8, 300, EditorHeight);
+        var browseFolder = new Box(oldDir.Right + 8, oldDir.Y - 1, 96, ButtonHeight);
+        var createOldDir = new Box(browseFolder.Right + 8, oldDir.Y, Right - browseFolder.Right - 8, 22);
+
+        var summary = new Box(Editor, oldDir.Bottom + 8, HintWidth, bodyBottom - (oldDir.Bottom + 8));
 
         // Advanced body: the viewport takes the whole body, and the rows are laid out inside it.
         var viewport = new Box(Margin, bodyTop, Right - Margin, bodyBottom - bodyTop);
@@ -262,11 +291,9 @@ public sealed record EditorLayout
             FilesHint = filesHint,
             Preview = preview,
 
-            WhoCaption = new Box(Margin, rotateRadio.Y + 4, CaptionWidth, CaptionHeight),
-            RotateRadio = rotateRadio,
-            RotateHint = rotateHint,
-            ManageRadio = manageRadio,
-            ManageHint = manageHint,
+            HowCaption = new Box(Margin, how[0].Y + 2, CaptionWidth, CaptionHeight),
+            How = how,
+            HowHint = howHint,
             WhenCaption = new Box(Margin, schedule.Y + 4, CaptionWidth, CaptionHeight),
             Schedule = schedule,
             EarlyLead = earlyLead,
@@ -278,6 +305,13 @@ public sealed record EditorLayout
             MaxAge = maxAge,
             KeepUnit = keepUnit,
             KeepHint = keepHint,
+            CopiesCaption = new Box(Margin, names.Y + 4, CaptionWidth, CaptionHeight),
+            Names = names,
+            Compression = compression,
+            FolderCaption = new Box(Margin, oldDir.Y + 4, CaptionWidth, CaptionHeight),
+            OldDir = oldDir,
+            BrowseFolder = browseFolder,
+            CreateOldDir = createOldDir,
             Summary = summary,
 
             Viewport = viewport,
@@ -290,6 +324,7 @@ public sealed record EditorLayout
             Status = status,
             ButtonsHint = buttonsHint,
             Toggle = toggle,
+            WhatWouldHappen = whatWouldHappen,
             Check = check,
             Save = save,
             Cancel = cancel,

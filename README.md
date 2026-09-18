@@ -134,9 +134,13 @@ winlogrotate doctor                   # paths, permissions, schedule — in one 
 ```
 
 Or open the GUI. With no jobs it says what a job is and offers to add one: pick a log file,
-say whether WinLogRotate or the application starts the fresh file, choose how often and how many
-copies to keep, and one sentence restates what will happen. Every other setting is under
-**Advanced settings**, captioned in plain words with its default and where its value comes from.
+say how it should be taken away from the program (let WinLogRotate check what the program
+allows, copy it out and empty it in place for a program that keeps it open, rename it, or only
+tidy up after a program that writes new files itself), choose how often, how many copies to keep
+and for how long, how they are named and compressed and where they go — and one sentence
+restates what will happen. "What would happen…" shows a saved job's moves without making them.
+Every other setting is under **Advanced settings**, captioned in plain words with its default
+and where its value comes from.
 
 `--dry-run` is the same code path as a real run, stopped one step earlier — not a separate
 description that can drift from what the executor does. `job set --dry-run` works the same way:

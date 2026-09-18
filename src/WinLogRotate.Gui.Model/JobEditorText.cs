@@ -60,14 +60,6 @@ public static class JobEditorText
 
     public const string PreviewTitle = "What would happen";
 
-    public const string RotateRadio = "WinLogRotate moves the log aside";
-
-    public const string RotateHint = "The live log is renamed so the program starts a fresh one.";
-
-    public const string ManageRadio = "The application already starts new files (IIS does); only tidy up";
-
-    public const string ManageHint = "The newest file is never touched; older ones are compressed and deleted.";
-
     public const string EarlyLead = "or earlier once it exceeds";
 
     public const string WhenHint = "Default: every day, no size limit. Sizes: 100k, 10M, 1G.";

@@ -240,9 +240,15 @@ Repeat `--paths` for more than one pattern. Nothing is split on a separator, bec
 path may contain any of them.
 
 The GUI's Jobs page does the same thing through a form and sends exactly the keys you changed.
-**Basics** asks the three things a new job needs — which files (Browse picks a log and offers
-the wildcard that names its series, and a line underneath says how many files that matches),
-who rotates them, and how much to keep — and restates the answer as one sentence. **Advanced**
+**Basics** asks what a new job needs, in plain words: which files (Browse picks a log and offers
+the wildcard that names its series, and a line underneath says how many files that matches); how
+the log is taken away from the program — let WinLogRotate check what the program allows
+(`lockstrategy = "auto"`, the editor's default for a new job), the program keeps the log open and
+never starts a new file (`copytruncate`), the program closes or reopens its log (`rename`), or
+the program already writes new files itself and only wants tidying (`kind = "manage"`); how
+often and how much to keep; whether old copies are numbered or dated, how they are compressed,
+and where they go — and restates the answer as one sentence. "What would happen…" runs a dry
+run of the saved job, as if it were due tonight, and lists every move it would make. **Advanced**
 is every key on this page as a typed control, captioned in plain words with the key name beside
 it, its default shown, a label saying whether the value is *set here* or *inherited*, and one
 line saying what it does; a value the CLI would refuse is said beside the box before Check is

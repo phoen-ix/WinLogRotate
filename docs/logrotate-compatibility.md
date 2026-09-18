@@ -172,7 +172,7 @@ and SQL Server all withhold.
 | `rename` | Atomic `MoveFileEx`, then recreate the log. **The default**, because it fails loudly rather than silently doing something else. |
 | `copytruncate` | Copy the contents aside, then truncate in place. The inode never changes, so the writer keeps working. |
 | `copy` | Archive a snapshot and leave the original alone. It keeps growing. |
-| `auto` | Ask the file which of those its writer permits, and take the best. Probed fresh every run. |
+| `auto` | Ask the file which of those its writer permits, and take the best. Probed fresh every run. It judges what the writer *permits*, not whether the writer reopens its log: a program that allows a rename but keeps writing to the moved file needs `copytruncate`, and the GUI's Basics view asks that as "the program keeps the log open and never starts a new file". |
 
 `copytruncate` carries a hazard logrotate does not have on Linux. A writer that caches its own file
 offset — log4net, and many C++ `std::ofstream` implementations — does not seek back to zero when
