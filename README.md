@@ -91,6 +91,11 @@ server. Only the GUI needs the .NET runtime, and only in the `-min` builds.
 Inside a portable zip: `winlogrotate.exe` (11.3 MB, native, zero dependencies) and
 `winlogrotate-gui.exe` (1.0 MB). `SHA256SUMS.txt` covers every download.
 
+Updating later is `winlogrotate update apply`, or **Settings → Updates** in the console: the
+newer installer is downloaded, checked against the release's `SHA256SUMS.txt`, and run over the
+old one; it waits for any rotation in progress and keeps your configuration. Checking is manual
+unless you ask for once a day. See [updating](docs/updating.md).
+
 Figures are from v0.3.0. They were stale for five releases because nothing recorded the real
 number; CI now writes the measured binary size to every run's summary.
 
@@ -179,7 +184,7 @@ doesn't run on Server Core and that's where IIS usually lives.
 | `notify set-secret` | Store a provider's credential and point the config at it, in one step |
 | `secret set` / `list` / `remove` / `test` | The encrypted credential store |
 | `secret import` | Several secrets from `name=value` lines, for unattended rollout |
-| `update check` / `apply` | Whether a newer release exists; how to install it |
+| `update check` / `apply` | Whether a newer release exists; download it, verify it, and run its installer |
 | `--version` | The build you are running, for a bug report |
 
 </details>

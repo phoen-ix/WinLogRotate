@@ -270,6 +270,10 @@ server_cert_thumbprint = "9F:86:D0:81:88:4C:7D:65..."
 `no_proxy` match the host and its subdomains. Single-label hosts and hosts in this machine's own
 domain bypass the proxy without being listed, as they do everywhere else.
 
+These settings govern notifications only. `update check` and `update apply` reach GitHub through
+the proxy Windows itself is configured with, and are not affected by anything under `[notify]`;
+see [updating](updating.md).
+
 `server_cert_thumbprint` is a SHA-256 of the certificate you expect - 64 hex digits, in any
 punctuation. When set, **only** that certificate is accepted - which is what lets an internal CA or a
 self-signed relay work without disabling verification. It applies to HTTPS, Pushover and SMTP alike.
