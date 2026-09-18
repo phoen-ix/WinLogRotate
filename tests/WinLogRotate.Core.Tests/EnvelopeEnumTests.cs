@@ -166,6 +166,7 @@ public sealed class EnvelopeEnumTests
             HooksAllowed = false,
             RunHost = Hosting.Hosts.RunHostKind.Task,
             RunHostDetail = "daily at 03:00",
+            Report = [],
             Notify = new Cli.Output.NotifyDoctorDto
             {
                 Enabled = false,

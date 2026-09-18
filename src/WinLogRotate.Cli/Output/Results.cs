@@ -168,6 +168,16 @@ public sealed record DoctorResult
 
     /// <summary>What notifications are configured to do. Reported without doing any of it.</summary>
     public required NotifyDoctorDto Notify { get; init; }
+
+    /// <summary>
+    /// The report as the text verb prints it, line by line.
+    /// </summary>
+    /// <remarks>
+    /// Carried in the envelope so a caller that wants the fields and the prose runs doctor once.
+    /// The GUI's Settings page ran it twice per refresh - once for the text and once for the
+    /// JSON - and the two could disagree about a directory that changed in between.
+    /// </remarks>
+    public required IReadOnlyList<string> Report { get; init; }
 }
 
 /// <summary>

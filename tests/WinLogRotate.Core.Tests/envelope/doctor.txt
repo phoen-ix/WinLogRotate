@@ -23,6 +23,7 @@ result.notify.eventLogExpected : Boolean
 result.notify.storedCredentials : Number
 result.notify.suppressedChannels : Number
 result.notify.targets : Number
+result.report[] : String
 result.root : String
 result.runHost : String
 result.runHostDetail : String

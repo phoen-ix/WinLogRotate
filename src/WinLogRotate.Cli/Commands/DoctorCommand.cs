@@ -28,18 +28,19 @@ internal static class DoctorCommand
 {
     public static int Run(CommandContext ctx, string? configDir)
     {
+        var report = new List<string>();
         var paths = InstallPaths.Resolve(configDir);
         var elevated = Privilege.IsElevated();
 
-        ctx.Output.Line($"WinLogRotate {ProductInfo.Version} ({RuntimeInformation.FrameworkDescription})");
-        ctx.Output.Line("");
-        ctx.Output.Line("Paths");
-        ctx.Output.Line($"  scope         {paths.Scope}");
-        ctx.Output.Line($"  config        {paths.ConfigFile}       {Exists(File.Exists(paths.ConfigFile))}");
-        ctx.Output.Line($"  jobs          {paths.ConfigDirectory}  {Exists(Directory.Exists(paths.ConfigDirectory))}");
-        ctx.Output.Line($"  state         {paths.StateFile}        {Exists(File.Exists(paths.StateFile))}");
-        ctx.Output.Line($"  journal       {paths.JournalDirectory} {Exists(Directory.Exists(paths.JournalDirectory))}");
-        ctx.Output.Line("");
+        Say(ctx, report, $"WinLogRotate {ProductInfo.Version} ({RuntimeInformation.FrameworkDescription})");
+        Say(ctx, report, "");
+        Say(ctx, report, "Paths");
+        Say(ctx, report, $"  scope         {paths.Scope}");
+        Say(ctx, report, $"  config        {paths.ConfigFile}       {Exists(File.Exists(paths.ConfigFile))}");
+        Say(ctx, report, $"  jobs          {paths.ConfigDirectory}  {Exists(Directory.Exists(paths.ConfigDirectory))}");
+        Say(ctx, report, $"  state         {paths.StateFile}        {Exists(File.Exists(paths.StateFile))}");
+        Say(ctx, report, $"  journal       {paths.JournalDirectory} {Exists(Directory.Exists(paths.JournalDirectory))}");
+        Say(ctx, report, "");
 
         var aclVerdict = AclVerdict.NotApplicable;
         var hooksAllowed = false;
@@ -52,20 +53,20 @@ internal static class DoctorCommand
             hooksAllowed = finding.HooksAllowed;
             aclFix = finding.FixCommand;
 
-            ctx.Output.Line("Security");
+            Say(ctx, report, "Security");
 
             // The path, not the label "conf.d": the gate judges the root, the directory,
             // config.toml and every job file, and naming the container for a finding about a
             // file sends the operator to fix the wrong thing.
-            ctx.Output.Line($"  config ACL    {finding.Verdict}  {finding.Path}");
-            ctx.Output.Line($"  hooks         {(finding.HooksAllowed ? "permitted" : "REFUSED")}");
+            Say(ctx, report, $"  config ACL    {finding.Verdict}  {finding.Path}");
+            Say(ctx, report, $"  hooks         {(finding.HooksAllowed ? "permitted" : "REFUSED")}");
 
             // A per-user installation always lands here, and it is not broken. Reporting it as
             // a Critical security finding would be crying wolf at the one person least able to
             // judge it, and the repair it suggested would lock them out of their own config.
             if (finding.ExpectedForScope)
             {
-                ctx.Output.Line("                by design for a per-user installation");
+                Say(ctx, report, "                by design for a per-user installation");
                 ctx.Output.Diagnostic(new CliDiagnostic
                 {
                     Severity = Severity.Info,
@@ -79,7 +80,7 @@ internal static class DoctorCommand
             {
                 foreach (var ace in finding.OffendingAces)
                 {
-                    ctx.Output.Line($"                {ace}");
+                    Say(ctx, report, $"                {ace}");
                 }
 
                 ctx.Output.Diagnostic(new CliDiagnostic
@@ -92,13 +93,13 @@ internal static class DoctorCommand
                 });
             }
 
-            ctx.Output.Line("");
+            Say(ctx, report, "");
         }
 
-        ctx.Output.Line("Process");
-        ctx.Output.Line($"  elevated      {elevated}");
-        ctx.Output.Line($"  long paths    {LongPathState()}");
-        ctx.Output.Line("");
+        Say(ctx, report, "Process");
+        Say(ctx, report, $"  elevated      {elevated}");
+        Say(ctx, report, $"  long paths    {LongPathState()}");
+        Say(ctx, report, "");
 
         var hostKind = RunHostKind.None;
         var hostDetail = "not checked (Windows only)";
@@ -109,8 +110,8 @@ internal static class DoctorCommand
             hostKind = status.Actual;
             hostDetail = status.Registered ? "registered" : "not registered";
 
-            ctx.Output.Line("Run host");
-            ctx.Output.Line($"  scheduled task  {hostDetail}");
+            Say(ctx, report, "Run host");
+            Say(ctx, report, $"  scheduled task  {hostDetail}");
 
             if (!status.Registered)
             {
@@ -136,7 +137,7 @@ internal static class DoctorCommand
             var (gate, gateExpected) = GateVerdict(
                 GateHoldRule.Judge(since, TimeProvider.System.GetUtcNow()), since);
 
-            ctx.Output.Line($"  rotation gate   {gate}");
+            Say(ctx, report, $"  rotation gate   {gate}");
 
             if (!gateExpected)
             {
@@ -153,10 +154,10 @@ internal static class DoctorCommand
             }
 
             // Every section but the last ends with one, and Run host is no longer the last.
-            ctx.Output.Line("");
+            Say(ctx, report, "");
         }
 
-        var network = Network(ctx, paths);
+        var network = Network(ctx, paths, report);
 
         var result = new DoctorResult
         {
@@ -172,9 +173,17 @@ internal static class DoctorCommand
             RunHost = hostKind,
             RunHostDetail = hostDetail,
             Notify = network,
+            Report = [.. report],
         };
 
         return ctx.Output.Complete("doctor", ExitCode.Ok, result);
+    }
+
+    /// <summary>One line of the report: to the console, and into the envelope.</summary>
+    private static void Say(CommandContext ctx, List<string> report, string text)
+    {
+        report.Add(text);
+        ctx.Output.Line(text);
     }
 
     /// <summary>
@@ -187,7 +196,7 @@ internal static class DoctorCommand
     /// meant to explain is worse than none. <c>notify test</c> is the live check, and this section
     /// says so.
     /// </remarks>
-    private static NotifyDoctorDto Network(CommandContext ctx, InstallPaths paths)
+    private static NotifyDoctorDto Network(CommandContext ctx, InstallPaths paths, List<string> report)
     {
         var config = ConfigLoader.Load(
             paths, new PathGuard(new GuardOptions()),
@@ -205,28 +214,28 @@ internal static class DoctorCommand
             .SelectMany(p => p.Credentials())
             .Count(c => c.Reference.Source == SecretSource.Store);
 
-        ctx.Output.Line("Notifications");
-        ctx.Output.Line($"  reporting     {(settings.WouldSend ? "on" : "off")}"
+        Say(ctx, report, "Notifications");
+        Say(ctx, report, $"  reporting     {(settings.WouldSend ? "on" : "off")}"
             + (settings.WouldSend ? $", {settings.To.Count} target(s)" : " - nothing would be sent"));
-        ctx.Output.Line($"  proxy         {(string.IsNullOrWhiteSpace(settings.Proxy) ? "machine default" : settings.Proxy)}");
-        ctx.Output.Line($"  tls           {(settings.ServerCertThumbprint is { Length: > 0 } ? "pinned" : "machine certificate store")}");
-        ctx.Output.Line($"  stored creds  {stored}");
-        ctx.Output.Line($"  suppressed    {suppressed}");
+        Say(ctx, report, $"  proxy         {(string.IsNullOrWhiteSpace(settings.Proxy) ? "machine default" : settings.Proxy)}");
+        Say(ctx, report, $"  tls           {(settings.ServerCertThumbprint is { Length: > 0 } ? "pinned" : "machine certificate store")}");
+        Say(ctx, report, $"  stored creds  {stored}");
+        Say(ctx, report, $"  suppressed    {suppressed}");
 
         var (eventLog, eventLogExpected) = EventLogVerdict(
             OperatingSystem.IsWindows(),
             OperatingSystem.IsWindows() && EventLogWriter.IsRegistered(Names.EventLogSource),
             paths.Scope);
 
-        ctx.Output.Line($"  event log     {EventLogLine(eventLog, eventLogExpected, paths.Scope)}");
+        Say(ctx, report, $"  event log     {EventLogLine(eventLog, eventLogExpected, paths.Scope)}");
 
         if (eventLog == "unregistered" && eventLogExpected)
         {
-            ctx.Output.Line("                reinstall to register it - the installer writes the "
+            Say(ctx, report, "                reinstall to register it - the installer writes the "
                 + "registry entry, and creating one needs administrator");
         }
 
-        ctx.Output.Line("  live check    winlogrotate notify test");
+        Say(ctx, report, "  live check    winlogrotate notify test");
 
         if (suppressed > 0)
         {

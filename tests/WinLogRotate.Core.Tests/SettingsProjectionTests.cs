@@ -107,9 +107,10 @@ public sealed class SettingsProjectionTests
     /// <remarks>
     /// Driven through the real <c>doctor</c> and the real JSON sink, so a renamed property on the
     /// wire turns this red rather than turning the warning permanently off or permanently on. Off
-    /// Windows the verdict is NotApplicable and the decision is null; what is asserted is that
-    /// every spelling the page reads is present in what the verb actually emits, and that the
-    /// real values are ones the decision understands.
+    /// Windows the verdict is NotApplicable and the decision is null; on Windows a scratch
+    /// directory gets a real verdict. What is asserted everywhere is that every spelling the page
+    /// reads is present in what the verb actually emits, and that the real values are ones the
+    /// decision understands.
     /// </remarks>
     [Fact]
     public void TheFieldsThePageReadsAreTheFieldsTheVerbWrites()
@@ -133,11 +134,26 @@ public sealed class SettingsProjectionTests
             var scope = payload.GetProperty("scope").GetString().ShouldNotBeNull();
             var fix = payload.TryGetProperty("aclFix", out var f) ? f.GetString() : null;
 
-            verdict.ShouldBe("NotApplicable", "the ACL is not checked off Windows");
+            verdict.ShouldBeOneOf(Enum.GetNames<Hosting.Security.AclVerdict>());
             scope.ShouldBeOneOf("Portable", "PerUser", "PerMachine");
 
-            SettingsProjection.PermissionsWarning(hooksAllowed, verdict, scope, fix)
-                .ShouldBeNull("nothing to secure off Windows");
+            // The text report rides in the same envelope, so the page runs doctor once.
+            var report = payload.GetProperty("report").EnumerateArray().Select(l => l.GetString()).ToArray();
+            report.ShouldContain("Paths", "the report the text verb prints, line for line");
+
+            var decision = SettingsProjection.PermissionsWarning(hooksAllowed, verdict, scope, fix);
+
+            if (!OperatingSystem.IsWindows())
+            {
+                verdict.ShouldBe("NotApplicable", "the ACL is not checked off Windows");
+                decision.ShouldBeNull("nothing to secure off Windows");
+            }
+            else if (decision is not null)
+            {
+                // A scratch directory under the runner's profile is loose by any measure; what
+                // matters here is that the real values are ones the decision understands.
+                decision.Message.ShouldNotBeNullOrWhiteSpace();
+            }
         }
         finally
         {

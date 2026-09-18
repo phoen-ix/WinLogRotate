@@ -60,20 +60,13 @@ public sealed class SettingsPage : UserControl
 
     private async Task LoadAsync()
     {
-        var result = await _cli.RunAsync(CliArgs.For(_configDir, "doctor")).ConfigureAwait(true);
-
-        // Navigated away from while doctor ran. Checked after each wait, because the second verb
-        // takes as long as the first.
-        if (IsDisposed)
-        {
-            return;
-        }
-
-        _report.Text = result.StdOut + result.StdErr;
-
+        // One launch. The envelope carries the report the text verb prints, line for line, so
+        // the page no longer ran doctor twice - once for the prose and once for the fields - and
+        // no longer risked showing a report and a warning that disagreed.
         var json = await _cli.RunAsync(CliArgs.For(_configDir, "doctor", "--json"))
             .ConfigureAwait(true);
 
+        // Navigated away from while doctor ran.
         if (IsDisposed)
         {
             return;
@@ -81,6 +74,8 @@ public sealed class SettingsPage : UserControl
 
         if (!json.Ok)
         {
+            _report.Text = json.Describe() + Environment.NewLine + json.Details;
+
             // Exit 4 is the only code that says nothing about what was or was not done can be
             // relied on, so it is the only one worth interrupting for - a configuration error is
             // exit 2 and belongs in the report above.
@@ -96,6 +91,10 @@ public sealed class SettingsPage : UserControl
         {
             using var document = JsonDocument.Parse(json.StdOut);
             var payload = document.RootElement.GetProperty("result");
+
+            _report.Text = string.Join(
+                Environment.NewLine,
+                payload.GetProperty("report").EnumerateArray().Select(line => line.GetString()));
 
             // A configuration directory a non-administrator can write is the one finding worth
             // interrupting for: it means any local user could have the run host execute their

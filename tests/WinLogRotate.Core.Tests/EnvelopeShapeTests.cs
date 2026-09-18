@@ -277,6 +277,7 @@ public sealed class EnvelopeShapeTests
                     EventLog = "writable",
                     EventLogExpected = true,
                 },
+                Report = ["WinLogRotate 0.0.0", "", "Paths"],
             }),
             "doctor");
 
