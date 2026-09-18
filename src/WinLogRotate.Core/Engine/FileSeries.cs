@@ -62,30 +62,38 @@ public static class FileSeries
     {
         var archives = files.Select(f => Classify(f, dateFormat, stamps)).ToList();
 
+        // One key, compared the same way for every pair. The comparator used to consult the
+        // stamp only when both files had one and fall through to the index or the modification
+        // time otherwise, so a stamped file, an indexed file and a plain one could each rank
+        // ahead of the next in a cycle: List.Sort then mis-ordered a small set and threw
+        // "inconsistent results" on a larger one - and this order decides which files a manage
+        // job deletes.
         archives.Sort((a, b) =>
         {
-            // A parsed date beats everything else: it is what the producer actually meant.
-            if (a.Stamp is { } sa && b.Stamp is { } sb && sa != sb)
+            // A parsed date is what the producer meant; a file without one is dated by its
+            // modification time. Newest first.
+            var when = When(b).CompareTo(When(a));
+            if (when != 0)
             {
-                return sb.CompareTo(sa);
+                return when;
             }
 
-            // Then the rotation index, ascending - .1 is newer than .2.
-            if (a.Index is { } ia && b.Index is { } ib && ia != ib)
+            // Then the rotation index, ascending - .1 is newer than .2, and a file with no
+            // index (the live log) is newer than either.
+            var index = (a.Index ?? -1).CompareTo(b.Index ?? -1);
+            if (index != 0)
             {
-                return ia.CompareTo(ib);
+                return index;
             }
 
-            if (a.LastWriteUtc != b.LastWriteUtc)
-            {
-                return b.LastWriteUtc.CompareTo(a.LastWriteUtc);
-            }
-
-            return string.CompareOrdinal(a.Path, b.Path);
+            var modified = b.LastWriteUtc.CompareTo(a.LastWriteUtc);
+            return modified != 0 ? modified : string.CompareOrdinal(a.Path, b.Path);
         });
 
         return archives;
     }
+
+    private static DateTimeOffset When(ArchiveFile file) => file.Stamp ?? file.LastWriteUtc;
 
     internal static ArchiveFile Classify(MatchedFile file, string? dateFormat, bool stamps = true)
     {
