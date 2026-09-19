@@ -65,7 +65,8 @@ public static class JobSummary
                 HowRotated.Auto => $"take {files} aside (renamed when the program allows it, copied out otherwise)",
                 HowRotated.CopyTruncate => $"copy the contents of {files} out and empty it in place",
                 HowRotated.Rename => $"rename {files} and start a fresh one",
-                _ => $"take {files} aside as Advanced settings say",
+                HowRotated.Copy => $"copy {files} aside and leave it as it is",
+                _ => $"take {files} aside as its settings say",
             };
 
             var name = FileName(firstPath);

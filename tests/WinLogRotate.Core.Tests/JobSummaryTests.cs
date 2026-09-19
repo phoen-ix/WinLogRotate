@@ -36,7 +36,7 @@ public sealed class JobSummaryTests
     [Fact]
     public void AStrategyWithoutARadioIsSaidToBeAdvanceds() =>
         JobSummary.Sentence(null, null, null, null, null, false, ArchiveCompression.Zip, null, null)
-            .ShouldStartWith("Every day, take the matching logs aside as Advanced settings say");
+            .ShouldStartWith("Every day, take the matching logs aside as its settings say");
 
     [Fact]
     public void ANumberThatIsNotOneFallsBackToTheDefault() =>

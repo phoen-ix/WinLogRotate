@@ -143,10 +143,10 @@ public sealed record FieldPresentation
 /// How a log is taken away from the program that writes it, as the Basics view asks it.
 /// </summary>
 /// <remarks>
-/// Three of the four are <c>lockstrategy</c> values and one is <c>kind = manage</c>, because
+/// Four of the five are <c>lockstrategy</c> values and one is <c>kind = manage</c>, because
 /// that is how the person thinks about it: "the program already writes new files itself" is an
-/// answer to the same question as "the program keeps the file open". <c>lockstrategy = copy</c>
-/// has no answer here and is left to Advanced.
+/// answer to the same question as "the program keeps the file open". Every strategy has an
+/// answer, because these radios are the strategy's only home on the form.
 /// </remarks>
 public enum HowRotated
 {
@@ -161,7 +161,37 @@ public enum HowRotated
 
     /// <summary>The application starts new files itself; only tidy up (<c>kind = manage</c>).</summary>
     Manage,
+
+    /// <summary>A snapshot goes to the old copy and the log is left as it is, growing
+    /// (<c>copy</c>). The rarest answer, last so the four common ones keep their places.</summary>
+    Copy,
 }
+
+/// <summary>The pages of the job editor, in the order the menu lists them.</summary>
+public enum JobPageId
+{
+    Files,
+    How,
+    When,
+    Keep,
+    Copies,
+    Hooks,
+    Wrong,
+
+    /// <summary>Keys the file writes that this build does not read. Present only when there are some.</summary>
+    Other,
+}
+
+/// <summary>
+/// One page of the editor: what the menu calls it, what its title says, and the settings it
+/// shows as typed rows under its own controls.
+/// </summary>
+/// <remarks>
+/// Every known key has exactly one page and one home on it - a plain-language control, or a
+/// row under "More settings" - which is what lets the form drop the Basics/Advanced views and
+/// the carrying of values between them. <see cref="JobEditorModel.PageOf"/> is the table.
+/// </remarks>
+public sealed record JobPage(JobPageId Id, string Title, string Menu, IReadOnlyList<JobField> More);
 
 /// <summary>Whether and how old copies are compressed, as the Basics view asks it.</summary>
 public enum ArchiveCompression
@@ -253,6 +283,135 @@ public static class JobEditorModel
     /// <summary>Keys the file writes that this build does not read. They can be seen and removed, nothing else.</summary>
     public static IReadOnlyList<JobField> Foreign(JobEditorView view) =>
         [.. view.Fields.Where(f => !f.Known)];
+
+    /// <summary>The keys a page asks with a control of its own rather than a typed row.</summary>
+    /// <remarks><c>kind</c> and the Basics keys: the How radios stand for both <c>kind</c> and
+    /// <c>lockstrategy</c>.</remarks>
+    public static IReadOnlyList<string> Controls { get; } = ["kind", .. Basics];
+
+    private static readonly IReadOnlyDictionary<string, JobPageId> PageTable =
+        new Dictionary<string, JobPageId>(StringComparer.OrdinalIgnoreCase)
+        {
+            ["name"] = JobPageId.Files,
+            ["paths"] = JobPageId.Files,
+            ["enabled"] = JobPageId.Files,
+            ["allowdangerous"] = JobPageId.Files,
+
+            ["kind"] = JobPageId.How,
+            ["lockstrategy"] = JobPageId.How,
+            ["livefiles"] = JobPageId.How,
+            ["retrycount"] = JobPageId.How,
+            ["retryinterval"] = JobPageId.How,
+
+            ["schedule"] = JobPageId.When,
+            ["hourly"] = JobPageId.When,
+            ["daily"] = JobPageId.When,
+            ["weekly"] = JobPageId.When,
+            ["monthly"] = JobPageId.When,
+            ["yearly"] = JobPageId.When,
+            ["maxsize"] = JobPageId.When,
+            ["size"] = JobPageId.When,
+            ["weekday"] = JobPageId.When,
+            ["monthday"] = JobPageId.When,
+
+            ["rotate"] = JobPageId.Keep,
+            ["maxage"] = JobPageId.Keep,
+            ["start"] = JobPageId.Keep,
+            ["minage"] = JobPageId.Keep,
+            ["minsize"] = JobPageId.Keep,
+            ["maxfiles"] = JobPageId.Keep,
+
+            ["compress"] = JobPageId.Copies,
+            ["compresstype"] = JobPageId.Copies,
+            ["delaycompress"] = JobPageId.Copies,
+            ["dateext"] = JobPageId.Copies,
+            ["dateformat"] = JobPageId.Copies,
+            ["olddir"] = JobPageId.Copies,
+            ["createolddir"] = JobPageId.Copies,
+
+            ["prerotate"] = JobPageId.Hooks,
+            ["postrotate"] = JobPageId.Hooks,
+            ["hook_timeout"] = JobPageId.Hooks,
+
+            ["missingok"] = JobPageId.Wrong,
+            ["notifempty"] = JobPageId.Wrong,
+            ["notify"] = JobPageId.Wrong,
+        };
+
+    /// <summary>
+    /// The page a key lives on.
+    /// </summary>
+    /// <remarks>
+    /// An explicit table, not the schema's group: the group says what a key is about, the page
+    /// says where a person looks for it, and those differ - <c>livefiles</c> is behaviour, but
+    /// somebody asking "how is the log taken away" is where it belongs. A key the table does not
+    /// name is on the Other page, and <c>EveryKnownKeyIsOnExactlyOnePage</c> makes sure that is
+    /// only ever a key this build does not know.
+    /// </remarks>
+    public static JobPageId PageOf(string key) =>
+        PageTable.TryGetValue(key, out var page) ? page : JobPageId.Other;
+
+    public static string Title(JobPageId page) => page switch
+    {
+        JobPageId.Files => "Which files",
+        JobPageId.How => "How the log is taken away",
+        JobPageId.When => "How often",
+        JobPageId.Keep => "How many old copies to keep",
+        JobPageId.Copies => "Old copies",
+        JobPageId.Hooks => "Before and after",
+        JobPageId.Wrong => "If things go wrong",
+        _ => "Other keys in this file",
+    };
+
+    public static string Menu(JobPageId page) => page switch
+    {
+        JobPageId.Files => "Files",
+        JobPageId.How => "How",
+        JobPageId.When => "When",
+        JobPageId.Keep => "Keep",
+        JobPageId.Copies => "Old copies",
+        JobPageId.Hooks => "Before & after",
+        JobPageId.Wrong => "If things go wrong",
+        _ => "Other keys",
+    };
+
+    /// <summary>
+    /// The editor's pages for this job: every known key once, on the page the table names, as a
+    /// control or as a row under it; and the Other page when the file has keys of its own.
+    /// </summary>
+    public static IReadOnlyList<JobPage> Pages(JobEditorView view)
+    {
+        var pages = new List<JobPage>();
+
+        foreach (var id in Enum.GetValues<JobPageId>())
+        {
+            if (id == JobPageId.Other)
+            {
+                if (Foreign(view).Count > 0)
+                {
+                    pages.Add(new JobPage(id, Title(id), Menu(id), []));
+                }
+
+                continue;
+            }
+
+            pages.Add(new JobPage(id, Title(id), Menu(id), [.. view.Fields.Where(f =>
+                f.Known
+                && PageOf(f.Key) == id
+                && !Header.Contains(f.Key, StringComparer.OrdinalIgnoreCase)
+                && !Shorthands.Contains(f.Key, StringComparer.OrdinalIgnoreCase)
+                && !Controls.Contains(f.Key, StringComparer.OrdinalIgnoreCase))]));
+        }
+
+        return pages;
+    }
+
+    /// <summary>What the menu shows for a page, marked when one of its settings is refused.</summary>
+    public static string MenuText(JobPage page, bool hasProblem) =>
+        hasProblem ? $"{page.Menu} \u25CF" : page.Menu;
+
+    /// <summary>A problem as the status line says it: which page, then the words.</summary>
+    public static string ProblemLine(JobPage page, string problem) => $"{page.Menu}: {problem}";
 
     /// <summary>How to draw one field.</summary>
     public static FieldPresentation Presentation(JobField field)
@@ -433,6 +592,7 @@ public static class JobEditorModel
             null or "rename" => HowRotated.Rename,
             "auto" => HowRotated.Auto,
             "copytruncate" => HowRotated.CopyTruncate,
+            "copy" => HowRotated.Copy,
             _ => null,
         };
     }
@@ -449,6 +609,7 @@ public static class JobEditorModel
     {
         HowRotated.Auto => "auto",
         HowRotated.CopyTruncate => "copytruncate",
+        HowRotated.Copy => "copy",
         HowRotated.Rename => original is null ? null : "rename",
         _ => original,
     };

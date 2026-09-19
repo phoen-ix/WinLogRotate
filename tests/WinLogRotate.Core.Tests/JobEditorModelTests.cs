@@ -1141,14 +1141,25 @@ public sealed class JobEditorModelTests
         JobEditorModel.HowRotatedShown(JobEditorModel.From(ShownWith(("name", "\"iis\""), ("kind", "\"manage\""))))
             .ShouldBe(HowRotated.Manage);
         JobEditorModel.HowRotatedShown(JobEditorModel.From(ShownWith(("name", "\"iis\""), ("lockstrategy", "\"copy\""))))
-            .ShouldBeNull("copy has no radio and is left to Advanced");
+            .ShouldBe(HowRotated.Copy, "every strategy has an answer now that the radios are its only home");
+        JobEditorModel.HowRotatedShown(JobEditorModel.From(ShownWith(("name", "\"iis\""), ("lockstrategy", "\"snapshot\""))))
+            .ShouldBeNull("a value this build does not know is shown as none of them");
+    }
+
+    [Fact]
+    public void CopyIsWrittenBackLikeTheOthers()
+    {
+        var view = JobEditorModel.From(ShownWith(("name", "\"iis\""), ("lockstrategy", "\"auto\"")));
+
+        Saved(view, Answers(HowRotated.Copy), isNew: false)
+            .ShouldBe(["job", "set", "iis", "--set", "lockstrategy=copy"]);
     }
 
     /// <summary>A strategy with no radio is handed back untouched, whatever the other answers do.</summary>
     [Fact]
     public void AStrategyWithoutARadioIsLeftAlone()
     {
-        var view = JobEditorModel.From(ShownWith(("name", "\"iis\""), ("lockstrategy", "\"copy\"")));
+        var view = JobEditorModel.From(ShownWith(("name", "\"iis\""), ("lockstrategy", "\"snapshot\"")));
 
         var args = Saved(view, Answers(how: null, rotate: "14"), isNew: false);
 
@@ -1265,5 +1276,102 @@ public sealed class JobEditorModelTests
         JobEditorModel.AdvancedSetCount(JobEditorModel.From(ShownWith(("name", "\"iis\""), ("olddir", "\"D:/a\""))))
             .ShouldBe(0, "a key Basics shows is not counted as beyond it");
     }
-}
 
+    // ---- the pages ---------------------------------------------------------------------------
+
+    /// <summary>
+    /// Every known key is on exactly one page, as a control or as a row - and nothing is on two.
+    /// </summary>
+    /// <remarks>
+    /// This is what lets the form drop its two views. A key with two homes needs carrying
+    /// between them, which is the code this replaces; a key with none cannot be edited from the
+    /// window that promises to edit jobs. A new schema key fails here until it is given a page.
+    /// </remarks>
+    [Fact]
+    public void EveryKnownKeyIsOnExactlyOnePage()
+    {
+        var view = Loaded();
+        var pages = JobEditorModel.Pages(view);
+
+        var rows = pages.SelectMany(p => p.More.Select(f => f.Key)).ToArray();
+        var controls = JobEditorModel.Controls;
+        var header = JobEditorModel.Header;
+        var shorthands = JobEditorModel.Shorthands;
+
+        var placed = rows.Concat(controls).Concat(header).Concat(shorthands).ToArray();
+        placed.Distinct(StringComparer.OrdinalIgnoreCase).Count().ShouldBe(placed.Length, "a key with two homes");
+
+        var known = view.Fields.Where(f => f.Known).Select(f => f.Key).ToArray();
+        known.ShouldBe(JobSchema.Keys.Select(r => r.Key), ignoreOrder: true, "the fixture must show every schema key");
+        placed.OrderBy(k => k, StringComparer.Ordinal).ShouldBe(known.OrderBy(k => k, StringComparer.Ordinal), "a key with no home");
+
+        foreach (var key in known)
+        {
+            JobEditorModel.PageOf(key).ShouldNotBe(JobPageId.Other, $"{key} is a known key and needs a page of its own");
+        }
+    }
+
+    [Fact]
+    public void ThePagesAreInMenuOrderAndTheirRowsInSchemaOrder()
+    {
+        var pages = JobEditorModel.Pages(Loaded());
+
+        pages.Select(p => p.Id).ShouldBe(
+            [JobPageId.Files, JobPageId.How, JobPageId.When, JobPageId.Keep, JobPageId.Copies, JobPageId.Hooks, JobPageId.Wrong, JobPageId.Other]);
+
+        var schema = JobSchema.Keys.Select(r => r.Key).ToList();
+
+        foreach (var page in pages)
+        {
+            page.More.Select(f => schema.IndexOf(f.Key)).ShouldBeInOrder(SortDirection.Ascending, page.Menu);
+        }
+
+        pages.Single(p => p.Id == JobPageId.Keep).More.Select(f => f.Key).ShouldBe(["start", "minage", "minsize", "maxfiles"]);
+        pages.Single(p => p.Id == JobPageId.How).More.Select(f => f.Key).ShouldBe(["livefiles", "retrycount", "retryinterval"]);
+        pages.Single(p => p.Id == JobPageId.Files).More.Select(f => f.Key).ShouldBe(["allowdangerous"]);
+    }
+
+    [Fact]
+    public void TheOtherPageExistsOnlyWhenTheFileHasKeysOfItsOwn()
+    {
+        JobEditorModel.Pages(Loaded()).ShouldContain(p => p.Id == JobPageId.Other, "the fixture has ownr and colour");
+        JobEditorModel.Pages(JobEditorModel.Blank()).ShouldNotContain(p => p.Id == JobPageId.Other);
+        JobEditorModel.PageOf("ownr").ShouldBe(JobPageId.Other);
+    }
+
+    /// <summary>No page has more rows than fit under its controls without scrolling.</summary>
+    [Fact]
+    public void NoPageNeedsToScroll()
+    {
+        foreach (var page in JobEditorModel.Pages(Loaded()))
+        {
+            page.More.Count.ShouldBeLessThanOrEqualTo(4, page.Menu);
+        }
+    }
+
+    [Fact]
+    public void TheMenuMarksAPageWithAProblemAndTheStatusLineNamesIt()
+    {
+        var keep = JobEditorModel.Pages(Loaded()).Single(p => p.Id == JobPageId.Keep);
+
+        JobEditorModel.MenuText(keep, hasProblem: false).ShouldBe("Keep");
+        JobEditorModel.MenuText(keep, hasProblem: true).ShouldBe("Keep \u25CF");
+        JobEditorModel.ProblemLine(keep, "'99x' is not a number of copies.").ShouldBe("Keep: '99x' is not a number of copies.");
+    }
+
+    [Fact]
+    public void ThePagesSpeakPlainly()
+    {
+        foreach (var page in JobEditorModel.Pages(Loaded()))
+        {
+            foreach (var text in new[] { page.Title, page.Menu, JobEditorText.HowCopy, JobEditorText.HowCopyHint, JobEditorText.MoreDivider, JobEditorText.CheckTooltip, JobEditorText.SaveTooltip, JobEditorText.WhenBySize, JobEditorText.HowLocked })
+            {
+                text.ShouldNotContain("glob", Case.Insensitive);
+                text.ShouldNotContain("pattern", Case.Insensitive);
+                text.ShouldNotContain("toml", Case.Insensitive);
+                text.ShouldNotContain("lockstrategy", Case.Insensitive);
+                text.ShouldNotContain("Advanced", Case.Sensitive);
+            }
+        }
+    }
+}

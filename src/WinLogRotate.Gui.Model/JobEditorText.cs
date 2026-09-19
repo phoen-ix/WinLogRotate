@@ -38,7 +38,13 @@ public static class JobEditorText
 
     public const string HowManageHint = "The newest file is never touched; older ones are compressed and deleted.";
 
-    public const string HowLocked = "This job uses 'copy' (see Advanced settings).";
+    public const string HowCopy = "Copy the log and leave it as it is (it keeps growing)";
+
+    public const string HowCopyHint =
+        "A snapshot goes to the old copy; the file itself is never renamed or emptied. For a "
+        + "program that trims its own log and must never lose a line.";
+
+    public const string HowLocked = "This job's way of taking the log away is not one of the answers above.";
 
     public const string NamesNumbered = "Numbered: app.log.1, app.log.2 \u2026";
 
@@ -66,7 +72,7 @@ public static class JobEditorText
 
     public const string WhenManaged = "The application decides when a new file starts; each run tidies what it left.";
 
-    public const string WhenBySize = "This job rotates by size only; change that under Advanced settings.";
+    public const string WhenBySize = "Rotates only when the log reaches the size set under More settings, never by the calendar.";
 
     public const string KeepLead = "old copies; delete any older than";
 
@@ -77,6 +83,14 @@ public static class JobEditorText
     public const string ButtonsHint =
         "Check tries the job out and writes nothing. Save writes it to the configuration folder, "
         + "which only administrators may change, so Windows asks for permission once.";
+
+    public const string CheckTooltip = "Tries the job out and writes nothing.";
+
+    public const string SaveTooltip =
+        "Writes the job to the configuration folder, which only administrators may change, "
+        + "so Windows asks for permission once.";
+
+    public const string MoreDivider = "More settings";
 
     public const string OpeningStatus = "Pick a log file with Browse, or type its path. Everything else has a sensible default.";
 
