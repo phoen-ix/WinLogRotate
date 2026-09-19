@@ -64,6 +64,12 @@ public sealed record LoadedConfig
     public JournalSettings Journal { get; init; } = JournalSettings.Default;
 
     /// <summary>
+    /// The <c>[host]</c> table: when the scheduled task fires. Read here so that
+    /// <c>config check</c> refuses a time the registrar could not use.
+    /// </summary>
+    public HostSettings Host { get; init; } = HostSettings.Default;
+
+    /// <summary>
     /// Jobs that will not run, because validating them produced an error.
     /// </summary>
     /// <remarks>
@@ -142,6 +148,7 @@ public static class ConfigLoader
         JobSettings? defaults = null;
         var notify = NotifySettings.Default;
         var journal = JournalSettings.Default;
+        var host = HostSettings.Default;
         IReadOnlyList<NotifyProvider> providers = [];
         if (File.Exists(paths.ConfigFile))
         {
@@ -181,6 +188,7 @@ public static class ConfigLoader
                 defaults = ConfigBinder.BindDefaults(file, diagnostics);
                 notify = ConfigBinder.BindNotify(file, diagnostics);
                 journal = ConfigBinder.BindJournal(file, diagnostics);
+                host = ConfigBinder.BindHost(file, diagnostics);
                 providers = ConfigBinder.BindProviders(file, diagnostics);
                 ValidateNotifyTargets(notify, providers, paths.ConfigFile, diagnostics);
                 ValidateCredentials(providers, paths.ConfigFile, diagnostics, secrets);
@@ -216,6 +224,7 @@ public static class ConfigLoader
                 Notify = notify,
                 NotifyProviders = providers,
                 Journal = journal,
+                Host = host,
             };
         }
 
@@ -314,6 +323,7 @@ public static class ConfigLoader
             Notify = notify,
             NotifyProviders = providers,
             Journal = journal,
+            Host = host,
         };
     }
 

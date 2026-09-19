@@ -78,6 +78,30 @@ public class TaskXmlBuilderTests
             .ShouldBe(expected);
 
     /// <summary>
+    /// The same rule at a configured time: the next 22:30, whichever day that is on.
+    /// </summary>
+    /// <remarks>
+    /// The registrar took a time of day from the start and nothing ever set it, so this is the
+    /// first time the builder is asked for anything but three o'clock.
+    /// </remarks>
+    [Theory]
+    [InlineData(22, 0, "2026-09-18T22:30:00")]
+    [InlineData(22, 30, "2026-09-19T22:30:00")]
+    [InlineData(23, 0, "2026-09-19T22:30:00")]
+    public void TheFirstRunIsTheNextConfiguredTime(int localHour, int localMinute, string expected)
+    {
+        var doc = Build(new TaskDefinition
+        {
+            ExecutablePath = @"C:\x\winlogrotate.exe",
+            Arguments = "run",
+            Account = RunAccount.System,
+            TimeOfDay = new TimeSpan(22, 30, 0),
+        }, TenHoursEast(new DateTime(2026, 9, 18, localHour, localMinute, 0)));
+
+        StartBoundary(doc).ShouldBe(expected);
+    }
+
+    /// <summary>
     /// An hourly cadence starts at the next slot on its own grid, not at tomorrow's anchor.
     /// </summary>
     /// <remarks>
@@ -198,6 +222,7 @@ public class TaskXmlBuilderTests
         definition.Arguments.ShouldBe(options.Arguments);
         definition.ExecutionTimeLimit.ShouldBe(options.ExecutionTimeLimit);
         definition.ExecutablePath.ShouldBe(options.ExecutablePath);
+        definition.TimeOfDay.ShouldBe(options.TimeOfDay);
     }
 
     /// <summary>

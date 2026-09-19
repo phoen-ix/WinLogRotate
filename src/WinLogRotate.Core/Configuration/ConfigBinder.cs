@@ -103,6 +103,52 @@ public static class ConfigBinder
         };
     }
 
+    /// <summary>Binds the <c>[host]</c> table from <c>config.toml</c>.</summary>
+    /// <remarks>
+    /// Unknown keys are reported, as <c>[notify]</c>'s are and for the same reason: a mistyped
+    /// <c>tme = "22:30"</c> would otherwise register a task at three in the morning and say
+    /// nothing, and the discovery is a rotation at the wrong hour.
+    /// </remarks>
+    public static HostSettings BindHost(TomlFile file, DiagnosticBag diagnostics)
+    {
+        var table = FindTable(file.Document, "host");
+        if (table is null)
+        {
+            return HostSettings.Default;
+        }
+
+        foreach (var kv in table.Items.OfType<KeyValueSyntax>())
+        {
+            var key = KeyName(kv);
+
+            if (!key.Equals("time", StringComparison.OrdinalIgnoreCase))
+            {
+                diagnostics.Warn(file.Path, DiagnosticCode.ConfigInvalid,
+                    $"'{key}' is not a [host] setting, and is ignored.",
+                    LineOf(kv), ColumnOf(kv),
+                    remedy: "The [host] table takes one key: time = \"HH:mm\".");
+            }
+        }
+
+        var text = GetString(table, "time", file.Path, diagnostics);
+        if (text is null)
+        {
+            return HostSettings.Default;
+        }
+
+        if (HostSettings.TryParseTime(text, out var time))
+        {
+            return new HostSettings { Time = time };
+        }
+
+        var timeKey = Find(table, "time");
+        diagnostics.Error(file.Path, DiagnosticCode.ConfigInvalid,
+            $"'time' is not a time of day: \"{text}\".",
+            timeKey is null ? 0 : LineOf(timeKey), timeKey is null ? 0 : ColumnOf(timeKey),
+            remedy: "Write it as HH:mm on a 24-hour clock, e.g. \"03:00\" or \"22:30\".");
+        return HostSettings.Default;
+    }
+
     /// <summary>
     /// Binds the <c>[notify]</c> table from <c>config.toml</c>.
     /// </summary>

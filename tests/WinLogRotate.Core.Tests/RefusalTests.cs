@@ -81,7 +81,7 @@ public sealed partial class RefusalTests
             "probe" => Cli.Commands.ProbeCommand.Run(ctx, "C:\\logs\\app.log"),
             "host status" => Cli.Commands.HostCommand.Status(ctx, null),
             "host repair" => Cli.Commands.HostCommand.Repair(ctx, acl: false, null),
-            "host use" => Cli.Commands.HostCommand.Use(ctx, "task", null),
+            "host use" => Cli.Commands.HostCommand.Use(ctx, "task", null, at: null),
             _ => Cli.Commands.HostCommand.Path(ctx, add: true, machine: true),
         };
 
@@ -124,7 +124,7 @@ public sealed partial class RefusalTests
         {
             "journal" => Cli.Commands.JournalCommand.Run(ctx, value, null, null),
             "host pause" => Cli.Commands.PauseCommand.Run(ctx, value, null),
-            "host use" => Cli.Commands.HostCommand.Use(ctx, value, null),
+            "host use" => Cli.Commands.HostCommand.Use(ctx, value, null, at: null),
             _ => Cli.Commands.ImportCommand.Run(ctx, value, null, null),
         };
 

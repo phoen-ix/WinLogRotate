@@ -1460,8 +1460,8 @@ public partial class ArchitectureTests
     private static readonly Dictionary<string, string[]> Raisers = new(StringComparer.Ordinal)
     {
         [nameof(DiagnosticCode.NeedsAdministrator)] = ["HostCommand.cs", "ImportCommand.cs", "JobCommand.cs", "PauseCommand.cs", "SecretCommand.cs", "UpdateCommand.cs"],
-        [nameof(DiagnosticCode.ConfigUnreadable)] = ["JobCommand.cs", "ConfigLoader.cs", "SecretCommand.cs"],
-        [nameof(DiagnosticCode.ConfigInvalid)] = ["ConfigBinder.cs", "ConfigLoader.cs", "ConfigValidator.cs", "Diagnose.cs", "ImportCommand.cs", "LogrotateImporter.cs", "SecretCommand.cs"],
+        [nameof(DiagnosticCode.ConfigUnreadable)] = ["JobCommand.cs", "ConfigLoader.cs", "HostCommand.cs", "SecretCommand.cs"],
+        [nameof(DiagnosticCode.ConfigInvalid)] = ["ConfigBinder.cs", "ConfigLoader.cs", "ConfigValidator.cs", "Diagnose.cs", "HostCommand.cs", "ImportCommand.cs", "LogrotateImporter.cs", "SecretCommand.cs"],
         [nameof(DiagnosticCode.NoJobsConfigured)] = ["ConfigLoader.cs"],
         [nameof(DiagnosticCode.NotSupportedHere)] = ["Refusals.cs", "SecretCommand.cs"],
         [nameof(DiagnosticCode.InternalError)] = ["CommandContext.cs", "HostCommand.cs", "UnhandledReporter.cs"],
@@ -1469,7 +1469,7 @@ public partial class ArchitectureTests
         [nameof(DiagnosticCode.AlreadyRunning)] = ["GateRefusal.cs"],
         [nameof(DiagnosticCode.RotationGateHeld)] = ["DoctorCommand.cs", "GateRefusal.cs"],
         [nameof(DiagnosticCode.FailedWithoutReason)] = ["DiagnosticCollector.cs"],
-        [nameof(DiagnosticCode.ConfigUnwritable)] = ["ConfigLoader.cs", "ImportCommand.cs", "JobCommand.cs", "PauseCommand.cs", "SecretCommand.cs"],
+        [nameof(DiagnosticCode.ConfigUnwritable)] = ["ConfigLoader.cs", "HostCommand.cs", "ImportCommand.cs", "JobCommand.cs", "PauseCommand.cs", "SecretCommand.cs"],
         [nameof(DiagnosticCode.JobSkipped)] = ["Diagnose.cs", "RunCommand.cs"],
         [nameof(DiagnosticCode.FileMissing)] = ["ProbeCommand.cs", "RotationRunner.cs"],
         [nameof(DiagnosticCode.FileEmpty)] = ["RotationRunner.cs"],

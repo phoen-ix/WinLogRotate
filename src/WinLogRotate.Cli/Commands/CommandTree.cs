@@ -616,9 +616,11 @@ internal static class CommandTree
     private static Command BuildHost()
     {
         var kind = new Argument<string>("kind") { Description = "task or none. The service host is not implemented in this build." };
-        var use = new Command("use", "Choose what runs rotations, switching freely from whatever is registered now.") { kind };
+        var at = new Option<string?>("--at") { Description = "The time of day the task fires, on a 24-hour clock, e.g. 03:00 or 22:30. Written to [host] in config.toml; without it the configured time is used." };
+        var use = new Command("use", "Choose what runs rotations, switching freely from whatever is registered now.") { kind, at };
         GlobalOptions.AddTo(use);
-        use.SetAction(parse => CommandContext.Guarded(parse, ctx => HostCommand.Use(ctx, parse.GetRequiredValue(kind), parse.GetValue(GlobalOptions.ConfigDir)?.FullName)));
+        use.SetAction(parse => CommandContext.Guarded(parse, ctx => HostCommand.Use(
+            ctx, parse.GetRequiredValue(kind), parse.GetValue(GlobalOptions.ConfigDir)?.FullName, parse.GetValue(at))));
 
         var status = new Command("status", "Report the configured run host, what is actually registered, and any drift between them.");
         GlobalOptions.AddTo(status);

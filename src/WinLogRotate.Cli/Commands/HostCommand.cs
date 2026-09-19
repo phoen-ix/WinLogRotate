@@ -2,6 +2,7 @@ using System.Runtime.Versioning;
 using WinLogRotate.Cli.Output;
 using WinLogRotate.Contracts;
 using WinLogRotate.Core;
+using WinLogRotate.Core.Configuration;
 using WinLogRotate.Hosting;
 using WinLogRotate.Hosting.Hosts;
 using WinLogRotate.Hosting.Security;
@@ -38,8 +39,8 @@ internal static class HostCommand
                 Remedy = "Use 'winlogrotate host use task'. A scheduled task is the better fit for a log rotator anyway: nothing stays resident, and a run missed while the machine was off is caught up afterwards.",
             };
 
-    public static int Use(CommandContext ctx, string kind, string? configDir) =>
-        Use(ctx, kind, configDir, host: null, elevated: null, verb: "host use");
+    public static int Use(CommandContext ctx, string kind, string? configDir, string? at) =>
+        Use(ctx, kind, configDir, host: null, elevated: null, verb: "host use", at);
 
     /// <summary>
     /// The same, with the registrar, the elevation question and the reporting verb supplied.
@@ -48,13 +49,43 @@ internal static class HostCommand
     /// <c>host repair</c> reaches this too, and used to be reported as <c>host use</c> - a verb
     /// the caller had not typed and a script matching on the envelope would not find.
     /// </param>
+    /// <param name="at">
+    /// <c>--at</c>: the time of day the task fires, written to <c>[host]</c> in config.toml
+    /// before the task is registered. Null means the configured time, which is how
+    /// <c>host repair</c> keeps the time it was given.
+    /// </param>
     internal static int Use(
-        CommandContext ctx, string kind, string? configDir, IRunHost? host, Func<bool>? elevated, string verb)
+        CommandContext ctx, string kind, string? configDir, IRunHost? host, Func<bool>? elevated, string verb,
+        string? at = null)
     {
         if (!Enum.TryParse<RunHostKind>(kind, ignoreCase: true, out var wanted))
         {
             return Refusals.CannotUse<HostResult>(
                 ctx, verb, kind, "a run model", "Use task or none.");
+        }
+
+        // Judged here, above the platform guard, like Unsupported below: a fact about the
+        // arguments is the same answer everywhere, and refusing it before anything is touched is
+        // a property the tests can hold where the tests run.
+        TimeSpan? requested = null;
+
+        if (at is not null)
+        {
+            if (wanted != RunHostKind.Task)
+            {
+                return Refusals.CannotUse<HostResult>(
+                    ctx, verb, "--at", $"an option of 'host use {kind}'",
+                    "It says when the scheduled task fires. Leave it out, or use 'host use task --at HH:mm'.");
+            }
+
+            if (!HostSettings.TryParseTime(at, out var parsed))
+            {
+                return Refusals.CannotUse<HostResult>(
+                    ctx, verb, at, "a time of day",
+                    "Write it as HH:mm on a 24-hour clock, e.g. --at 03:00 or --at 22:30.");
+            }
+
+            requested = parsed;
         }
 
         // Before the platform guard, before the elevation check, and - the part that matters -
@@ -92,6 +123,38 @@ internal static class HostCommand
         var paths = InstallPaths.Resolve(configDir);
         var task = host ?? new TaskRunHost(TimeProvider.System);
 
+        // The configuration first, then the task. host repair and host export-task read the time
+        // back from config.toml, so a task registered at a time the file does not hold is exactly
+        // the drift the [host] table exists to end: the next repair would put 03:00 back without
+        // a word. If the registration below then fails, the file says 22:30 and the remedy is to
+        // run this again. Read back after it is written, so what is registered is what the file
+        // will say tomorrow and not merely what was typed today.
+        HostSettings? settings = null;
+
+        if (wanted == RunHostKind.Task)
+        {
+            if (requested is { } chosen && Remember(paths, chosen) is { } notWritten)
+            {
+                ctx.Output.Diagnostic(notWritten);
+                return ctx.Output.Complete<HostResult>(verb, ExitCode.ConfigInvalid, null);
+            }
+
+            var configured = ConfiguredTime(paths);
+
+            foreach (var d in configured.Diagnostics)
+            {
+                ctx.Output.Diagnostic(d);
+            }
+
+            settings = configured.Settings;
+
+            if (settings is null)
+            {
+                ctx.Output.Line("winlogrotate: the time the task fires could not be read from the configuration; nothing was registered.");
+                return ctx.Output.Complete<HostResult>(verb, ExitCode.ConfigInvalid, null);
+            }
+        }
+
         try
         {
             if (wanted == RunHostKind.None)
@@ -109,11 +172,12 @@ internal static class HostCommand
             // delete it and then register, and a registration schtasks refused - a policy, a
             // task folder with changed permissions - left the machine with nothing running
             // rotations, reported as a defect.
-            ctx.Output.Line("Registering the scheduled task...");
+            ctx.Output.Line($"Registering the scheduled task, daily at {settings!.TimeText}...");
             task.Install(new HostInstallOptions
             {
                 ExecutablePath = Environment.ProcessPath ?? "winlogrotate.exe",
                 ConfigDirectory = paths.Root,
+                TimeOfDay = settings.Time,
             });
         }
         catch (HostRegistrationException e)
@@ -136,9 +200,175 @@ internal static class HostCommand
 
         task.Record(RunHostKind.Task);
 
-        ctx.Output.Line($"Done. Rotations will run daily as SYSTEM. Check with 'winlogrotate host status'.");
-        return ctx.Output.Complete(verb, ExitCode.Ok, Describe(RunHostKind.Task, paths));
+        ctx.Output.Line($"Done. Rotations will run daily at {settings.TimeText} as SYSTEM. Check with 'winlogrotate host status'.");
+        return ctx.Output.Complete(verb, ExitCode.Ok, Describe(RunHostKind.Task, paths, settings.TimeText));
     }
+
+    /// <summary>What the configuration says about the task's time, or why it could not say.</summary>
+    /// <remarks>
+    /// <see cref="Settings"/> is null exactly when something in <see cref="Diagnostics"/> is an
+    /// error; the warnings - an unknown key - ride along with a usable answer.
+    /// </remarks>
+    internal sealed record ConfiguredHost(HostSettings? Settings, IReadOnlyList<CliDiagnostic> Diagnostics);
+
+    /// <summary>
+    /// The time the configuration says the task fires.
+    /// </summary>
+    /// <remarks>
+    /// One reader for every verb that needs the answer - use, repair, status, export-task and
+    /// doctor - so that none of them can disagree about it. No config.toml means the default; one
+    /// that cannot be read, does not parse, or holds a time the registrar could not use is a
+    /// refusal rather than a quiet 03:00, because a task registered at a time the file does not
+    /// hold is the drift the table exists to end.
+    /// </remarks>
+    internal static ConfiguredHost ConfiguredTime(InstallPaths paths)
+    {
+        if (!File.Exists(paths.ConfigFile))
+        {
+            return new ConfiguredHost(HostSettings.Default, []);
+        }
+
+        TomlFile file;
+
+        try
+        {
+            file = TomlFile.Load(paths.ConfigFile);
+        }
+        catch (Exception e) when (e is IOException or UnauthorizedAccessException)
+        {
+            return new ConfiguredHost(null,
+            [
+                new CliDiagnostic
+                {
+                    Severity = Severity.Error,
+                    Code = DiagnosticCode.ConfigUnreadable,
+                    Message = $"{paths.ConfigFile} could not be read: {e.Message}",
+                    Path = paths.ConfigFile,
+                    Remedy = "The time the scheduled task fires is read from it. Fix the file, then run this again.",
+                },
+            ]);
+        }
+
+        if (file.HasErrors)
+        {
+            return new ConfiguredHost(null, [DoesNotParse(paths)]);
+        }
+
+        var bag = new DiagnosticBag();
+        var settings = ConfigBinder.BindHost(file, bag);
+        var carried = bag.Items.Select(Carry).ToArray();
+
+        return new ConfiguredHost(bag.Items.Any(d => d.Severity >= Severity.Error) ? null : settings, carried);
+    }
+
+    /// <summary>
+    /// Writes the time into <c>[host]</c> in config.toml, or says why it could not.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// The table is appended when the file has none, which is every installation older than
+    /// the table. <see cref="TomlEditor"/> deliberately never creates one, and that is right for
+    /// a job or a provider - but a top-level table at the very end of a file is the one placement
+    /// that cannot change the meaning of anything above it. A file that is not there at all - a
+    /// portable copy nobody has configured - is created with the table and nothing else.
+    /// </para>
+    /// <para>
+    /// Nothing is written over a file that does not parse, for the reason set-secret gives: a
+    /// rewrite driven by a partial parse is how a typo becomes data loss.
+    /// </para>
+    /// </remarks>
+    private static CliDiagnostic? Remember(InstallPaths paths, TimeSpan time)
+    {
+        var text = new HostSettings { Time = time }.TimeText;
+        var table = $"[host]\ntime = \"{text}\"\n";
+        TomlFile file;
+
+        if (!File.Exists(paths.ConfigFile))
+        {
+            file = TomlFile.Parse($"schema = 1\n\n{table}", paths.ConfigFile);
+        }
+        else
+        {
+            try
+            {
+                file = TomlFile.Load(paths.ConfigFile);
+            }
+            catch (Exception e) when (e is IOException or UnauthorizedAccessException)
+            {
+                return new CliDiagnostic
+                {
+                    Severity = Severity.Error,
+                    Code = DiagnosticCode.ConfigUnreadable,
+                    Message = $"{paths.ConfigFile} could not be read: {e.Message}",
+                    Path = paths.ConfigFile,
+                    Remedy = "The time is written there before the task is registered. Fix the file, then run this again.",
+                };
+            }
+
+            if (file.HasErrors)
+            {
+                return DoesNotParse(paths);
+            }
+
+            if (!TomlEditor.TrySet(file, ["host"], "time", text, out var error, out var detail))
+            {
+                if (error != TomlEditError.NoSuchTable)
+                {
+                    return new CliDiagnostic
+                    {
+                        Severity = Severity.Error,
+                        Code = DiagnosticCode.ConfigUnwritable,
+                        Message = $"'time' could not be written to [host] in {paths.ConfigFile}: {detail}",
+                        Path = paths.ConfigFile,
+                        Remedy = "Set time = \"HH:mm\" under [host] by hand, then run 'winlogrotate host use task'.",
+                    };
+                }
+
+                file = TomlFile.Parse(
+                    file.ToString().TrimEnd('\r', '\n') + Environment.NewLine + Environment.NewLine + table,
+                    paths.ConfigFile);
+            }
+        }
+
+        try
+        {
+            ConfigWrites.Config(file);
+        }
+        catch (Exception e) when (e is IOException or UnauthorizedAccessException)
+        {
+            return new CliDiagnostic
+            {
+                Severity = Severity.Error,
+                Code = DiagnosticCode.ConfigUnwritable,
+                Message = $"{paths.ConfigFile} could not be written: {e.Message}",
+                Path = paths.ConfigFile,
+                Remedy = "Nothing was registered. Check the directory exists and that this account may write to it.",
+            };
+        }
+
+        return null;
+    }
+
+    private static CliDiagnostic DoesNotParse(InstallPaths paths) => new()
+    {
+        Severity = Severity.Error,
+        Code = DiagnosticCode.ConfigInvalid,
+        Message = $"{paths.ConfigFile} does not parse, so the time the scheduled task fires cannot be read from it.",
+        Path = paths.ConfigFile,
+        Remedy = "Run 'winlogrotate config check' and fix it first.",
+    };
+
+    /// <summary>A binder's finding, as the envelope carries one - the mapping RunCommand makes inline.</summary>
+    private static CliDiagnostic Carry(ConfigDiagnostic d) => new()
+    {
+        Severity = d.Severity,
+        Code = d.Code,
+        Message = d.Message,
+        Path = d.File,
+        Line = d.Line == 0 ? null : d.Line,
+        Column = d.Column == 0 ? null : d.Column,
+        Remedy = d.Remedy,
+    };
 
     /// <summary>
     /// What the registrar said, under the code that means it, with the one fact the operator
@@ -166,6 +396,20 @@ internal static class HostCommand
 
         ctx.Output.Line($"run host      {(status.Registered ? "scheduled task" : "none")}");
         ctx.Output.Line($"config        {paths.Root}");
+
+        // Reported, never failed on: status says what is, and a config.toml that will not parse
+        // is one of the things that is. Exit 0 still means "here is the status".
+        var configured = ConfiguredTime(paths);
+
+        foreach (var d in configured.Diagnostics)
+        {
+            ctx.Output.Diagnostic(d with { Severity = Severity.Warning });
+        }
+
+        if (configured.Settings is { } time)
+        {
+            ctx.Output.Line($"runs at       {time.TimeText} (config.toml)");
+        }
 
         // Drift first, because it is the more specific answer to the same observation. "Nothing
         // is registered" is a fact about now; "this install was set up with a task and the task is
@@ -195,7 +439,8 @@ internal static class HostCommand
         }
 
         return ctx.Output.Complete("host status", ExitCode.Ok,
-            Describe(status.Registered ? RunHostKind.Task : RunHostKind.None, paths));
+            Describe(status.Registered ? RunHostKind.Task : RunHostKind.None, paths,
+                status.Registered ? configured.Settings?.TimeText : null));
     }
 
     /// <summary>
@@ -216,7 +461,7 @@ internal static class HostCommand
 
         if (!acl)
         {
-            return Use(ctx, "task", configDir, host: null, elevated: null, verb: "host repair");
+            return Use(ctx, "task", configDir, host: null, elevated: null, verb: "host repair", at: null);
         }
 
         if (!Privilege.IsElevated())
@@ -432,11 +677,12 @@ internal static class HostCommand
         return ctx.Output.Complete<PathResult>(verb, ExitCode.Errors, null);
     }
 
-    private static HostResult Describe(RunHostKind kind, InstallPaths paths) => new()
+    private static HostResult Describe(RunHostKind kind, InstallPaths paths, string? time = null) => new()
     {
         Host = kind.ToString(),
         ConfigRoot = paths.Root,
         Scope = paths.Scope.ToString(),
+        Time = time,
     };
 
     private static int NotOnWindows(CommandContext ctx, string verb) =>

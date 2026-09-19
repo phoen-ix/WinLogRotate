@@ -1,3 +1,4 @@
+using System.Globalization;
 using WinLogRotate.Gui.Cli;
 using WinLogRotate.Gui.Ui;
 
@@ -7,9 +8,17 @@ namespace WinLogRotate.Gui.Pages;
 /// Chooses what runs rotations, and switches between the options freely.
 /// </summary>
 /// <remarks>
+/// <para>
 /// Switching calls exactly the same CLI verb the installer does, so the path is exercised every
 /// time anyone changes their mind rather than only once during setup. Rotation clocks live in a
 /// host-independent state file, so switching never causes anything to re-rotate.
+/// </para>
+/// <para>
+/// The time the task fires is a picker under the task option. It shows what config.toml says,
+/// which doctor reports, and Apply passes it as <c>--at</c> - so the verb writes it to the
+/// configuration before it registers, and a later repair keeps it. The task fired at three in the
+/// morning for as long as this page existed, and there was nowhere to say otherwise.
+/// </para>
 /// </remarks>
 public sealed class SchedulingPage : UserControl
 {
@@ -27,6 +36,18 @@ public sealed class SchedulingPage : UserControl
         Enabled = SchedulingProjection.Offered(RunHostChoice.Service),
     };
     private readonly RadioButton _none = new() { Text = "Neither - I will trigger it myself", AutoSize = true };
+
+    // Enabled only while the task is the selection: a time under an option nobody chose is a
+    // control that looks like it does something.
+    private readonly Label _atLabel = new() { Text = "Runs daily at", AutoSize = true, Margin = new Padding(48, 6, 6, 0) };
+    private readonly DateTimePicker _at = new()
+    {
+        Format = DateTimePickerFormat.Custom,
+        CustomFormat = "HH:mm",
+        ShowUpDown = true,
+        Width = 70,
+        Enabled = false,
+    };
     // Disabled until the first refresh says which host is registered. An Apply that is
     // clickable before the page knows anything is an Apply that acts on a selection nobody made.
     private readonly Button _apply =
@@ -67,18 +88,24 @@ public sealed class SchedulingPage : UserControl
         LrDialog.AddShield(_apply);
         _apply.Click += async (_, _) => await ApplyAsync().ConfigureAwait(true);
 
-        // Three radios of 19 pixels and three hints of 18, each with 6 of margin, are 147: at
-        // 130 the last hint lost its bottom line.
+        // Three radios of 19 pixels and three hints of 18, each with 6 of margin, are 147, and
+        // the time row under the first hint is another 26 plus its 6: at 150 the last hint lost
+        // its bottom line once the row was there.
         var options = new FlowLayoutPanel
         {
             Dock = DockStyle.Top,
-            Height = 150,
+            Height = 184,
             FlowDirection = FlowDirection.TopDown,
             WrapContents = false,
         };
 
+        var when = new FlowLayoutPanel { AutoSize = true, WrapContents = false, Margin = new Padding(0) };
+        when.Controls.AddRange([_atLabel, _at]);
+        _task.CheckedChanged += (_, _) => _at.Enabled = _task.Checked;
+
         options.Controls.Add(_task);
-        options.Controls.Add(Hint("Runs daily as SYSTEM. Nothing stays resident, and a run missed while the machine was off is caught up afterwards."));
+        options.Controls.Add(Hint("Runs daily as SYSTEM at the time below. A run missed while the machine was off is caught up afterwards."));
+        options.Controls.Add(when);
         options.Controls.Add(_service);
         options.Controls.Add(Hint(
             SchedulingProjection.Unavailable(RunHostChoice.Service) ?? "A resident agent with its own timer."));
@@ -126,6 +153,9 @@ public sealed class SchedulingPage : UserControl
         _service.Checked = view.Selected == RunHostChoice.Service;
         _none.Checked = view.Selected == RunHostChoice.None;
 
+        // The date half is never shown and never sent; only the time of day travels.
+        _at.Value = DateTime.Today.Add(view.Time);
+
         // A selection nobody made must not become an instruction. When the current host could
         // not be established, every option on this page is one of those.
         _known = view.Known;
@@ -144,9 +174,13 @@ public sealed class SchedulingPage : UserControl
     {
         var kind = _task.Checked ? "task" : _service.Checked ? "service" : "none";
 
+        // Invariant and 24-hour: it is the [host] table's own spelling, and the verb parses it
+        // with the same grammar the configuration is read with.
+        var at = _at.Value.ToString("HH:mm", CultureInfo.InvariantCulture);
+
         _apply.Enabled = false;
         _log.Clear();
-        _log.AppendText($"Switching to: {kind}{Environment.NewLine}");
+        _log.AppendText($"Switching to: {kind}{(_task.Checked ? $", daily at {at}" : "")}{Environment.NewLine}");
 
         try
         {
@@ -154,7 +188,9 @@ public sealed class SchedulingPage : UserControl
             // removes a task and registers another, which can take ten seconds or more. Ten
             // seconds of a frozen window reads as a hang.
             var result = await _cli.RunElevatedAsync(
-                CliArgs.For(_configDir, "host", "use", kind),
+                _task.Checked
+                    ? CliArgs.For(_configDir, "host", "use", "task", "--at", at)
+                    : CliArgs.For(_configDir, "host", "use", kind),
                 UiThread.LineTo(_log, line => _log.AppendText(line + Environment.NewLine)))
                 .ConfigureAwait(true);
 

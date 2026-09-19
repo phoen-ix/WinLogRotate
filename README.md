@@ -124,6 +124,9 @@ Every switch the installer understands:
 | `/D=<dir>` | Install directory (the standard NSIS switch; must be last) |
 | `uninstall.exe /S /PURGEDATA` | Remove the configuration, state and history too. Without it a silent uninstall keeps them — which is what an in-place upgrade depends on |
 
+The task fires at 03:00 unless `config.toml` says otherwise. For a fleet, follow the install with
+`winlogrotate host use task --at 22:30`: `/CONFIG=` seeds job files, not `config.toml`.
+
 ---
 
 ## Use
@@ -175,7 +178,7 @@ doesn't run on Server Core and that's where IIS usually lives.
 | `job enable` / `disable` | Switch a job off and back on, reversibly |
 | `job remove <name>` | Delete a job and its file |
 | `job show <name>` | Print a job as its file writes it — what to feed back into `job set` |
-| `host use task\|none` | Choose what runs rotations — switch freely, any time |
+| `host use task\|none` | Choose what runs rotations — switch freely, any time. `--at HH:mm` says when the task fires |
 | `host status` / `repair` / `pause` | Reality vs config; re-apply permissions; suspend |
 | `host export-task` | Scheduled Task XML, for GPO or DSC |
 | `host path-add` / `path-remove` | Put the install directory on PATH, or take it off — what the installer calls |

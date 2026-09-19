@@ -1,3 +1,4 @@
+using System.Globalization;
 using System.Text.Json.Serialization;
 using WinLogRotate.Core.Safety;
 
@@ -228,6 +229,60 @@ public sealed record JournalSettings
     public bool Notify { get; init; }
 
     public static JournalSettings Default { get; } = new();
+}
+
+/// <summary>
+/// The <c>[host]</c> table: when the registered run host fires.
+/// </summary>
+/// <remarks>
+/// <para>
+/// The scheduled task is registered from this and re-registered from it by <c>host repair</c>,
+/// which is why it is configuration rather than an argument: a time that lived only in the task
+/// was put back to three in the morning by the next repair or upgrade, silently.
+/// <c>host use task --at</c> writes it here before it registers anything.
+/// </para>
+/// <para>
+/// One key, on purpose. The task is daily; a job on <c>hourly</c> rotates once a day under it,
+/// which is what it has always done.
+/// </para>
+/// </remarks>
+public sealed record HostSettings
+{
+    /// <summary>The time of day the task fires, on the machine's own clock.</summary>
+    public TimeSpan Time { get; init; } = TimeSpan.FromHours(3);
+
+    /// <summary>
+    /// <see cref="Time"/> as the configuration, the command line, doctor and the Scheduling page
+    /// all spell it: <c>HH:mm</c> on a 24-hour clock.
+    /// </summary>
+    public string TimeText => Time.ToString(@"hh\:mm", CultureInfo.InvariantCulture);
+
+    public static HostSettings Default { get; } = new();
+
+    /// <summary>
+    /// Reads <c>HH:mm</c> or <c>H:mm</c> on a 24-hour clock, and nothing else.
+    /// </summary>
+    /// <remarks>
+    /// Public because <c>--at</c> parses with it, for the reason
+    /// <see cref="ConfigBinder.TryParseDuration"/> gives: one grammar for one concept. Invariant,
+    /// so a German machine reads "22:30" the way an English one does. No seconds and no am/pm:
+    /// what is written here is read back off the Scheduling page, and a spelling the page cannot
+    /// show is a spelling nobody can check.
+    /// </remarks>
+    public static bool TryParseTime(string text, out TimeSpan time)
+    {
+        time = default;
+
+        if (TimeOnly.TryParseExact(
+                text.Trim(), ["HH:mm", "H:mm"], CultureInfo.InvariantCulture, DateTimeStyles.None,
+                out var parsed))
+        {
+            time = parsed.ToTimeSpan();
+            return true;
+        }
+
+        return false;
+    }
 }
 
 /// <summary>

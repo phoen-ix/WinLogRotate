@@ -92,4 +92,9 @@ public class CommandTreeTests
     {
         CommandTree.Build().Parse(["host", "use"]).Errors.ShouldNotBeEmpty();
     }
+
+    /// <summary>The Scheduling page and the README both spell it this way.</summary>
+    [Fact]
+    public void HostUseTakesTheTimeTheTaskFires() =>
+        CommandTree.Build().Parse(["host", "use", "task", "--at", "22:30"]).Errors.ShouldBeEmpty();
 }

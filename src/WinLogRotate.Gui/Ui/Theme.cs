@@ -135,8 +135,9 @@ public static partial class Theme
             // Without this these fall to the default arm, which sets the foreground and leaves
             // the background alone - and their background is white, drawn by the control rather
             // than inherited. In dark mode that is near-white text on white: a field nobody can
-            // read, on a form that looks otherwise correct.
-            case ComboBox or NumericUpDown:
+            // read, on a form that looks otherwise correct. The time picker on the Scheduling
+            // page is a spin box of the same kind; its drop-down calendar is never shown.
+            case ComboBox or NumericUpDown or DateTimePicker:
                 control.BackColor = colors.Surface;
                 control.ForeColor = colors.Text;
                 break;

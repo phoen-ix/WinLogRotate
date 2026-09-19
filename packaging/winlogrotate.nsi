@@ -553,6 +553,11 @@ Section "-Core" SEC_CORE
     FileWrite $0 'compress = "zip"     # zip | gzip | none$\r$\n'
     FileWrite $0 'maxsize  = "50M"     # roll mid-day past this$\r$\n'
     FileWrite $0 "$\r$\n"
+    FileWrite $0 "# When the scheduled task fires, on a 24-hour clock. Change it with$\r$\n"
+    FileWrite $0 "# 'winlogrotate host use task --at HH:mm' or the console's Scheduling page.$\r$\n"
+    FileWrite $0 "[host]$\r$\n"
+    FileWrite $0 'time = "03:00"$\r$\n'
+    FileWrite $0 "$\r$\n"
     FileWrite $0 "# Who finds out when rotation stops working. Commented out because a target$\r$\n"
     FileWrite $0 "# nobody chose is a target nobody reads - but eventlog: needs no credential,$\r$\n"
     FileWrite $0 "# no network and nothing to break, so it is the one to start with. Email,$\r$\n"

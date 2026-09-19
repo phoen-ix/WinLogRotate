@@ -166,6 +166,12 @@ public sealed record DoctorResult
     public required RunHostKind RunHost { get; init; }
     public required string RunHostDetail { get; init; }
 
+    /// <summary>
+    /// When the scheduled task fires, as <c>[host]</c> in config.toml says it: <c>HH:mm</c>.
+    /// Null when the file would not give an answer. The Scheduling page reads it into its picker.
+    /// </summary>
+    public string? RunHostTime { get; init; }
+
     /// <summary>What notifications are configured to do. Reported without doing any of it.</summary>
     public required NotifyDoctorDto Notify { get; init; }
 
@@ -396,6 +402,9 @@ public sealed record HostResult
     public required string Host { get; init; }
     public required string ConfigRoot { get; init; }
     public required string Scope { get; init; }
+
+    /// <summary>When the task fires, <c>HH:mm</c>; null when the host is none.</summary>
+    public string? Time { get; init; }
 }
 
 /// <summary>Payload of <c>winlogrotate probe</c>.</summary>

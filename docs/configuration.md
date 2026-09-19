@@ -5,7 +5,7 @@ order so that two machines given the same files load them the same way.
 
 | File | Holds |
 |---|---|
-| `config.toml` | `schema`, `[defaults]`, `[notify]`, `[journal]` |
+| `config.toml` | `schema`, `[defaults]`, `[notify]`, `[journal]`, `[host]` |
 | `conf.d/*.toml` | one `[job]` per file |
 
 Where those live depends on how it was installed — `C:\ProgramData\WinLogRotate` for a
@@ -260,3 +260,21 @@ without writing and without asking for administrator rights; Save asks once.
 `[defaults]` takes any key from this page except `name`, `paths`, `kind`, `enabled` and
 `allowdangerous`, and applies it beneath every job. `[notify]` and `[journal]` are documented
 in [notifications](notifications.md).
+
+## `[host]`: when the scheduled task fires
+
+```toml
+[host]
+time = "03:00"
+```
+
+The one key is the time of day at which the registered scheduled task starts a run, on a 24-hour
+clock and on the machine's own clock. `winlogrotate host use task --at 22:30` writes it here and
+registers the task in the same step; the console's Scheduling page does the same. `host use task`
+without `--at`, `host repair` and `host export-task` all read it, which is what makes the time
+survive a repair and an upgrade: a time that lived only in the task was put back to 03:00 by the
+next repair, silently.
+
+A value that is not `HH:mm` is refused by `config check`, and `host use task` will not register a
+task until it is fixed. A key other than `time` is reported and ignored. The task is daily; a job
+whose schedule is `hourly` rotates once a day under it, which is what it has always done.

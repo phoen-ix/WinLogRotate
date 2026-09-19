@@ -13,6 +13,7 @@ product : String
 result.configRoot : String
 result.host : String
 result.scope : String
+result.time : String
 schema : Number
 verb : String
 version : String

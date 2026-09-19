@@ -27,6 +27,7 @@ result.report[] : String
 result.root : String
 result.runHost : String
 result.runHostDetail : String
+result.runHostTime : String
 result.scope : String
 result.version : String
 schema : Number

@@ -266,7 +266,8 @@ public sealed class EnvelopeShapeTests
                 HooksAllowed = true,
                 AclFix = "icacls ...",
                 RunHost = Hosting.Hosts.RunHostKind.Task,
-                RunHostDetail = "daily at 03:00",
+                RunHostDetail = "registered",
+                RunHostTime = "03:00",
                 Notify = new NotifyDoctorDto
                 {
                     Enabled = true,
@@ -350,6 +351,7 @@ public sealed class EnvelopeShapeTests
                 Host = "Task",
                 ConfigRoot = @"C:\ProgramData\WinLogRotate",
                 Scope = "PerMachine",
+                Time = "03:00",
             }),
             "host");
 

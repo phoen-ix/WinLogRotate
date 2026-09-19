@@ -1,4 +1,5 @@
 using System.Text.Json;
+using WinLogRotate.Core.Configuration;
 
 namespace WinLogRotate.Gui.Cli;
 
@@ -36,6 +37,17 @@ public sealed record SchedulingView
     /// an instruction, and when the current host is unknown every selection is one of those.
     /// </remarks>
     public required bool Known { get; init; }
+
+    /// <summary>
+    /// The time of day the task fires, as <c>[host]</c> in config.toml says it, for the picker.
+    /// </summary>
+    /// <remarks>
+    /// Three in the morning when doctor did not say - an older winlogrotate.exe sends no such
+    /// field, and the page has to open all the same - or said something this version cannot read
+    /// as a time. The picker then shows the registrar's own default, which is what would be
+    /// registered.
+    /// </remarks>
+    public required TimeSpan Time { get; init; }
 }
 
 /// <summary>
@@ -93,6 +105,7 @@ public static class SchedulingProjection
         Current = sentence,
         Warn = true,
         Known = false,
+        Time = HostSettings.Default.Time,
     };
 
     public static SchedulingView From(CliResult result)
@@ -104,6 +117,7 @@ public static class SchedulingProjection
 
         string? host;
         string? detail;
+        string? time;
 
         try
         {
@@ -112,6 +126,12 @@ public static class SchedulingProjection
 
             host = payload.GetProperty("runHost").GetString();
             detail = payload.GetProperty("runHostDetail").GetString();
+
+            // Optional, unlike the two above: absent from an older CLI, and null from one whose
+            // config.toml would not give an answer. Neither is a reason not to show the page.
+            time = payload.TryGetProperty("runHostTime", out var t) && t.ValueKind == JsonValueKind.String
+                ? t.GetString()
+                : null;
         }
         catch (Exception e) when (e is JsonException
                                       or KeyNotFoundException
@@ -139,6 +159,9 @@ public static class SchedulingProjection
                 : $"Currently: {host} ({detail})",
             Warn = choice == RunHostChoice.None,
             Known = true,
+            Time = time is not null && HostSettings.TryParseTime(time, out var parsed)
+                ? parsed
+                : HostSettings.Default.Time,
         };
     }
 

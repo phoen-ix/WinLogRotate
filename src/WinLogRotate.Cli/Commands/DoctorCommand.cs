@@ -104,6 +104,12 @@ internal static class DoctorCommand
         var hostKind = RunHostKind.None;
         var hostDetail = "not checked (Windows only)";
 
+        // The time is configuration, so it is read on every platform and reported whether or not
+        // a task is registered: the Scheduling page shows it in its picker from this verb's
+        // answer. A config.toml that will not give one is not repeated here - config check is
+        // the verb that judges the file - so the field is simply absent.
+        var hostTime = HostCommand.ConfiguredTime(paths).Settings?.TimeText;
+
         if (OperatingSystem.IsWindows())
         {
             var status = new TaskRunHost(TimeProvider.System).Query();
@@ -111,7 +117,8 @@ internal static class DoctorCommand
             hostDetail = status.Registered ? "registered" : "not registered";
 
             Say(ctx, report, "Run host");
-            Say(ctx, report, $"  scheduled task  {hostDetail}");
+            Say(ctx, report, $"  scheduled task  {hostDetail}"
+                + (hostTime is null ? "" : $", daily at {hostTime}"));
 
             if (!status.Registered)
             {
@@ -172,6 +179,7 @@ internal static class DoctorCommand
             AclFix = aclFix,
             RunHost = hostKind,
             RunHostDetail = hostDetail,
+            RunHostTime = hostTime,
             Notify = network,
             Report = [.. report],
         };

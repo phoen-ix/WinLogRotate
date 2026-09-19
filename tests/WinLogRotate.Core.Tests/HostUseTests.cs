@@ -33,6 +33,9 @@ public sealed class HostUseTests
 
         public RunHostKind? Recorded { get; private set; }
 
+        /// <summary>What the registrar was asked to register, last.</summary>
+        public HostInstallOptions? Installed { get; private set; }
+
         public HostRegistrationException? Refusal { get; init; }
 
         public RunHostKind Kind => RunHostKind.Task;
@@ -40,6 +43,7 @@ public sealed class HostUseTests
         public void Install(HostInstallOptions options)
         {
             Calls.Add("install");
+            Installed = options;
             if (Refusal is { } refusal)
             {
                 throw refusal;
@@ -130,6 +134,157 @@ public sealed class HostUseTests
         Cli.Commands.HostCommand.Use(ctx, "task", null, host, elevated: () => true, verb: "host repair");
 
         sink.Verb.ShouldBe("host repair");
+    }
+
+    // ---- when the task fires -----------------------------------------------------------------
+
+    /// <summary>A directory with a config.toml saying <paramref name="toml"/>, for one test.</summary>
+    private static string ConfigDir(string? toml)
+    {
+        var dir = Directory.CreateTempSubdirectory("winlogrotate-host-").FullName;
+
+        if (toml is not null)
+        {
+            File.WriteAllText(Path.Combine(dir, "config.toml"), toml);
+        }
+
+        return dir;
+    }
+
+    /// <summary>
+    /// A time that is not one is refused before anything is touched, on every platform.
+    /// </summary>
+    /// <remarks>
+    /// Judged above the Windows guard, like the unsupported host is: a fact about the arguments
+    /// is the same answer everywhere, and this is what makes it provable where the tests run.
+    /// </remarks>
+    [Theory]
+    [InlineData("25:00")]
+    [InlineData("3pm")]
+    [InlineData("03:00:00")]
+    public void ATimeThatIsNotOneIsRefusedBeforeAnythingIsTouched(string at)
+    {
+        var host = new FakeRunHost();
+        var (sink, ctx) = Context("host", "use", "task", "--at", at);
+
+        var exit = Cli.Commands.HostCommand.Use(ctx, "task", null, host, elevated: () => true, verb: "host use", at);
+
+        exit.ShouldBe(ExitCode.ConfigInvalid);
+        host.Calls.ShouldBeEmpty();
+
+        var d = sink.Diagnostics.ShouldHaveSingleItem();
+        d.Code.ShouldBe(DiagnosticCode.ArgumentUnusable);
+        d.Remedy.ShouldNotBeNull().ShouldContain("24-hour");
+    }
+
+    /// <summary>--at says when the task fires, and 'none' registers no task.</summary>
+    [Fact]
+    public void AtMeansNothingWithoutATask()
+    {
+        var host = new FakeRunHost();
+        var (sink, ctx) = Context("host", "use", "none", "--at", "22:30");
+
+        var exit = Cli.Commands.HostCommand.Use(ctx, "none", null, host, elevated: () => true, verb: "host use", "22:30");
+
+        exit.ShouldBe(ExitCode.ConfigInvalid);
+        host.Calls.ShouldBeEmpty("the task that is registered stays registered");
+        sink.Diagnostics.ShouldHaveSingleItem().Code.ShouldBe(DiagnosticCode.ArgumentUnusable);
+    }
+
+    /// <summary>
+    /// The time is written to config.toml and the task is registered at it, in that order.
+    /// </summary>
+    /// <remarks>
+    /// The file first: host repair re-registers from it, so a task at a time the file does not
+    /// hold is put back to 03:00 by the next repair without a word. Every installation older
+    /// than the [host] table has a config.toml without one, so this is the case that matters.
+    /// </remarks>
+    [Fact]
+    public void TheTimeIsRememberedInTheConfigurationAndRegistered()
+    {
+        Assert.SkipUnless(OperatingSystem.IsWindows(), "the platform refusal comes first off Windows.");
+
+        var host = new FakeRunHost();
+        var dir = ConfigDir("schema = 1\n\n[journal]\nretain = 7\n");
+        var (sink, ctx) = Context("host", "use", "task", "--at", "22:30");
+
+        var exit = Cli.Commands.HostCommand.Use(ctx, "task", dir, host, elevated: () => true, verb: "host use", "22:30");
+
+        exit.ShouldBe(ExitCode.Ok);
+        sink.Diagnostics.ShouldBeEmpty();
+        host.Installed.ShouldNotBeNull().TimeOfDay.ShouldBe(new TimeSpan(22, 30, 0));
+
+        var written = File.ReadAllText(Path.Combine(dir, "config.toml"));
+        written.ShouldContain("retain = 7", Case.Sensitive, "what was there is untouched");
+        written.ShouldContain("[host]", Case.Sensitive);
+        written.ShouldContain("time = \"22:30\"", Case.Sensitive);
+        sink.Lines.ShouldContain(l => l.Contains("22:30", StringComparison.Ordinal));
+    }
+
+    /// <summary>Without --at, the configured time is what is registered - which is how repair keeps it.</summary>
+    [Fact]
+    public void WithoutAtTheConfiguredTimeIsRegistered()
+    {
+        Assert.SkipUnless(OperatingSystem.IsWindows(), "the platform refusal comes first off Windows.");
+
+        var host = new FakeRunHost();
+        var dir = ConfigDir("schema = 1\n\n[host]\ntime = \"05:15\"\n");
+        var (_, ctx) = Context("host", "use", "task");
+
+        Cli.Commands.HostCommand.Use(ctx, "task", dir, host, elevated: () => true, verb: "host repair");
+
+        host.Installed.ShouldNotBeNull().TimeOfDay.ShouldBe(new TimeSpan(5, 15, 0));
+    }
+
+    /// <summary>A configuration that will not give a time registers nothing, and says why.</summary>
+    [Fact]
+    public void AConfigurationThatWillNotGiveATimeRegistersNothing()
+    {
+        Assert.SkipUnless(OperatingSystem.IsWindows(), "the platform refusal comes first off Windows.");
+
+        var host = new FakeRunHost();
+        var dir = ConfigDir("schema = 1\n\n[host]\ntime = \"25:00\"\n");
+        var (sink, ctx) = Context("host", "use", "task");
+
+        var exit = Cli.Commands.HostCommand.Use(ctx, "task", dir, host, elevated: () => true, verb: "host use");
+
+        exit.ShouldBe(ExitCode.ConfigInvalid);
+        host.Calls.ShouldBeEmpty();
+        sink.Diagnostics.ShouldContain(d => d.Code == DiagnosticCode.ConfigInvalid);
+    }
+
+    /// <summary>
+    /// The reader every verb shares: absent means the default, a bad time is an error, a
+    /// mistyped key is a warning that still yields an answer.
+    /// </summary>
+    [Fact]
+    public void TheConfiguredTimeIsReadTheSameWayEverywhere()
+    {
+        var paths = InstallPaths.Resolve(ConfigDir(null));
+        Cli.Commands.HostCommand.ConfiguredTime(paths).Settings.ShouldNotBeNull().TimeText.ShouldBe("03:00");
+
+        paths = InstallPaths.Resolve(ConfigDir("[host]\ntime = \"22:30\"\ntme = 1\n"));
+        var read = Cli.Commands.HostCommand.ConfiguredTime(paths);
+        read.Settings.ShouldNotBeNull().TimeText.ShouldBe("22:30");
+        read.Diagnostics.ShouldHaveSingleItem().Severity.ShouldBe(Severity.Warning);
+
+        paths = InstallPaths.Resolve(ConfigDir("[host\n"));
+        read = Cli.Commands.HostCommand.ConfiguredTime(paths);
+        read.Settings.ShouldBeNull();
+        read.Diagnostics.ShouldHaveSingleItem().Code.ShouldBe(DiagnosticCode.ConfigInvalid);
+    }
+
+    /// <summary>An exported task fires when the configuration says, not at the builder's default.</summary>
+    [Fact]
+    public void AnExportedTaskFiresAtTheConfiguredTime()
+    {
+        var dir = ConfigDir("schema = 1\n\n[host]\ntime = \"22:30\"\n");
+        var (sink, ctx) = Context("host", "export-task");
+
+        var exit = Cli.Commands.ExportTaskCommand.Run(ctx, dir);
+
+        exit.ShouldBe(ExitCode.Ok);
+        sink.Lines.ShouldHaveSingleItem().ShouldContain("T22:30:00</StartBoundary>", Case.Sensitive);
     }
 
     /// <summary>The mapping itself, on every leg.</summary>

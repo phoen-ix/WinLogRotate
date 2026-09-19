@@ -30,12 +30,35 @@ namespace WinLogRotate.Core.Tests;
 /// </remarks>
 public sealed class SchedulingProjectionTests
 {
-    private static CliResult Doctor(string host, string detail = "registered") => new()
+    private static CliResult Doctor(string host, string detail = "registered", string? time = null) => new()
     {
         ExitCode = ExitCode.Ok,
-        StdOut = $$"""{ "result": { "runHost": "{{host}}", "runHostDetail": "{{detail}}" } }""",
+        StdOut = time is null
+            ? $$"""{ "result": { "runHost": "{{host}}", "runHostDetail": "{{detail}}" } }"""
+            : $$"""{ "result": { "runHost": "{{host}}", "runHostDetail": "{{detail}}", "runHostTime": "{{time}}" } }""",
         StdErr = "",
     };
+
+    /// <summary>The picker shows what config.toml says, which is what doctor reports.</summary>
+    [Fact]
+    public void TheConfiguredTimeIsShown() =>
+        SchedulingProjection.From(Doctor("Task", time: "22:30")).Time.ShouldBe(new TimeSpan(22, 30, 0));
+
+    /// <summary>
+    /// An older CLI sends no time, and one whose config.toml would not give one sends nothing
+    /// readable. The page opens either way, showing the registrar's own default.
+    /// </summary>
+    [Theory]
+    [InlineData(null)]
+    [InlineData("banana")]
+    [InlineData("")]
+    public void ATimeDoctorDidNotGiveIsThreeInTheMorning(string? time)
+    {
+        var view = SchedulingProjection.From(Doctor("Task", time: time));
+
+        view.Time.ShouldBe(TimeSpan.FromHours(3));
+        view.Known.ShouldBeTrue("a missing time is not a missing answer about the host");
+    }
 
     /// <summary>
     /// An option is offered exactly when the verb would accept it.

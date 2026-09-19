@@ -65,6 +65,7 @@ public sealed class CliArgsTests
     [InlineData("run --force --verbose --no-notify")]
     [InlineData("host repair --acl")]
     [InlineData("host use task")]
+    [InlineData("host use task --at 03:00")]
     [InlineData("host use service")]
     [InlineData("host use none")]
     [InlineData("notify set-secret email password --from-pipe WinLogRotate-secret-abc")]
