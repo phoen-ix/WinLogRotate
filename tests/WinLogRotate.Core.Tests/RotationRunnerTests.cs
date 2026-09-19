@@ -166,12 +166,13 @@ public sealed class RotationRunnerTests : IDisposable
     // ---- the first night ---------------------------------------------------------------------
 
     /// <summary>
-    /// A log this machine has never seen is recorded, not rotated.
+    /// A log this machine has never seen is recorded, not rotated, when nobody asked otherwise.
     /// </summary>
     /// <remarks>
     /// Without it, the first run after installing rotates every log on the server at once -
     /// purely because none of them has a recorded rotation yet - which is indistinguishable from
-    /// the tool malfunctioning, and is how a product gets uninstalled on day one.
+    /// the tool malfunctioning, and is how a product gets uninstalled on day one. The scheduled
+    /// task passes no flag, and this is the run it gets.
     /// </remarks>
     [Fact]
     public void AFirstSightingIsBaselinedNotRotated()
@@ -179,7 +180,7 @@ public sealed class RotationRunnerTests : IDisposable
         var reported = new List<CliDiagnostic>();
         var state = State();
 
-        var plan = Plan(state, new RunOptions { Force = true }, reported);
+        var plan = Plan(state, new RunOptions(), reported);
 
         // Skipped, not dropped. The first real rotation on a CI runner reported
         // "0 file(s) matched" for a directory that plainly had one, because a baselined file was
@@ -203,12 +204,39 @@ public sealed class RotationRunnerTests : IDisposable
         state.Get(@"C:\logs\app.log").ShouldNotBeNull().LastRotated.ShouldBe(Now);
     }
 
+    /// <summary>
+    /// --force rotates a log seen for the first time, as upstream's -f does.
+    /// </summary>
+    /// <remarks>
+    /// This is the command everybody runs to try a new job, and it is what the GUI's Rotate now
+    /// button runs. It used to baseline on the first press and refuse the second as "already
+    /// rotated today" - while the compatibility page said --force matched upstream, whose -f sets
+    /// doRotate before it looks at the clock. The test above pinned the divergence with
+    /// <c>Force = true</c>; it now proves the unflagged night, which is what its remark describes.
+    /// </remarks>
+    [Fact]
+    public void ForceRotatesOnTheFirstSightingLikeUpstream()
+    {
+        var reported = new List<CliDiagnostic>();
+        var state = State();
+
+        var plan = Plan(state, new RunOptions { Force = true }, reported);
+
+        plan.Operations.ShouldContain(o => o.Action == PlannedAction.Rename);
+        reported.ShouldNotContain(d => d.Code == DiagnosticCode.FirstRunBaseline,
+            "a rotation that was asked for is not a baseline to report");
+
+        // And the clock is started here as well, so tomorrow is judged like any other day.
+        state.Get(@"C:\logs\app.log").ShouldNotBeNull().LastRotated.ShouldBe(Now);
+    }
+
     [Fact]
     public void CatchupRotatesOnTheFirstSightingInstead()
     {
         // Documented as opt-in precisely because the default above is the surprising-but-correct
-        // behaviour, and this is the escape hatch for somebody who wants the other one.
-        var plan = Plan(State(), new RunOptions { Catchup = true, Force = true });
+        // behaviour, and this is the escape hatch for somebody who wants the other one without
+        // forcing every log that is not due. On its own, so that it is catchup being proved.
+        var plan = Plan(State(), new RunOptions { Catchup = true });
 
         plan.Operations.ShouldContain(o => o.Action == PlannedAction.Rename);
     }
@@ -226,7 +254,7 @@ public sealed class RotationRunnerTests : IDisposable
     public void CatchupStillStartsTheClock()
     {
         var state = State();
-        Plan(state, new RunOptions { Catchup = true, Force = true });
+        Plan(state, new RunOptions { Catchup = true });
 
         state.Get(@"C:\logs\app.log").ShouldNotBeNull().LastRotated.ShouldNotBeNull();
     }

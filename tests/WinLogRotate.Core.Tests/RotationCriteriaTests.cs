@@ -55,8 +55,8 @@ public class RotationCriteriaTests
 
     private static DueVerdict Check(
         EffectiveJob job, DateTimeOffset? last, DateTimeOffset now,
-        long size = 5000, DateTimeOffset? modified = null, bool force = false) =>
-        RotationCriteria.Evaluate(job, last, now, size, modified ?? now, force);
+        long size = 5000, DateTimeOffset? modified = null, bool force = false, bool catchup = false) =>
+        RotationCriteria.Evaluate(job, last, now, size, modified ?? now, force, catchup);
 
     // ---- first run ----------------------------------------------------------------------
 
@@ -73,9 +73,44 @@ public class RotationCriteriaTests
         verdict.Reason.ShouldBe(DueReason.FirstSighting);
     }
 
+    /// <summary>
+    /// --force rotates a log seen for the first time, as upstream's -f does: newState() gives
+    /// the log "now" as its clock, and findNeedRotating() sets doRotate under -f before it looks
+    /// at that clock. This is the command everybody runs to try a new job, and it used to do
+    /// nothing the first time and refuse the second.
+    /// </summary>
     [Fact]
-    public void EvenForceDoesNotRotateAFirstSighting() =>
-        Check(Job(), last: null, At(2026, 9, 7), force: true).Due.ShouldBeFalse();
+    public void ForceRotatesAFirstSightingAsUpstreamDoes()
+    {
+        var verdict = Check(Job(), last: null, At(2026, 9, 7), force: true);
+
+        verdict.Due.ShouldBeTrue();
+        verdict.Reason.ShouldBe(DueReason.Forced);
+    }
+
+    /// <summary>
+    /// A forced first sighting goes through the same gates as any other forced log. The verdict
+    /// used to be synthesised in the runner, which waved an empty log past notifempty.
+    /// </summary>
+    [Fact]
+    public void AForcedFirstSightingStillHonoursNotIfEmpty()
+    {
+        var verdict = Check(Job(), last: null, At(2026, 9, 7), size: 0, force: true);
+
+        verdict.Due.ShouldBeFalse();
+        verdict.Reason.ShouldBe(DueReason.Empty);
+    }
+
+    /// <summary>--catchup rotates a first sighting and otherwise leaves the schedule alone.</summary>
+    [Fact]
+    public void CatchupRotatesAFirstSightingAndNothingElse()
+    {
+        var first = Check(Job(), last: null, At(2026, 9, 7), catchup: true);
+        first.Due.ShouldBeTrue();
+        first.Reason.ShouldBe(DueReason.FirstSighting);
+
+        Check(Job(), At(2026, 9, 7, 1), At(2026, 9, 7, 23), catchup: true).Due.ShouldBeFalse();
+    }
 
     // ---- daily --------------------------------------------------------------------------
 
@@ -84,8 +119,17 @@ public class RotationCriteriaTests
         Check(Job(), At(2026, 9, 6, 23), At(2026, 9, 7, 1)).Due.ShouldBeTrue();
 
     [Fact]
-    public void DailyIsNotDueTwiceInOneDay() =>
-        Check(Job(), At(2026, 9, 7, 1), At(2026, 9, 7, 23)).Due.ShouldBeFalse();
+    public void DailyIsNotDueTwiceInOneDay()
+    {
+        var verdict = Check(Job(), At(2026, 9, 7, 1), At(2026, 9, 7, 23));
+
+        verdict.Due.ShouldBeFalse();
+
+        // Says what it waits for, not that it rotated. The clock is set by a first sighting as
+        // well as by a rotation, and "already rotated today" was a lie on the day a job was
+        // created - the day somebody runs it by hand twice to see it work.
+        verdict.Explanation.ShouldBe("not due until a new day begins");
+    }
 
     /// <summary>
     /// Not an elapsed-24-hours test. Two minutes apart across midnight is a new day, and this

@@ -13,10 +13,11 @@ public sealed record DryRunPreview(CheckTone Tone, string Message, string Detail
 /// <para>
 /// The command line is <c>run --dry-run --force --catchup --no-notify --job NAME --json-stream</c>:
 /// a dry run writes no state, journal or notification and runs no hook; <c>--force</c> makes the
-/// log due whatever the calendar says and <c>--catchup</c> rotates it even on a first sighting, so
-/// a job saved a minute ago shows its moves rather than "first time this log has been seen"; and
-/// only the stream carries the per-file events, because the envelope alone is counts. The
-/// dialog says all of that in one line: as if it were due tonight, and nothing has been changed.
+/// log due whatever the calendar says, a first sighting included, so a job saved a minute ago
+/// shows its moves rather than "first time this log has been seen" (<c>--catchup</c> asked for
+/// that before <c>--force</c> covered it, and stays because it is harmless and the tests pin the
+/// line); and only the stream carries the per-file events, because the envelope alone is counts.
+/// The dialog says all of that in one line: as if it were due tonight, and nothing has been changed.
 /// </para>
 /// <para>
 /// Only a saved job can be previewed: the verb reads the job from the configuration directory,

@@ -13,7 +13,8 @@ without one, and a test named here cannot be deleted or renamed without this pag
 
 | Behaviour | Note | Proved by |
 |---|---|---|
-| **First sighting records a baseline and rotates nothing** | Delete the state file and nothing rotates that night. This catches everyone once. `--catchup` opts out. | AFirstSightingIsBaselinedNotRotated |
+| **First sighting records a baseline and rotates nothing** | Delete the state file and nothing rotates that night. This catches everyone once. `--force` rotates it, as upstream's `-f` does; `--catchup` rotates first sightings while otherwise keeping to the schedule. | AFirstSightingIsBaselinedNotRotated |
+| **`--force` rotates a log seen for the first time** | Upstream's `newState()` gives a never-seen log "now" as its clock, and `findNeedRotating()` sets `doRotate` under `-f` before it looks at that clock. The three suppressions below still apply to it. | ForceRotatesAFirstSightingAsUpstreamDoes, AForcedFirstSightingStillHonoursNotIfEmpty |
 | **At most one rotation per log per invocation** | A machine off for a month rotates once, not thirty times. Missed intervals are gone, not queued. | AMonthOfMissedRunsStillProducesOneRotation |
 | **Calendar comparison, not elapsed time** | `daily` is due because the day number changed, so 23:58 and 00:02 rotates twice. | DailyIsDueWhenTheCalendarDayChanges, DailyIsNotDueTwiceInOneDay |
 | **`--force` does not override `notifempty`, `minsize` or `minage`** | `--force` sets the initial answer; those three run afterwards and can turn it back off. Genuinely what upstream does. | ForceDoesNotOverrideNotIfEmpty, ForceDoesNotOverrideMinSize, ForceDoesNotOverrideMinAge |

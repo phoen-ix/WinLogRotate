@@ -60,6 +60,13 @@ public sealed record DueVerdict
 /// is exactly what upstream does, and a tool claiming to imitate logrotate has to match it.
 /// </para>
 /// <para>
+/// Setting the initial answer is also why <c>--force</c> beats a missing clock. Upstream's
+/// <c>newState()</c> gives a never-seen log "now" as its clock and <c>findNeedRotating()</c>
+/// sets <c>doRotate</c> under <c>-f</c> before it looks at that clock, so <c>logrotate -f</c>
+/// rotates a log it has never seen. Until this was matched, the one command everybody runs to
+/// try a new job did nothing the first time and refused the second.
+/// </para>
+/// <para>
 /// The calendar comparisons are date-field comparisons, not elapsed-time ones. A daily log is
 /// due because the day number changed, not because 24 hours passed - so a run at 23:58 and
 /// another at 00:02 rotates twice, and a machine that was off for a week rotates once, not
@@ -68,31 +75,43 @@ public sealed record DueVerdict
 /// </remarks>
 public static class RotationCriteria
 {
+    /// <param name="lastRotated">The log's clock, or null for a log seen for the first time.</param>
+    /// <param name="force">Rotate whatever the calendar says; the three suppressions still apply.</param>
+    /// <param name="catchup">Rotate a log seen for the first time; otherwise the schedule decides.</param>
     public static DueVerdict Evaluate(
         EffectiveJob job,
         DateTimeOffset? lastRotated,
         DateTimeOffset now,
         long fileSize,
         DateTimeOffset fileModified,
-        bool force)
+        bool force,
+        bool catchup = false)
     {
         // A log seen for the first time gets a baseline and nothing else, matching logrotate.
         // Anyone who has deleted a state file and wondered why nothing rotated that night has
-        // met this rule.
-        if (lastRotated is null)
+        // met this rule. Nothing else is asked - not even maxsize - because the first night after
+        // installing must not rotate every log on the server at once.
+        if (lastRotated is null && !force && !catchup)
         {
             return new DueVerdict
             {
                 Due = false,
                 Reason = DueReason.FirstSighting,
-                Explanation = "first time this log has been seen; recording a baseline and waiting one interval",
+                Explanation = "first time this log has been seen; its clock starts now",
             };
         }
 
-        var last = lastRotated.Value;
-        var (due, reason, explanation) = force
-            ? (true, DueReason.Forced, "--force")
-            : EvaluateSchedule(job, last, now, fileSize);
+        // A first sighting somebody asked to rotate goes through the same gates as any other
+        // forced log, rather than being waved through: an empty log with notifempty, or one
+        // below minsize, is held back whichever flag asked. That is what upstream's -f does, and
+        // it is what the compatibility page promises of --force.
+        var (due, reason, explanation) = lastRotated is not { } last
+            ? force
+                ? (true, DueReason.Forced, "--force: rotating on the first sighting rather than baselining")
+                : (true, DueReason.FirstSighting, "--catchup: rotating on the first sighting rather than baselining")
+            : force
+                ? (true, DueReason.Forced, "--force")
+                : EvaluateSchedule(job, last, now, fileSize);
 
         // maxsize forces an early rotation, but only when the schedule is time-based: under a
         // size criterion the threshold already is the rule.
@@ -154,15 +173,18 @@ public static class RotationCriteria
 
         return job.Schedule switch
         {
+            // Every "not due" below says what the log is waiting for, and none says that it was
+            // rotated: the clock it is judged by is set by a first sighting as well as by a
+            // rotation, and "already rotated today" was a lie on the day a job was created.
             Schedule.Hourly =>
                 now.Hour != last.Hour || now.Date != last.Date
                     ? (true, DueReason.Scheduled, "a new hour has begun")
-                    : (false, DueReason.NotDue, "still within the same hour"),
+                    : (false, DueReason.NotDue, "not due until a new hour begins"),
 
             Schedule.Daily =>
                 now.Date != last.Date
                     ? (true, DueReason.Scheduled, "a new day has begun")
-                    : (false, DueReason.NotDue, "already rotated today"),
+                    : (false, DueReason.NotDue, "not due until a new day begins"),
 
             // Either a full week has passed, or it is the configured weekday and at least one
             // day has passed. weekday 7 means pure seven-day spacing, ignoring the weekday.
@@ -170,14 +192,17 @@ public static class RotationCriteria
                 elapsedDays >= 7 || (job.Weekday != 7 && elapsedDays >= 1 && (int)now.DayOfWeek == job.Weekday)
                     ? (true, DueReason.Scheduled,
                         elapsedDays >= 7 ? "seven days have passed" : $"it is {now.DayOfWeek}")
-                    : (false, DueReason.NotDue, $"{elapsedDays} day(s) since the last rotation"),
+                    : (false, DueReason.NotDue,
+                        job.Weekday == 7
+                            ? $"not due until seven days have passed ({elapsedDays} so far)"
+                            : $"not due until {(DayOfWeek)job.Weekday} or until seven days have passed ({elapsedDays} so far)"),
 
             Schedule.Monthly => EvaluateMonthly(job, last, now, elapsedDays),
 
             Schedule.Yearly =>
                 now.Year != last.Year
                     ? (true, DueReason.Scheduled, "a new year has begun")
-                    : (false, DueReason.NotDue, "already rotated this year"),
+                    : (false, DueReason.NotDue, "not due until a new year begins"),
 
             _ => (false, DueReason.NotDue, "no schedule"),
         };
@@ -192,12 +217,12 @@ public static class RotationCriteria
         {
             return now.Month != last.Month || now.Year != last.Year
                 ? (true, DueReason.Scheduled, "a new month has begun")
-                : (false, DueReason.NotDue, "already rotated this month");
+                : (false, DueReason.NotDue, "not due until a new month begins");
         }
 
         if (elapsedDays < 1)
         {
-            return (false, DueReason.NotDue, "already rotated today");
+            return (false, DueReason.NotDue, "not due until a new day begins");
         }
 
         if (elapsedDays >= 31)
@@ -219,6 +244,6 @@ public static class RotationCriteria
                 $"day {job.MonthDay} does not exist in {now:MMMM}, so the last day of the month is used");
         }
 
-        return (false, DueReason.NotDue, $"waiting for day {job.MonthDay}");
+        return (false, DueReason.NotDue, $"not due until day {job.MonthDay} of the month");
     }
 }

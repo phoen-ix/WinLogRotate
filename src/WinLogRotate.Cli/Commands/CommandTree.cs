@@ -117,7 +117,7 @@ internal static class CommandTree
         new("--dry-run", "-d") { Description = "Show exactly what would happen and change nothing. State is not updated." };
 
     private static readonly Option<bool> Force =
-        new("--force", "-f") { Description = "Rotate even if the schedule says it is not due. Does NOT override notifempty, minsize or minage - matching logrotate." };
+        new("--force", "-f") { Description = "Rotate even if the schedule says it is not due, including a log seen for the first time. Does NOT override notifempty, minsize or minage - matching logrotate." };
 
     private static readonly Option<bool> Catchup =
         new("--catchup") { Description = "Rotate a log the first time it is seen, instead of recording a baseline and waiting one interval. Not logrotate behaviour; opt-in." };

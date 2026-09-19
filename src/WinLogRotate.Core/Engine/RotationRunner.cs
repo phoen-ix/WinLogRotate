@@ -774,10 +774,10 @@ public sealed class RotationRunner(
 
         foreach (var file in matched)
         {
-            // Always recorded, whatever --catchup says. RotationCriteria refuses a log with no
-            // recorded rotation - "anyone who has deleted a state file and wondered why nothing
-            // rotated that night has met this rule" - so a first sighting that skipped this would
-            // leave the clock null for ever and the log would never become due at all.
+            // Always recorded, whatever --catchup or --force says. RotationCriteria refuses a log
+            // with no recorded rotation - "anyone who has deleted a state file and wondered why
+            // nothing rotated that night has met this rule" - so a first sighting that skipped
+            // this would leave the clock null for ever and the log would never become due at all.
             var first = state.RecordFirstSighting(file.Path, now);
 
             // Every sighting, rotated or not. Prune ages off this rather than LastRotated, which
@@ -787,11 +787,16 @@ public sealed class RotationRunner(
             // a dry run changing nothing, and RecordFirstSighting above works the same way.
             state.Update(file.Path, existing => existing with { LastSeen = now });
 
-            // A log this machine has never seen is recorded, not rotated. Without that, the first
-            // night after installing rotates every log on the server at once, purely because none
-            // of them has a recorded rotation yet - indistinguishable from the tool
-            // malfunctioning, and how a product gets uninstalled on day one.
-            if (first && !options.Catchup)
+            // A log this machine has never seen is recorded, not rotated - when nobody asked
+            // otherwise. Without that, the first night after installing rotates every log on the
+            // server at once, purely because none of them has a recorded rotation yet -
+            // indistinguishable from the tool malfunctioning, and how a product gets uninstalled
+            // on day one. The scheduled task passes no flag and gets exactly that. An operator
+            // who typed --force has said what they want, and upstream agrees: logrotate -f sets
+            // doRotate before it looks at the clock. The GUI's Rotate now forces for the same
+            // reason - its first press used to baseline every log and its second refused them
+            // all as already rotated.
+            if (first && !options.Catchup && !options.Force)
             {
                 report(new CliDiagnostic
                 {
@@ -801,7 +806,8 @@ public sealed class RotationRunner(
                             + "clock starts now rather than rotating it immediately.",
                     Job = job.Name,
                     Path = file.Path,
-                    Remedy = "Pass --catchup to rotate a log the first time it is seen instead.",
+                    Remedy = "Pass --force to rotate it now, or --catchup to rotate a log the first "
+                           + "time it is seen while otherwise keeping to the schedule.",
                 });
             }
 
@@ -813,21 +819,15 @@ public sealed class RotationRunner(
             // touched?" has an answer.
             consider.Add(file);
 
-            // Synthesised rather than evaluated in both first-sighting cases: the baseline above
-            // has just set the clock to now, so asking the criteria would answer "rotated a moment
-            // ago" - which is true, and useless, and would make --catchup silently do nothing.
-            due[file.Path] = first
-                ? new DueVerdict
-                {
-                    Due = options.Catchup,
-                    Reason = DueReason.FirstSighting,
-                    Explanation = options.Catchup
-                        ? "--catchup: rotating on the first sighting rather than baselining"
-                        : "first time this log has been seen; its clock starts now",
-                }
-                : RotationCriteria.Evaluate(
-                    job, state.Get(file.Path)?.LastRotated, now, file.Length, file.LastWriteUtc,
-                    options.Force);
+            // Judged with no clock on a first sighting, rather than with the one the baseline
+            // above has just set: asking the criteria about a clock set a moment ago would answer
+            // "not due until a new day begins" - true, useless, and it would make --catchup and
+            // --force silently do nothing. The criteria know what a missing clock means under each
+            // flag, and they run the three suppressions over a forced first sighting like any
+            // other - which a verdict synthesised here used to wave past.
+            due[file.Path] = RotationCriteria.Evaluate(
+                job, first ? null : state.Get(file.Path)?.LastRotated, now, file.Length,
+                file.LastWriteUtc, options.Force, options.Catchup);
 
             // A log that was due and was held back anyway is worth saying out loud. "Why did this
             // not rotate last night?" is the question an operator actually asks, and the three
