@@ -7,9 +7,19 @@ namespace WinLogRotate.Gui.Pages;
 /// Runs a rotation and streams what it does.
 /// </summary>
 /// <remarks>
+/// <para>
 /// The output pane is literally the CLI's own output, which is why the GUI and the command line
 /// can never disagree about what happened. Dry run is the default and is deliberately the
 /// prominent button: this tool deletes files, and the safe action should be the easy one.
+/// </para>
+/// <para>
+/// Both buttons pass <c>--force</c>. A button called Rotate now that ran the schedule instead
+/// baselined every log on its first press - a log seen for the first time is only given a clock
+/// - and refused them all on its second as already rotated today, which is the first thing
+/// anybody does after creating a job. So it rotates whether or not a rotation is due, as
+/// <c>logrotate -f</c> does, and the dry run forces too so that it previews exactly this button
+/// and not some other run. The scheduled task passes nothing and keeps to the calendar.
+/// </para>
 /// </remarks>
 public sealed class RunPage : UserControl
 {
@@ -62,8 +72,8 @@ public sealed class RunPage : UserControl
         {
             Dock = DockStyle.Top,
             Height = 34,
-            Text = "A dry run shows exactly what would happen and changes nothing. "
-                 + "It is the same code path as a real run, stopped one step earlier.",
+            Text = "A dry run shows exactly what Rotate now would do and changes nothing. Both act on "
+                 + "every enabled job whether or not it is due yet; the scheduled task only rotates what is due.",
         };
 
         Controls.Add(_output);
@@ -78,7 +88,8 @@ public sealed class RunPage : UserControl
     private async Task ExecuteAsync(bool dryRun)
     {
         if (!dryRun && !LrDialog.Confirm(this, "Rotate now",
-                "This will compress, move and delete log files according to the configuration.\r\n\r\n"
+                "This will compress, move and delete log files according to the configuration, "
+                + "whether or not a rotation is due yet.\r\n\r\n"
                 + "Run a dry run first if you are not sure what it will do.", needsAdmin: true))
         {
             return;
@@ -92,11 +103,12 @@ public sealed class RunPage : UserControl
         try
         {
             var arguments = dryRun
-                // --no-notify on both: a run somebody started by pressing a button, while
-                // watching the output scroll past, must not also page whoever is on call. The
-                // scheduled task passes nothing and so still reports.
-                ? CliArgs.For(_configDir, "run", "--dry-run", "--verbose", "--no-notify")
-                : CliArgs.For(_configDir, "run", "--verbose", "--no-notify");
+                // --force on both, for the reason the class remark gives. --no-notify on both: a
+                // run somebody started by pressing a button, while watching the output scroll
+                // past, must not also page whoever is on call. The scheduled task passes nothing
+                // and so still reports.
+                ? CliArgs.For(_configDir, "run", "--dry-run", "--force", "--verbose", "--no-notify")
+                : CliArgs.For(_configDir, "run", "--force", "--verbose", "--no-notify");
 
             var result = dryRun
                 ? await _cli.RunAsync(arguments).ConfigureAwait(true)

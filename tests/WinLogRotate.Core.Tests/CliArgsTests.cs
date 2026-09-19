@@ -43,7 +43,7 @@ public sealed class CliArgsTests
     [InlineData("notify show --json")]
     [InlineData("notify test")]
     [InlineData("notify reset")]
-    [InlineData("run --dry-run --verbose --no-notify")]
+    [InlineData("run --dry-run --force --verbose --no-notify")]
     [InlineData("run --dry-run --force --catchup --no-notify --job iis --json-stream")]
     public void EveryUnelevatedCommandLineParses(string verb)
     {
@@ -62,7 +62,7 @@ public sealed class CliArgsTests
     /// <c>SecretPrompt.FieldsFor</c> is the list of fields a provider can be given.
     /// </remarks>
     [Theory]
-    [InlineData("run --verbose --no-notify")]
+    [InlineData("run --force --verbose --no-notify")]
     [InlineData("host repair --acl")]
     [InlineData("host use task")]
     [InlineData("host use service")]

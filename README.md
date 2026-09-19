@@ -144,6 +144,9 @@ allows, copy it out and empty it in place for a program that keeps it open, rena
 tidy up after a program that writes new files itself), choose how often, how many copies to keep
 and for how long, how they are named and compressed and where they go — and one sentence
 restates what will happen. "What would happen…" shows a saved job's moves without making them.
+**Rotate now** on the Run page rotates every enabled job whether or not it is due yet, like
+`logrotate -f`; the scheduled task only rotates what is due, and a log it sees for the first time
+is only given a clock.
 The form is a menu of sections — Files, How, When, Keep, Old copies, Before & after, If things
 go wrong — and each shows its plain choices first and every other setting under **More
 settings**, captioned in plain words with its default and where its value comes from.
