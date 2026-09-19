@@ -217,6 +217,24 @@ public sealed class JournalHistoryTests : IDisposable
     }
 
     /// <summary>
+    /// The journal's directory is carried through, so the page can say where the record lives.
+    /// </summary>
+    /// <remarks>
+    /// The verb's answer, which is the one that honours a --config-dir override: the verb here
+    /// runs over a temporary directory and that directory is what comes back, not ProgramData.
+    /// </remarks>
+    [Fact]
+    public void TheJournalDirectoryIsCarriedThrough() =>
+        JournalHistory.From(Envelope()).Directory
+            .ShouldBe(Path.Combine(_dir.FullName, "journal"));
+
+    /// <summary>An older winlogrotate.exe whose envelope does not say is an empty answer, not a crash.</summary>
+    [Fact]
+    public void AnEnvelopeWithoutADirectoryLeavesItEmpty() =>
+        JournalHistory.From("""{"result":{"entries":[],"skippedLines":0}}""").Directory
+            .ShouldBeEmpty();
+
+    /// <summary>
     /// A CLI that sends both halves is still counted once.
     /// </summary>
     /// <remarks>
@@ -322,6 +340,7 @@ public sealed class JournalHistoryTests : IDisposable
         var view = Should.NotThrow(() => JournalHistory.From(json));
 
         view.Rows.ShouldBeEmpty();
+        view.Directory.ShouldBeEmpty();
     }
 
     /// <summary>Torn lines the CLI counted are carried through rather than dropped.</summary>

@@ -39,6 +39,18 @@ public sealed record HistoryView
 
     /// <summary>The response made no sense, so the rows say nothing rather than nothing much.</summary>
     public required bool Unreadable { get; init; }
+
+    /// <summary>
+    /// Where the journal lives, as the verb reports it, or empty when the response did not say.
+    /// </summary>
+    /// <remarks>
+    /// The verb's own answer rather than a path the GUI works out: a <c>--config-dir</c> override
+    /// and a per-user install both name the right place without the page learning
+    /// <c>InstallPaths</c>. Empty from an older winlogrotate.exe whose envelope lacks the field,
+    /// and the page then simply does not say. "Where is the log saved?" was the first question
+    /// the page's first user asked of it, standing in front of a clipped row.
+    /// </remarks>
+    public required string Directory { get; init; }
 }
 
 /// <summary>
@@ -159,6 +171,11 @@ public static class JournalHistory
                     ? count
                     : 0;
 
+            var directory = result.TryGetProperty("directory", out var d)
+                && d.ValueKind == JsonValueKind.String
+                    ? d.GetString() ?? string.Empty
+                    : string.Empty;
+
             return new HistoryView
             {
                 Rows =
@@ -174,6 +191,7 @@ public static class JournalHistory
                 ],
                 SkippedLines = skipped,
                 Unreadable = false,
+                Directory = directory,
             };
         }
     }
@@ -202,5 +220,5 @@ public static class JournalHistory
     };
 
     private static HistoryView Nothing(bool unreadable) =>
-        new() { Rows = [], SkippedLines = 0, Unreadable = unreadable };
+        new() { Rows = [], SkippedLines = 0, Unreadable = unreadable, Directory = string.Empty };
 }

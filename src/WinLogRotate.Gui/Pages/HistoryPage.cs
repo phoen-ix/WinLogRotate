@@ -7,10 +7,20 @@ namespace WinLogRotate.Gui.Pages;
 /// What was actually compressed, moved or deleted.
 /// </summary>
 /// <remarks>
+/// <para>
 /// Read from the journal, never from Task Scheduler's Last Run Result. The registered task
 /// passes <c>--lock-held-exit 0</c> so an overlapping run does not look like a failure in
 /// <c>taskschd.msc</c> - which means 0x0 no longer proves work happened, and the journal is the
 /// only honest source.
+/// </para>
+/// <para>
+/// The File and Why cells wrap and the rows grow to fit. The columns share the width of the
+/// window, and a sentence such as "first time this log has been seen; its clock starts now" was
+/// clipped to an ellipsis in exactly the column that answers "why was nothing rotated?". The
+/// status line names the journal's directory, taken from the verb's own answer rather than
+/// worked out here, and Open folder opens it - so "where is this saved?" is answered on the page
+/// that shows it.
+/// </para>
 /// </remarks>
 public sealed class HistoryPage : UserControl
 {
@@ -25,9 +35,23 @@ public sealed class HistoryPage : UserControl
         RowHeadersVisible = false,
         SelectionMode = DataGridViewSelectionMode.FullRowSelect,
         AutoSizeColumnsMode = DataGridViewAutoSizeColumnsMode.Fill,
+        AutoSizeRowsMode = DataGridViewAutoSizeRowsMode.AllCells,
+    };
+
+    private readonly Button _openFolder = new()
+    {
+        Text = "Open folder",
+        Width = 100,
+        FlatStyle = FlatStyle.System,
+
+        // Until a load has said where the journal is, and that the directory exists.
+        Enabled = false,
     };
 
     private readonly Label _status = new() { Dock = DockStyle.Bottom, Height = 24 };
+
+    /// <summary>The journal directory the last load reported, or empty.</summary>
+    private string _directory = string.Empty;
 
     public HistoryPage(CliRunner cli, string? configDir)
     {
@@ -52,10 +76,16 @@ public sealed class HistoryPage : UserControl
         _grid.Columns["file"]!.FillWeight = 120;
         _grid.Columns["why"]!.FillWeight = 90;
 
+        // The two columns that carry a sentence or a path. When, Job and What are short by
+        // construction and stay on one line.
+        _grid.Columns["file"]!.DefaultCellStyle.WrapMode = DataGridViewTriState.True;
+        _grid.Columns["why"]!.DefaultCellStyle.WrapMode = DataGridViewTriState.True;
+
         var toolbar = new FlowLayoutPanel { Dock = DockStyle.Top, Height = 40 };
         var refresh = new Button { Text = "Refresh", Width = 90, FlatStyle = FlatStyle.System };
         refresh.Click += async (_, _) => await LoadAsync().ConfigureAwait(true);
-        toolbar.Controls.Add(refresh);
+        _openFolder.Click += (_, _) => OpenFolder();
+        toolbar.Controls.AddRange([refresh, _openFolder]);
 
         Controls.Add(_grid);
         Controls.Add(toolbar);
@@ -116,12 +146,44 @@ public sealed class HistoryPage : UserControl
             _grid.Rows.Add(row.When, row.Job, row.What, row.File, row.Why);
         }
 
+        _directory = view.Directory;
+        _openFolder.Enabled = _directory.Length > 0 && Directory.Exists(_directory);
+
         _status.ForeColor = Theme.Current.Muted;
-        _status.Text = view.Rows.Count == 0
-            ? "Nothing has been rotated yet."
-            : $"{view.Rows.Count} operation(s)."
-              + (view.SkippedLines > 0
-                  ? $" {view.SkippedLines} unreadable line(s) skipped - a previous run was probably terminated."
-                  : "");
+        _status.Text = (view.Rows.Count == 0
+                ? "Nothing has been rotated yet."
+                : $"{view.Rows.Count} operation(s).")
+            + (view.SkippedLines > 0
+                ? $" {view.SkippedLines} unreadable line(s) skipped - a previous run was probably terminated."
+                : "")
+            + (_directory.Length > 0 ? $" Journal: {_directory}" : "");
+    }
+
+    /// <summary>
+    /// Opens the journal directory in Explorer.
+    /// </summary>
+    /// <remarks>
+    /// The same shape as the Jobs page's Open folder: through the shell, the handle disposed
+    /// rather than discarded, and a failure swallowed - opening a folder is a convenience, and the
+    /// path is on the status line for anybody who would rather type it.
+    /// </remarks>
+    private void OpenFolder()
+    {
+        if (_directory.Length == 0 || !Directory.Exists(_directory))
+        {
+            return;
+        }
+
+        try
+        {
+            System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo(_directory)
+            {
+                UseShellExecute = true,
+            })?.Dispose();
+        }
+        catch (Exception e) when (e is System.ComponentModel.Win32Exception or InvalidOperationException)
+        {
+            // Nothing to do that the status line does not already do.
+        }
     }
 }
