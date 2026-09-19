@@ -89,9 +89,6 @@ public sealed record JobEditorView
     public string? Refusal { get; init; }
 }
 
-/// <summary>One group of the Advanced view: a heading and the fields under it.</summary>
-public sealed record JobSection(JobKeyGroup Group, string Title, IReadOnlyList<JobField> Fields);
-
 /// <summary>Which control edits a field.</summary>
 public enum FieldEditor
 {
@@ -266,19 +263,6 @@ public static class JobEditorModel
     /// they decided, and a change to it retires them.
     /// </summary>
     public static IReadOnlyList<string> Shorthands { get; } = ["hourly", "daily", "weekly", "monthly", "yearly"];
-
-    /// <summary>The Advanced view's sections: every known key the header does not carry, grouped and in schema order.</summary>
-    public static IReadOnlyList<JobSection> Sections(JobEditorView view) =>
-        [.. Enum.GetValues<JobKeyGroup>()
-            .Select(group => new JobSection(
-                group,
-                group == JobKeyGroup.Structural ? "Job" : group.ToString(),
-                [.. view.Fields.Where(f =>
-                    f.Known
-                    && f.Group == group
-                    && !Header.Contains(f.Key, StringComparer.OrdinalIgnoreCase)
-                    && !Shorthands.Contains(f.Key, StringComparer.OrdinalIgnoreCase))]))
-            .Where(section => section.Fields.Count > 0)];
 
     /// <summary>Keys the file writes that this build does not read. They can be seen and removed, nothing else.</summary>
     public static IReadOnlyList<JobField> Foreign(JobEditorView view) =>
@@ -692,23 +676,6 @@ public static class JobEditorModel
             ["createolddir"] = manage ? Was("createolddir") : FlagValue(answers.CreateOldDir, Was("createolddir"), defaultTrue: false),
         };
     }
-
-    /// <summary>How many keys the file sets that the Basics view cannot show.</summary>
-    public static int AdvancedSetCount(JobEditorView view) =>
-        view.Fields.Count(f =>
-            f.IsSet
-            && !Header.Contains(f.Key, StringComparer.OrdinalIgnoreCase)
-            && !Basics.Contains(f.Key, StringComparer.OrdinalIgnoreCase)
-            && !Shorthands.Contains(f.Key, StringComparer.OrdinalIgnoreCase)
-            && !string.Equals(f.Key, "kind", StringComparison.OrdinalIgnoreCase));
-
-    /// <summary>The toggle's caption.</summary>
-    public static string AdvancedLinkText(int advancedSet, bool showingAdvanced) =>
-        showingAdvanced
-            ? "Basic settings"
-            : advancedSet == 0
-                ? "Advanced settings"
-                : $"Advanced settings ({advancedSet} set)";
 
     /// <summary>
     /// What to say beside a hook field, given what <c>doctor</c> made of this installation.

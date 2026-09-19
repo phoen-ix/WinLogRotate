@@ -5,14 +5,9 @@ using Xunit;
 namespace WinLogRotate.Core.Tests;
 
 /// <summary>
-/// The job editor's arithmetic, for both views, judged without a window.
+/// The rules the job editor's layout has to keep on every page, held here because the window
+/// cannot be opened on the leg that runs these.
 /// </summary>
-/// <remarks>
-/// The rules the grid-height defect taught: every box has a size, no two boxes share an area,
-/// everything is inside the area it is drawn in, and the buttons can be pressed. Here they hold
-/// for the fixed part of the window, for the Basics body that shares the client area with the
-/// scrolled viewport, and for every row inside the viewport's virtual area.
-/// </remarks>
 public sealed class EditorLayoutTests
 {
     private const string Shown = """
@@ -23,16 +18,18 @@ public sealed class EditorLayoutTests
                  {"key":"colour","source":"\"blue\"","line":9,"known":false}]}}
         """;
 
-    public static TheoryData<string> Views => ["blank", "loaded", "empty"];
+    public static TheoryData<string> Views => ["blank", "loaded"];
 
-    private static EditorLayout Layout(string which) => which switch
+    private static JobEditorView View(string which) =>
+        which == "blank" ? JobEditorModel.Blank() : JobEditorModel.From(Shown);
+
+    private static EditorLayout Layout(string which)
     {
-        "blank" => EditorLayout.Compute(JobEditorModel.Sections(JobEditorModel.Blank()), []),
-        "loaded" => EditorLayout.Compute(
-            JobEditorModel.Sections(JobEditorModel.From(Shown)),
-            [.. JobEditorModel.Foreign(JobEditorModel.From(Shown)).Select(f => f.Key)]),
-        _ => EditorLayout.Compute([], []),
-    };
+        var view = View(which);
+        return EditorLayout.Compute(
+            JobEditorModel.Pages(view),
+            [.. JobEditorModel.Foreign(view).Select(f => f.Key)]);
+    }
 
     [Theory]
     [MemberData(nameof(Views))]
@@ -40,30 +37,24 @@ public sealed class EditorLayoutTests
     {
         var layout = Layout(which);
 
-        foreach (var (name, box) in layout.Fixed.Concat(layout.Content))
+        foreach (var (name, box) in layout.Fixed.Concat(layout.Pages.SelectMany(p => p.Boxes)))
         {
             box.Width.ShouldBeGreaterThan(0, $"{name} has no width");
             box.Height.ShouldBeGreaterThan(0, $"{name} has no height");
         }
     }
 
-    /// <summary>
-    /// The Basics body and the viewport take turns in the same area, so each is judged against
-    /// the header and the chrome, never against the other.
-    /// </summary>
+    /// <summary>Each page shares the window with the chrome, never with another page.</summary>
     [Theory]
     [MemberData(nameof(Views))]
-    public void NoTwoBoxesThatAreShownTogetherOverlap(string which)
+    public void NothingShownTogetherOverlaps(string which)
     {
         var layout = Layout(which);
-        var basics = layout.Basics.Select(b => b.Name).ToHashSet();
 
-        var withBasics = layout.Fixed.Where(b => b.Name != "viewport").ToArray();
-        var withViewport = layout.Fixed.Where(b => !basics.Contains(b.Name)).ToArray();
-
-        Overlaps(withBasics).ShouldBeEmpty();
-        Overlaps(withViewport).ShouldBeEmpty();
-        Overlaps(layout.Content.ToArray()).ShouldBeEmpty();
+        foreach (var page in layout.Pages)
+        {
+            Overlaps([.. layout.Fixed, .. page.Boxes]).ShouldBeEmpty($"on the {page.Id} page");
+        }
     }
 
     private static string[] Overlaps((string Name, Box Box)[] boxes) =>
@@ -73,84 +64,100 @@ public sealed class EditorLayoutTests
 
     [Theory]
     [MemberData(nameof(Views))]
-    public void EverythingIsInsideTheAreaItIsDrawnIn(string which)
+    public void EverythingIsInsideTheWindow(string which)
     {
         var layout = Layout(which);
 
-        layout.Fixed
+        layout.Fixed.Concat(layout.Pages.SelectMany(p => p.Boxes))
             .Where(b => !b.Box.Within(layout.ClientWidth, layout.ClientHeight))
             .Select(b => b.Name)
             .ShouldBeEmpty("outside the window");
 
-        layout.Content
-            .Where(b => !b.Box.Within(layout.ContentWidth, layout.ContentHeight))
-            .Select(b => b.Name)
-            .ShouldBeEmpty("outside the scrolled area");
-
-        foreach (var button in new[] { layout.Check, layout.Save, layout.Cancel })
+        foreach (var button in new[] { layout.Check, layout.Save, layout.Cancel, layout.WhatWouldHappen })
         {
             button.Bottom.ShouldBeLessThan(layout.ClientHeight, "a button off the bottom edge cannot be pressed");
             button.Right.ShouldBeLessThanOrEqualTo(layout.ClientWidth);
         }
     }
 
+    /// <summary>Title, then the page, then the summary, the status line and the buttons.</summary>
     [Theory]
     [MemberData(nameof(Views))]
-    public void TheBodiesSitAboveTheStatusLineAndTheButtonsBelowTheHint(string which)
+    public void EveryPageSitsBetweenItsTitleAndTheSummary(string which)
     {
         var layout = Layout(which);
 
-        layout.Summary.Bottom.ShouldBeLessThanOrEqualTo(layout.Status.Y);
-        layout.Viewport.Bottom.ShouldBeLessThanOrEqualTo(layout.Status.Y);
-        layout.Viewport.Y.ShouldBeGreaterThanOrEqualTo(layout.Preview.Bottom);
-        layout.ButtonsHint.Y.ShouldBeGreaterThanOrEqualTo(layout.Status.Bottom);
-        layout.Check.Y.ShouldBeGreaterThanOrEqualTo(layout.ButtonsHint.Bottom);
-    }
-
-    /// <summary>Six rows at a time, or the Advanced view is a keyhole.</summary>
-    [Fact]
-    public void TheViewportShowsAtLeastSixRows() =>
-        Layout("blank").Viewport.Height.ShouldBeGreaterThanOrEqualTo(6 * EditorLayout.RowPitch);
-
-    [Theory]
-    [MemberData(nameof(Views))]
-    public void ThereIsARowForEveryFieldTheModelSections(string which)
-    {
-        var view = which switch
+        foreach (var page in layout.Pages)
         {
-            "blank" => JobEditorModel.Blank(),
-            "loaded" => JobEditorModel.From(Shown),
-            _ => null,
-        };
-        var layout = Layout(which);
-
-        if (view is null)
-        {
-            layout.Sections.ShouldBeEmpty();
-            layout.Foreign.ShouldBeEmpty();
-            layout.ForeignHeader.ShouldBeNull();
-            return;
+            foreach (var (name, box) in page.Boxes)
+            {
+                box.Y.ShouldBeGreaterThanOrEqualTo(layout.PageTitle.Bottom, $"{name} above the title");
+                box.Bottom.ShouldBeLessThanOrEqualTo(layout.Summary.Y, $"{name} runs into the summary");
+                box.X.ShouldBeGreaterThanOrEqualTo(layout.Menu.Right, $"{name} runs into the menu");
+            }
         }
 
-        var sections = JobEditorModel.Sections(view);
-        layout.Sections.Select(s => s.Title).ShouldBe(sections.Select(s => s.Title));
+        layout.Menu.Bottom.ShouldBeLessThanOrEqualTo(layout.Summary.Y);
+        layout.Status.Y.ShouldBeGreaterThanOrEqualTo(layout.Summary.Bottom);
+        layout.Check.Y.ShouldBeGreaterThanOrEqualTo(layout.Status.Bottom);
+    }
 
-        foreach (var (model, drawn) in sections.Zip(layout.Sections))
+    /// <summary>The pages drawn are the model's pages, and every row on one is the model's field.</summary>
+    [Theory]
+    [MemberData(nameof(Views))]
+    public void ThereIsARowForEveryFieldOnEveryPage(string which)
+    {
+        var view = View(which);
+        var layout = Layout(which);
+        var pages = JobEditorModel.Pages(view);
+
+        layout.Pages.Select(p => p.Id).ShouldBe(pages.Select(p => p.Id));
+
+        foreach (var (model, drawn) in pages.Zip(layout.Pages))
         {
-            drawn.Rows.Select(r => r.Key).ShouldBe(model.Fields.Select(f => f.Key));
+            drawn.Rows.Select(r => r.Key).ShouldBe(model.More.Select(f => f.Key), model.Menu);
+            (drawn.MoreDivider is not null).ShouldBe(model.More.Count > 0 && drawn is not RowsPageLayout, $"{model.Menu} divider");
 
-            foreach (var (field, row) in model.Fields.Zip(drawn.Rows))
+            foreach (var (field, row) in model.More.Zip(drawn.Rows))
             {
                 var shown = JobEditorModel.Presentation(field);
                 (row.Unit is not null).ShouldBe(shown.Unit is not null, $"{field.Key} unit box");
                 row.Editor.Height.ShouldBe(shown.Editor == FieldEditor.Lines ? 64 : 24, field.Key);
                 row.Description.Y.ShouldBeGreaterThanOrEqualTo(row.Editor.Bottom, "the description sits under its editor");
+                row.Caption.Y.ShouldBeGreaterThanOrEqualTo(drawn.MoreDivider?.Bottom ?? 0, "a row under the divider");
             }
         }
 
         var foreign = JobEditorModel.Foreign(view).Select(f => f.Key).ToArray();
-        layout.Foreign.Select(r => r.Key).ShouldBe(foreign);
-        (layout.ForeignHeader is not null).ShouldBe(foreign.Length > 0);
+        (layout.Other is not null).ShouldBe(foreign.Length > 0);
+        (layout.Other?.Foreign.Select(r => r.Key) ?? []).ShouldBe(foreign);
+    }
+
+    [Fact]
+    public void TheMenuHasRoomForEveryEntry()
+    {
+        var layout = Layout("loaded");
+
+        foreach (var page in JobEditorModel.Pages(View("loaded")))
+        {
+            layout.Menu.Width.ShouldBeGreaterThanOrEqualTo((JobEditorModel.MenuText(page, hasProblem: true).Length * 6) + 12, page.Menu);
+        }
+    }
+
+    /// <summary>What the screenshot showed cramped, given room: the files box, the How note, the radios.</summary>
+    [Fact]
+    public void TheThingsThatWereCrampedHaveRoom()
+    {
+        var layout = Layout("blank");
+
+        layout.Files.Files.Height.ShouldBeGreaterThanOrEqualTo(120, "one line per file, and a dozen is normal");
+        layout.How.HowHint.Height.ShouldBeGreaterThanOrEqualTo(36, "the longest note needs two lines");
+        layout.How.How.Count.ShouldBe(5);
+        (layout.How.How[1].Y - layout.How.How[0].Y).ShouldBeGreaterThanOrEqualTo(24, "radio pitch");
+        layout.Summary.Height.ShouldBeGreaterThanOrEqualTo(36, "the sentence wraps to two lines");
+        layout.Keep.KeepLead.Width.ShouldBeGreaterThanOrEqualTo((JobEditorText.KeepLead.Length * 6) + 6);
+        layout.When.EarlyLead.Width.ShouldBeGreaterThanOrEqualTo((JobEditorText.EarlyLead.Length * 6) + 6);
+        layout.Copies.CreateOldDir.Width.ShouldBeGreaterThanOrEqualTo((JobEditorText.CreateOldDir.Length * 6) + 20);
     }
 
     [Fact]
@@ -161,11 +168,6 @@ public sealed class EditorLayoutTests
         (layout.ClientHeight * 1.25).ShouldBeLessThanOrEqualTo(720, "at 125 per cent, with a title bar, on 768 rows");
         (layout.ClientWidth * 1.25).ShouldBeLessThanOrEqualTo(1024);
     }
-
-    /// <summary>The content is wider than nothing and narrower than the viewport less a scrollbar.</summary>
-    [Fact]
-    public void TheContentLeavesRoomForAScrollbar() =>
-        Layout("blank").ContentWidth.ShouldBeLessThan(Layout("blank").Viewport.Width);
 
     /// <summary>The arithmetic every rule above leans on.</summary>
     [Fact]
@@ -182,4 +184,3 @@ public sealed class EditorLayoutTests
         box.Within(39, 60).ShouldBeFalse();
     }
 }
-

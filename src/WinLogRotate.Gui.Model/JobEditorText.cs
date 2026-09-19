@@ -68,8 +68,6 @@ public static class JobEditorText
 
     public const string EarlyLead = "or earlier once it exceeds";
 
-    public const string WhenHint = "Default: every day, no size limit. Sizes: 100k, 10M, 1G.";
-
     public const string WhenManaged = "The application decides when a new file starts; each run tidies what it left.";
 
     public const string WhenBySize = "Rotates only when the log reaches the size set under More settings, never by the calendar.";
@@ -77,12 +75,6 @@ public static class JobEditorText
     public const string KeepLead = "old copies; delete any older than";
 
     public const string KeepUnit = "days";
-
-    public const string KeepHint = "Default: keep 7 and never delete by age. Old copies are zipped.";
-
-    public const string ButtonsHint =
-        "Check tries the job out and writes nothing. Save writes it to the configuration folder, "
-        + "which only administrators may change, so Windows asks for permission once.";
 
     public const string CheckTooltip = "Tries the job out and writes nothing.";
 

@@ -9,14 +9,18 @@ namespace WinLogRotate.Gui.Pages;
 /// </summary>
 /// <remarks>
 /// <para>
-/// Two views of one job. <b>Basics</b> asks what somebody adding a log file has to decide -
-/// which files, how the log is taken away from the program writing it, how often, how many old
-/// copies to keep and for how long, how they are named and compressed, and where they go - in
-/// their own words, and restates the answer as one sentence. <b>Advanced</b> is every key the schema knows, each a typed
-/// control with the schema's caption, its default, where its value comes from, and one line
-/// saying what it does; there is no grid of raw keys, and nothing is called by its TOML name
-/// alone. The header - the name and the files - is shared, with a Browse button that turns a
-/// picked file into the line that names its series, and a preview of what that line matches.
+/// A menu of pages down the left - Files, How, When, Keep, Old copies, Before &amp; after, If
+/// things go wrong, and Other keys when the file has any - and one page at a time on the right.
+/// Each page asks what somebody adding a log file has to decide in their own words, and shows
+/// every other setting of its topic under "More settings": a typed control with the schema's
+/// caption, its default, where its value comes from, and one line saying what it does. Nothing
+/// is called by its TOML name alone, and nothing scrolls. Under every page, one sentence
+/// restates the whole job.
+/// </para>
+/// <para>
+/// Every key has exactly one home - a control on its page, or a row under the divider - which
+/// is what let the earlier Basics and Advanced views, and the carrying of values between them,
+/// go. <see cref="JobEditorModel.PageOf"/> is the table.
 /// </para>
 /// <para>
 /// Under <c>Pages/</c> and not <c>Ui/</c> deliberately, even though it is a dialog: the
@@ -40,18 +44,27 @@ public sealed class JobEditor : Form
     private readonly bool _isNew;
     private readonly JobEditorView _original;
     private readonly string? _hookWarning;
+    private readonly IReadOnlyList<JobPage> _pages;
     private readonly EditorLayout _layout;
 
     /// <summary>What the verb said when it wrote, for the Jobs page to show.</summary>
     private string? _said;
 
     private bool _busy;
-    private bool _showingAdvanced;
     private bool _filling;
     private int _previewSerial;
     private string _lastSuggestedName = string.Empty;
 
-    // ---- header ---------------------------------------------------------------------------
+    // ---- the menu and the page title -------------------------------------------------------
+
+    private readonly ListBox _menu = new() { BorderStyle = BorderStyle.None, IntegralHeight = false };
+    private readonly Label _pageTitle = new() { AutoEllipsis = true };
+    private Font? _titleFont;
+
+    /// <summary>Every control of every page, so choosing a page is a visibility flip.</summary>
+    private readonly Dictionary<JobPageId, List<Control>> _shown = [];
+
+    // ---- Files ------------------------------------------------------------------------------
 
     private readonly TextBox _name = new() { PlaceholderText = JobEditorText.NamePlaceholder };
     private readonly CheckBox _enabled = new() { Text = "Enabled", Checked = true };
@@ -65,51 +78,57 @@ public sealed class JobEditor : Form
     private readonly Button _browse = new() { Text = JobEditorText.Browse, FlatStyle = FlatStyle.System };
     private readonly Label _preview = new() { ForeColor = Theme.Current.Muted, AutoEllipsis = true };
 
-    // ---- the Basics body --------------------------------------------------------------------
+    // ---- How --------------------------------------------------------------------------------
 
-    private readonly List<Control> _basics = [];
     private readonly RadioButton[] _how =
     [
         new() { Text = JobEditorText.HowAuto, Checked = true },
         new() { Text = JobEditorText.HowCopyTruncate },
         new() { Text = JobEditorText.HowRename },
         new() { Text = JobEditorText.HowManage },
+        new() { Text = JobEditorText.HowCopy },
     ];
 
-    private readonly Label _howHint = new() { ForeColor = Theme.Current.Muted, AutoEllipsis = true };
+    private readonly Label _howHint = new() { ForeColor = Theme.Current.Muted };
+
+    // ---- When -------------------------------------------------------------------------------
+
     private readonly ComboBox _schedule = new() { DropDownStyle = ComboBoxStyle.DropDownList };
     private readonly Label _earlyLead = new() { Text = JobEditorText.EarlyLead, ForeColor = Theme.Current.Muted };
     private readonly TextBox _maxSize = new() { PlaceholderText = "100M" };
-    private readonly Label _whenHint = new() { Text = JobEditorText.WhenHint, ForeColor = Theme.Current.Muted, AutoEllipsis = true };
+    private readonly Label _whenHint = new() { ForeColor = Theme.Current.Muted, AutoEllipsis = true };
+
+    // ---- Keep -------------------------------------------------------------------------------
+
     private readonly TextBox _rotate = new() { PlaceholderText = "7" };
     private readonly Label _keepLead = new() { Text = JobEditorText.KeepLead, ForeColor = Theme.Current.Muted };
     private readonly TextBox _maxAge = new() { PlaceholderText = "never" };
     private readonly Label _keepUnit = new() { Text = JobEditorText.KeepUnit, ForeColor = Theme.Current.Muted };
+
+    // ---- Old copies -------------------------------------------------------------------------
+
     private readonly ComboBox _names = new() { DropDownStyle = ComboBoxStyle.DropDownList };
     private readonly ComboBox _compression = new() { DropDownStyle = ComboBoxStyle.DropDownList };
     private readonly TextBox _oldDir = new() { PlaceholderText = JobEditorText.OldDirPlaceholder };
     private readonly Button _browseFolder = new() { Text = JobEditorText.Browse, FlatStyle = FlatStyle.System };
     private readonly CheckBox _createOldDir = new() { Text = JobEditorText.CreateOldDir };
-    private readonly Label _summary = new() { ForeColor = Theme.Current.Muted };
 
-    // ---- the Advanced body ------------------------------------------------------------------
+    // ---- the rows under every divider --------------------------------------------------------
 
-    private readonly Panel _advanced = new() { AutoScroll = true, BackColor = Theme.Current.Window };
-    private readonly Panel _content = new() { BackColor = Theme.Current.Window };
     private readonly Dictionary<string, Row> _rows = new(StringComparer.OrdinalIgnoreCase);
     private readonly Dictionary<string, ForeignKey> _foreign = new(StringComparer.OrdinalIgnoreCase);
     private readonly Dictionary<string, string> _problems = new(StringComparer.OrdinalIgnoreCase);
     private readonly ToolTip _tips = new();
 
-    // ---- under both -------------------------------------------------------------------------
+    // ---- under every page -------------------------------------------------------------------
 
+    private readonly Label _summary = new() { ForeColor = Theme.Current.Muted };
     private readonly Label _status = new() { ForeColor = Theme.Current.Muted };
-    private readonly LinkLabel _toggle = new();
     private readonly Button _whatWouldHappen = new() { Text = JobEditorText.PreviewButton, FlatStyle = FlatStyle.System };
     private readonly Button _check = new() { Text = "Check", FlatStyle = FlatStyle.System };
     private readonly Button _save = new() { Text = "Save", FlatStyle = FlatStyle.System };
 
-    /// <summary>One Advanced row's controls, and whether a tick box was touched.</summary>
+    /// <summary>One typed row's controls, and whether a tick box was touched.</summary>
     private sealed class Row
     {
         public required JobField Field { get; init; }
@@ -137,9 +156,8 @@ public sealed class JobEditor : Form
         _original = view;
         _isNew = isNew;
         _hookWarning = hookWarning;
-        _layout = EditorLayout.Compute(
-            JobEditorModel.Sections(view),
-            [.. JobEditorModel.Foreign(view).Select(f => f.Key)]);
+        _pages = JobEditorModel.Pages(view);
+        _layout = EditorLayout.Compute(_pages, [.. JobEditorModel.Foreign(view).Select(f => f.Key)]);
 
         Text = isNew ? "New job" : $"Job: {view.Job}";
         FormBorderStyle = FormBorderStyle.FixedDialog;
@@ -152,7 +170,7 @@ public sealed class JobEditor : Form
         // Scaled with the monitor, in the order MainForm explains: layout suspended, the mode
         // and the dimensions, the controls, and then the one scale. The layout's numbers are
         // logical pixels at 100 per cent, and PerformAutoScale is what turns them into the
-        // monitor's. Both bodies are built now, so the toggle never places a control after
+        // monitor's. Every page is built now, so choosing one never places a control after
         // the scale.
         SuspendLayout();
         AutoScaleMode = AutoScaleMode.Dpi;
@@ -171,14 +189,16 @@ public sealed class JobEditor : Form
         Shown += async (_, _) => await PreviewAsync().ConfigureAwait(true);
     }
 
+    /// <summary>Disposes the tooltips and the font the title was given, after the controls that used them.</summary>
     protected override void Dispose(bool disposing)
     {
+        base.Dispose(disposing);
+
         if (disposing)
         {
             _tips.Dispose();
+            _titleFont?.Dispose();
         }
-
-        base.Dispose(disposing);
     }
 
     /// <summary>
@@ -251,118 +271,57 @@ public sealed class JobEditor : Form
 
     private void Build()
     {
-        var colors = Theme.Current;
         var layout = _layout;
 
         ClientSize = new Size(layout.ClientWidth, layout.ClientHeight);
 
-        // Header.
-        Controls.Add(Caption("Name", layout.NameCaption));
-        Place(_name, layout.Name);
-        Place(_enabled, layout.Enabled);
-        Controls.Add(Caption("Which files", layout.FilesCaption));
-        Place(_files, layout.Files);
-        Place(_browse, layout.Browse);
-        Controls.Add(Caption(JobEditorText.FilesHint, layout.FilesHint));
-        Place(_preview, layout.Preview);
-
-        _browse.Click += (_, _) => BrowseForFile();
-        _files.Leave += async (_, _) => await PreviewAsync().ConfigureAwait(true);
-        _files.TextChanged += (_, _) => UpdateSummary();
-
-        // Basics.
-        Basic(Caption("How", layout.HowCaption));
-        for (var i = 0; i < _how.Length; i++)
+        // The menu, and the title the chosen page fills in.
+        Place(_menu, layout.Menu);
+        foreach (var page in _pages)
         {
-            Basic(_how[i], layout.How[i]);
-            _how[i].CheckedChanged += (_, _) => HowChanged();
+            _menu.Items.Add(page.Menu);
         }
 
-        Basic(_howHint, layout.HowHint);
-        Basic(Caption("How often", layout.WhenCaption));
-        Basic(_schedule, layout.Schedule);
-        Basic(_earlyLead, layout.EarlyLead);
-        Basic(_maxSize, layout.MaxSize);
-        Basic(_whenHint, layout.WhenHint);
-        Basic(Caption("Keep", layout.KeepCaption));
-        Basic(_rotate, layout.Rotate);
-        Basic(_keepLead, layout.KeepLead);
-        Basic(_maxAge, layout.MaxAge);
-        Basic(_keepUnit, layout.KeepUnit);
-        Basic(Caption(JobEditorText.KeepHint, layout.KeepHint));
-        Basic(Caption("Old copies", layout.CopiesCaption));
-        Basic(_names, layout.Names);
-        Basic(_compression, layout.Compression);
-        Basic(Caption("Put them in", layout.FolderCaption));
-        Basic(_oldDir, layout.OldDir);
-        Basic(_browseFolder, layout.BrowseFolder);
-        Basic(_createOldDir, layout.CreateOldDir);
-        Basic(_summary, layout.Summary);
+        _titleFont = new Font(Font, FontStyle.Bold);
+        _pageTitle.Font = _titleFont;
+        Place(_pageTitle, layout.PageTitle);
 
-        _schedule.Items.Add(JobEditorModel.DefaultChoice(JobSchema.Find("schedule")?.Default));
-        foreach (var choice in JobSchema.Find("schedule")?.Choices ?? [])
+        foreach (var page in layout.Pages)
         {
-            if (!JobEditorModel.SizeApplies(choice))
+            _shown[page.Id] = [];
+
+            switch (page)
             {
-                _schedule.Items.Add(choice);
+                case FilesPageLayout files:
+                    BuildFiles(files);
+                    break;
+                case HowPageLayout how:
+                    BuildHow(how);
+                    break;
+                case WhenPageLayout whenPage:
+                    BuildWhen(whenPage);
+                    break;
+                case KeepPageLayout keep:
+                    BuildKeep(keep);
+                    break;
+                case CopiesPageLayout copies:
+                    BuildCopies(copies);
+                    break;
+                case OtherPageLayout other:
+                    foreach (var row in other.Foreign)
+                    {
+                        BuildForeignRow(row);
+                    }
+
+                    break;
             }
+
+            BuildMore(page);
         }
 
-        _names.Items.AddRange([JobEditorText.NamesNumbered, JobEditorText.NamesDated]);
-        _compression.Items.AddRange([JobEditorText.CompressZip, JobEditorText.CompressGzip, JobEditorText.CompressNone]);
-
-        _schedule.SelectedIndexChanged += (_, _) => ScheduleChanged();
-        _maxSize.TextChanged += (_, _) => UpdateSummary();
-        _rotate.TextChanged += (_, _) => UpdateSummary();
-        _maxAge.TextChanged += (_, _) => UpdateSummary();
-        _names.SelectedIndexChanged += (_, _) => UpdateSummary();
-        _compression.SelectedIndexChanged += (_, _) => UpdateSummary();
-        _oldDir.TextChanged += (_, _) => UpdateSummary();
-        _browseFolder.Click += (_, _) => BrowseForFolder();
-        JudgeOnLeave(_maxSize, "maxsize");
-        JudgeOnLeave(_rotate, "rotate");
-        JudgeOnLeave(_maxAge, "maxage");
-
-        // Advanced: a scrolling panel showing a content panel the layout sized.
-        _advanced.Bounds = layout.Viewport.ToRectangle();
-        _content.Bounds = new Box(0, 0, layout.ContentWidth, layout.ContentHeight).ToRectangle();
-        _advanced.Controls.Add(_content);
-        Controls.Add(_advanced);
-
-        foreach (var section in layout.Sections)
-        {
-            _content.Controls.Add(new Label
-            {
-                Text = section.Title,
-                Bounds = section.Header.ToRectangle(),
-                ForeColor = colors.Accent,
-            });
-
-            foreach (var row in section.Rows)
-            {
-                BuildRow(row);
-            }
-        }
-
-        if (layout.ForeignHeader is { } foreignHeader)
-        {
-            _content.Controls.Add(new Label
-            {
-                Text = JobEditorText.ForeignSection,
-                Bounds = foreignHeader.ToRectangle(),
-                ForeColor = colors.Accent,
-            });
-        }
-
-        foreach (var row in layout.Foreign)
-        {
-            BuildForeignRow(row);
-        }
-
-        // Under both.
+        // Under every page.
+        Place(_summary, layout.Summary);
         Place(_status, layout.Status);
-        Controls.Add(Caption(JobEditorText.ButtonsHint, layout.ButtonsHint));
-        Place(_toggle, layout.Toggle);
         Place(_whatWouldHappen, layout.WhatWouldHappen);
         Place(_check, layout.Check);
         Place(_save, layout.Save);
@@ -381,11 +340,112 @@ public sealed class JobEditor : Form
         // The shield goes on Save and not on Check: Check runs --dry-run, which writes nothing
         // and needs no rights at all. A shield on it would promise a prompt that never comes.
         LrDialog.AddShield(_save);
+        _tips.SetToolTip(_check, JobEditorText.CheckTooltip);
+        _tips.SetToolTip(_save, JobEditorText.SaveTooltip);
 
-        _toggle.LinkClicked += (_, _) => ShowAdvanced(!_showingAdvanced);
+        _menu.SelectedIndexChanged += (_, _) => ShowPage(_menu.SelectedIndex);
         _whatWouldHappen.Click += async (_, _) => await OneAtATimeAsync(PreviewRunAsync).ConfigureAwait(true);
         _check.Click += async (_, _) => await OneAtATimeAsync(CheckAsync).ConfigureAwait(true);
         _save.Click += async (_, _) => await OneAtATimeAsync(SaveAsync).ConfigureAwait(true);
+    }
+
+    private void BuildFiles(FilesPageLayout page)
+    {
+        On(page.Id, Caption("Name", page.NameCaption));
+        On(page.Id, _name, page.Name);
+        On(page.Id, _enabled, page.Enabled);
+        On(page.Id, Caption("Which files", page.FilesCaption));
+        On(page.Id, _files, page.Files);
+        On(page.Id, _browse, page.Browse);
+        On(page.Id, Caption(JobEditorText.FilesHint, page.FilesHint));
+        On(page.Id, _preview, page.Preview);
+
+        _files.TextChanged += (_, _) => { _ = PreviewAsync(); UpdateSummary(); };
+        _browse.Click += (_, _) => BrowseForFile();
+    }
+
+    private void BuildHow(HowPageLayout page)
+    {
+        for (var i = 0; i < _how.Length; i++)
+        {
+            On(page.Id, _how[i], page.How[i]);
+            _how[i].CheckedChanged += (_, _) => HowChanged();
+        }
+
+        On(page.Id, _howHint, page.HowHint);
+    }
+
+    private void BuildWhen(WhenPageLayout page)
+    {
+        On(page.Id, Caption("How often", page.ScheduleCaption));
+        On(page.Id, _schedule, page.Schedule);
+        On(page.Id, _earlyLead, page.EarlyLead);
+        On(page.Id, _maxSize, page.MaxSize);
+        On(page.Id, _whenHint, page.WhenHint);
+
+        // Every choice, size included: this drop-down is the schedule's only home now, and a
+        // job that rotates by size alone has to be reachable from it.
+        _schedule.Items.Add(JobEditorModel.DefaultChoice(JobSchema.Find("schedule")?.Default));
+        foreach (var choice in JobSchema.Find("schedule")?.Choices ?? [])
+        {
+            _schedule.Items.Add(choice);
+        }
+
+        _schedule.SelectedIndexChanged += (_, _) => ScheduleChanged();
+        _maxSize.TextChanged += (_, _) => UpdateSummary();
+        JudgeOnLeave(_maxSize, "maxsize");
+    }
+
+    private void BuildKeep(KeepPageLayout page)
+    {
+        On(page.Id, Caption("Keep", page.KeepCaption));
+        On(page.Id, _rotate, page.Rotate);
+        On(page.Id, _keepLead, page.KeepLead);
+        On(page.Id, _maxAge, page.MaxAge);
+        On(page.Id, _keepUnit, page.KeepUnit);
+
+        _rotate.TextChanged += (_, _) => UpdateSummary();
+        _maxAge.TextChanged += (_, _) => UpdateSummary();
+        JudgeOnLeave(_rotate, "rotate");
+        JudgeOnLeave(_maxAge, "maxage");
+    }
+
+    private void BuildCopies(CopiesPageLayout page)
+    {
+        On(page.Id, Caption("Named", page.NamesCaption));
+        On(page.Id, _names, page.Names);
+        On(page.Id, _compression, page.Compression);
+        On(page.Id, Caption("Put them in", page.FolderCaption));
+        On(page.Id, _oldDir, page.OldDir);
+        On(page.Id, _browseFolder, page.BrowseFolder);
+        On(page.Id, _createOldDir, page.CreateOldDir);
+
+        _names.Items.AddRange([JobEditorText.NamesNumbered, JobEditorText.NamesDated]);
+        _compression.Items.AddRange([JobEditorText.CompressZip, JobEditorText.CompressGzip, JobEditorText.CompressNone]);
+
+        _names.SelectedIndexChanged += (_, _) => UpdateSummary();
+        _compression.SelectedIndexChanged += (_, _) => UpdateSummary();
+        _oldDir.TextChanged += (_, _) => UpdateSummary();
+        _browseFolder.Click += (_, _) => BrowseForFolder();
+    }
+
+    /// <summary>The divider and the typed rows under a page's own controls.</summary>
+    private void BuildMore(PageLayout page)
+    {
+        if (page.MoreDivider is { } divider)
+        {
+            On(page.Id, new Label
+            {
+                Text = JobEditorText.MoreDivider,
+                Bounds = divider.ToRectangle(),
+                ForeColor = Theme.Current.Accent,
+            });
+        }
+
+        foreach (var row in page.Rows)
+        {
+            BuildRow(page.Id, row);
+        }
     }
 
     private Label Caption(string text, Box box) => new()
@@ -402,19 +462,21 @@ public sealed class JobEditor : Form
         Controls.Add(control);
     }
 
-    private void Basic(Control control, Box box)
+    /// <summary>Places a control on a page: on the window, and in the page's list for the visibility flip.</summary>
+    private void On(JobPageId page, Control control, Box box)
     {
-        Place(control, box);
-        _basics.Add(control);
+        control.Bounds = box.ToRectangle();
+        On(page, control);
     }
 
-    private void Basic(Control control)
+    private void On(JobPageId page, Control control)
     {
+        control.Visible = false;
         Controls.Add(control);
-        _basics.Add(control);
+        _shown[page].Add(control);
     }
 
-    private void BuildRow(AdvancedRow row)
+    private void BuildRow(JobPageId page, AdvancedRow row)
     {
         var field = _original.Fields.First(f => string.Equals(f.Key, row.Key, StringComparison.OrdinalIgnoreCase));
         var shown = JobEditorModel.Presentation(field);
@@ -459,7 +521,7 @@ public sealed class JobEditor : Form
                 box.Click += (_, _) => { made.Explicit = true; Relabel(made); UpdateSummary(); };
                 break;
             case ComboBox combo:
-                combo.SelectedIndexChanged += (_, _) => { Relabel(made); ScheduleChanged(); };
+                combo.SelectedIndexChanged += (_, _) => { Relabel(made); UpdateSummary(); };
                 break;
             default:
                 editor.TextChanged += (_, _) => { Relabel(made); UpdateSummary(); };
@@ -469,17 +531,17 @@ public sealed class JobEditor : Form
 
         inherit.LinkClicked += (_, _) => Inherit(made);
 
-        _content.Controls.Add(caption);
-        _content.Controls.Add(key);
-        _content.Controls.Add(editor);
+        On(page, caption);
+        On(page, key);
+        On(page, editor);
         if (row.Unit is { } unitBox && shown.Unit is { } unit)
         {
-            _content.Controls.Add(new Label { Text = unit, Bounds = unitBox.ToRectangle(), ForeColor = colors.Muted });
+            On(page, new Label { Text = unit, Bounds = unitBox.ToRectangle(), ForeColor = colors.Muted });
         }
 
-        _content.Controls.Add(source);
-        _content.Controls.Add(inherit);
-        _content.Controls.Add(description);
+        On(page, source);
+        On(page, inherit);
+        On(page, description);
     }
 
     private static ComboBox Choice(Box box, IReadOnlyList<string> choices)
@@ -517,8 +579,61 @@ public sealed class JobEditor : Form
             remove.Enabled = false;
         };
 
-        _content.Controls.Add(text);
-        _content.Controls.Add(remove);
+        On(JobPageId.Other, text);
+        On(JobPageId.Other, remove);
+    }
+
+    // ---- the pages --------------------------------------------------------------------------
+
+    /// <summary>Shows one page and hides the rest. A visibility flip; nothing moves.</summary>
+    private void ShowPage(int index)
+    {
+        if (index < 0 || index >= _pages.Count)
+        {
+            return;
+        }
+
+        var chosen = _pages[index];
+        _pageTitle.Text = chosen.Title;
+
+        foreach (var (id, controls) in _shown)
+        {
+            var visible = id == chosen.Id;
+            foreach (var control in controls)
+            {
+                control.Visible = visible;
+            }
+        }
+    }
+
+    private void JumpTo(JobPageId page)
+    {
+        var index = _pages.ToList().FindIndex(p => p.Id == page);
+        if (index >= 0)
+        {
+            _menu.SelectedIndex = index;
+        }
+    }
+
+    private JobPage PageOf(string key)
+    {
+        var id = JobEditorModel.PageOf(key);
+        return _pages.FirstOrDefault(p => p.Id == id) ?? _pages[0];
+    }
+
+    /// <summary>Marks in the menu every page with a refused value, and unmarks the rest.</summary>
+    private void MarkPages()
+    {
+        var troubled = _problems.Keys.Select(JobEditorModel.PageOf).ToHashSet();
+
+        for (var i = 0; i < _pages.Count; i++)
+        {
+            var text = JobEditorModel.MenuText(_pages[i], troubled.Contains(_pages[i].Id));
+            if (!string.Equals(_menu.Items[i] as string, text, StringComparison.Ordinal))
+            {
+                _menu.Items[i] = text;
+            }
+        }
     }
 
     // ---- filling ----------------------------------------------------------------------------
@@ -535,7 +650,6 @@ public sealed class JobEditor : Form
         _files.Text = Field("paths")?.Value ?? string.Empty;
         _enabled.Checked = !string.Equals(Field("enabled")?.Value, "false", StringComparison.OrdinalIgnoreCase);
 
-        // Basics, from the file.
         var how = JobEditorModel.HowRotatedShown(_original);
         if (_isNew)
         {
@@ -552,16 +666,7 @@ public sealed class JobEditor : Form
             _how[(int)answer].Checked = true;
         }
 
-        var schedule = Field("schedule")?.Value;
-        if (JobEditorModel.SizeApplies(schedule))
-        {
-            _schedule.SelectedIndex = 0;
-        }
-        else
-        {
-            Select(_schedule, schedule ?? JobEditorModel.DefaultChoice(JobSchema.Find("schedule")?.Default));
-        }
-
+        Select(_schedule, Field("schedule")?.Value ?? JobEditorModel.DefaultChoice(JobSchema.Find("schedule")?.Default));
         _maxSize.Text = Field("maxsize")?.Value ?? string.Empty;
         _rotate.Text = Field("rotate")?.Value ?? string.Empty;
         _maxAge.Text = Field("maxage")?.Value ?? string.Empty;
@@ -575,7 +680,7 @@ public sealed class JobEditor : Form
             ? "Save the job first; the preview runs the job as it is on disk."
             : "Runs a dry run of this job, as if it were due tonight, and lists what it would do. Nothing is changed.");
 
-        // Advanced, from the file.
+        // The rows, from the file.
         foreach (var row in _rows.Values)
         {
             SetRow(row, row.Field.Value);
@@ -586,7 +691,7 @@ public sealed class JobEditor : Form
         HowChanged();
         ScheduleChanged();
         UpdateSummary();
-        ShowAdvanced(false);
+        _menu.SelectedIndex = 0;
 
         if (_original.Problems.Count > 0)
         {
@@ -654,30 +759,8 @@ public sealed class JobEditor : Form
         UpdateSummary();
     }
 
-    // ---- the two views ----------------------------------------------------------------------
+    // ---- what the pages say -----------------------------------------------------------------
 
-    private void ShowAdvanced(bool advanced)
-    {
-        if (advanced && !_showingAdvanced)
-        {
-            CarryBasicsToAdvanced();
-        }
-        else if (!advanced && _showingAdvanced)
-        {
-            CarryAdvancedToBasics();
-        }
-
-        _showingAdvanced = advanced;
-        _advanced.Visible = advanced;
-        foreach (var control in _basics)
-        {
-            control.Visible = !advanced;
-        }
-
-        _toggle.Text = JobEditorModel.AdvancedLinkText(JobEditorModel.AdvancedSetCount(_original), advanced);
-    }
-
-    /// <summary>The radio that is on, or null when the file's strategy has no radio and the row is disabled.</summary>
     private HowRotated? HowShown()
     {
         if (!_how[0].Enabled)
@@ -707,75 +790,16 @@ public sealed class JobEditor : Form
         _oldDir.Text,
         _createOldDir.Checked);
 
-    private void CarryBasicsToAdvanced()
-    {
-        foreach (var (key, value) in JobEditorModel.BasicsEdits(_original, Answers()))
-        {
-            if (_rows.TryGetValue(key, out var row))
-            {
-                SetRow(row, string.IsNullOrWhiteSpace(value) ? null : value);
-            }
-        }
-    }
-
-    private void CarryAdvancedToBasics()
-    {
-        _filling = true;
-
-        string? Read(string key) => _rows.TryGetValue(key, out var row) ? ReadRow(row) : null;
-
-        var managed = string.Equals(Read("kind"), "manage", StringComparison.OrdinalIgnoreCase);
-        var how = managed
-            ? HowRotated.Manage
-            : Read("lockstrategy")?.Trim().ToLowerInvariant() switch
-            {
-                null or "rename" => HowRotated.Rename,
-                "auto" => HowRotated.Auto,
-                "copytruncate" => HowRotated.CopyTruncate,
-                _ => (HowRotated?)null,
-            };
-
-        foreach (var radio in _how)
-        {
-            radio.Enabled = how is not null;
-        }
-
-        if (how is { } answer)
-        {
-            _how[(int)answer].Checked = true;
-        }
-
-        var schedule = Read("schedule");
-        if (JobEditorModel.SizeApplies(schedule))
-        {
-            _schedule.SelectedIndex = 0;
-        }
-        else
-        {
-            Select(_schedule, schedule ?? JobEditorModel.DefaultChoice(JobSchema.Find("schedule")?.Default));
-        }
-
-        _maxSize.Text = Read("maxsize") ?? string.Empty;
-        _rotate.Text = Read("rotate") ?? string.Empty;
-        _maxAge.Text = Read("maxage") ?? string.Empty;
-        _names.SelectedIndex = string.Equals(Read("dateext"), "true", StringComparison.OrdinalIgnoreCase) ? 1 : 0;
-        _compression.SelectedIndex = (int)JobEditorModel.CompressionShown(Read("compress"), Read("compresstype"));
-        _oldDir.Text = Read("olddir") ?? string.Empty;
-        _createOldDir.Checked = string.Equals(Read("createolddir"), "true", StringComparison.OrdinalIgnoreCase);
-
-        _filling = false;
-        HowChanged();
-        UpdateSummary();
-    }
-
-    /// <summary>
-    /// The rows a "how" answer makes meaningless are disabled, and the hint says what the answer does.
-    /// </summary>
     private void HowChanged()
     {
+        if (_filling)
+        {
+            return;
+        }
+
         var how = HowShown();
         var managed = how == HowRotated.Manage;
-        var bySize = !_showingAdvanced && JobEditorModel.SizeApplies(ScheduleShown());
+        var bySize = JobEditorModel.SizeApplies(ScheduleShown());
 
         _howHint.Text = how switch
         {
@@ -783,27 +807,23 @@ public sealed class JobEditor : Form
             HowRotated.CopyTruncate => JobEditorText.HowCopyTruncateHint,
             HowRotated.Rename => JobEditorText.HowRenameHint,
             HowRotated.Manage => JobEditorText.HowManageHint,
+            HowRotated.Copy => JobEditorText.HowCopyHint,
             _ => JobEditorText.HowLocked,
         };
-        _tips.SetToolTip(_howHint, _howHint.Text);
 
-        _schedule.Enabled = _maxSize.Enabled = _earlyLead.Enabled = !managed && !bySize;
-        _whenHint.Text = managed
-            ? JobEditorText.WhenManaged
-            : bySize ? JobEditorText.WhenBySize : JobEditorText.WhenHint;
+        _schedule.Enabled = !managed;
+        _maxSize.Enabled = _earlyLead.Enabled = !managed && !bySize;
+
+        // Only what is not the default is worth a line here; the placeholders say the defaults.
+        _whenHint.Text = managed ? JobEditorText.WhenManaged : bySize ? JobEditorText.WhenBySize : string.Empty;
 
         _names.Enabled = _oldDir.Enabled = _browseFolder.Enabled = _createOldDir.Enabled = !managed;
 
         UpdateSummary();
     }
 
-    /// <summary>The schedule the visible view says, which decides whether the size threshold means anything.</summary>
-    private string? ScheduleShown() =>
-        _showingAdvanced && _rows.TryGetValue("schedule", out var row)
-            ? ReadRow(row)
-            : JobEditorModel.SizeApplies(Field("schedule")?.Value) && !_showingAdvanced
-                ? "size"
-                : JobEditorModel.ChoiceValue(_schedule.SelectedItem as string);
+    /// <summary>The schedule the drop-down says, which decides whether the size threshold means anything.</summary>
+    private string? ScheduleShown() => JobEditorModel.ChoiceValue(_schedule.SelectedItem as string);
 
     private void ScheduleChanged()
     {
@@ -817,7 +837,7 @@ public sealed class JobEditor : Form
             size.Editor.Enabled = JobEditorModel.SizeApplies(ScheduleShown());
         }
 
-        UpdateSummary();
+        HowChanged();
     }
 
     private void UpdateSummary()
@@ -854,6 +874,10 @@ public sealed class JobEditor : Form
     private void JudgeRow(Row row) =>
         Judged(row.Field.Key, row.Caption, JobEditorModel.Judge(row.Field, ReadRow(row)));
 
+    /// <summary>
+    /// Records a refused value: the caption turns red, the page is marked in the menu, and the
+    /// status line names the page and the problem. Clearing it undoes all three.
+    /// </summary>
     private void Judged(string key, Label? caption, string? problem)
     {
         if (problem is null)
@@ -868,6 +892,7 @@ public sealed class JobEditor : Form
                 caption.ForeColor = Theme.Current.Text;
             }
 
+            MarkPages();
             return;
         }
 
@@ -877,7 +902,8 @@ public sealed class JobEditor : Form
             caption.ForeColor = Theme.Current.Danger;
         }
 
-        Say(problem, Theme.Current.Danger);
+        MarkPages();
+        Say(JobEditorModel.ProblemLine(PageOf(key), problem), Theme.Current.Danger);
     }
 
     // ---- what would happen -------------------------------------------------------------------
@@ -1062,10 +1088,11 @@ public sealed class JobEditor : Form
     /// What the form holds, as edits over the job as it was read.
     /// </summary>
     /// <remarks>
-    /// The keys Basics asks about come from whichever view is showing; everything else comes from
-    /// Advanced, whose rows hold the file's values until somebody touches them. A foreign key is
-    /// sent only when it was removed. The size threshold is sent as cleared unless the schedule
-    /// showing is <c>size</c>, or a calendar choice would never take effect.
+    /// Every key from its one home: the header, the pages' own controls through
+    /// <see cref="JobEditorModel.BasicsEdits"/>, and the rows, which hold the file's values until
+    /// somebody touches them. A foreign key is sent only when it was removed. The size threshold
+    /// is sent as cleared unless the schedule showing is <c>size</c>, or a calendar choice would
+    /// never take effect.
     /// </remarks>
     private Dictionary<string, string?> Edited()
     {
@@ -1081,12 +1108,9 @@ public sealed class JobEditor : Form
             edited[key] = ReadRow(row);
         }
 
-        if (!_showingAdvanced)
+        foreach (var (key, value) in JobEditorModel.BasicsEdits(_original, Answers()))
         {
-            foreach (var (key, value) in JobEditorModel.BasicsEdits(_original, Answers()))
-            {
-                edited[key] = value;
-            }
+            edited[key] = value;
         }
 
         if (!JobEditorModel.SizeApplies(ScheduleShown()))
@@ -1115,7 +1139,8 @@ public sealed class JobEditor : Form
     {
         if (Refused() is { } refused)
         {
-            Say(refused, Theme.Current.Danger);
+            JumpTo(refused.Page);
+            Say(refused.Text, Theme.Current.Danger);
             return;
         }
 
@@ -1139,7 +1164,8 @@ public sealed class JobEditor : Form
     {
         if (Refused() is { } refused)
         {
-            Say(refused, Theme.Current.Danger);
+            JumpTo(refused.Page);
+            Say(refused.Text, Theme.Current.Danger);
             return;
         }
 
@@ -1201,22 +1227,25 @@ public sealed class JobEditor : Form
     }
 
     /// <summary>
-    /// What this window refuses on its own: a new job with no name or no files, and a value the
-    /// CLI would refuse by the same grammar. Everything else is the CLI's to judge.
+    /// What this window refuses on its own, and the page to show while saying so: a new job with
+    /// no name or no files, and a value the CLI would refuse by the same grammar. Everything
+    /// else is the CLI's to judge.
     /// </summary>
-    private string? Refused()
+    private (string Text, JobPageId Page)? Refused()
     {
         if (_isNew && _name.Text.Trim().Length == 0)
         {
-            return JobEditorText.NoName;
+            return (JobEditorText.NoName, JobPageId.Files);
         }
 
         if (_isNew && _files.Text.Trim().Length == 0)
         {
-            return JobEditorText.NoFiles;
+            return (JobEditorText.NoFiles, JobPageId.Files);
         }
 
-        return _problems.Values.FirstOrDefault();
+        return _problems.Count > 0
+            ? (JobEditorModel.ProblemLine(PageOf(_problems.Keys.First()), _problems.Values.First()), JobEditorModel.PageOf(_problems.Keys.First()))
+            : null;
     }
 
     /// <summary>

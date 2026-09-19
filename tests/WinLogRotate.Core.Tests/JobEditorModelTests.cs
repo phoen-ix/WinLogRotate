@@ -347,11 +347,11 @@ public sealed class JobEditorModelTests
     public void EveryKeyIsReachableFromTheForm()
     {
         var view = Loaded();
-        var sections = JobEditorModel.Sections(view);
-        var sectioned = sections.SelectMany(s => s.Fields).Select(f => f.Key).ToArray();
+        var pages = JobEditorModel.Pages(view);
+        var sectioned = pages.SelectMany(p => p.More).Select(f => f.Key).Concat(JobEditorModel.Controls).ToArray();
 
         sectioned.ShouldContain("allowdangerous");
-        sectioned.ShouldContain("kind", "who rotates is asked in Basics and offered in Advanced");
+        sectioned.ShouldContain("kind", "who rotates is asked by the How radios");
         sectioned.ShouldNotContain("ownr", "a key this build does not know is a foreign key, not a setting");
         JobEditorModel.Foreign(view).Select(f => f.Key).ShouldBe(["ownr"]);
 
@@ -367,12 +367,11 @@ public sealed class JobEditorModelTests
             .ShouldBeEmpty("keys the form offers no way to see or edit");
         sectioned.ShouldBeUnique();
 
-        // Basics is a subset of Advanced - a second place to see a value, never a third value.
-        JobEditorModel.Basics.ShouldAllBe(k => sectioned.Contains(k, StringComparer.OrdinalIgnoreCase));
-
-        // Sections come in the reference's order, and an empty one is not drawn.
-        sections.Select(s => s.Group).ShouldBe(sections.Select(s => s.Group).Order());
-        sections.ShouldAllBe(s => s.Fields.Count > 0);
+        // The controls are a page's own, never also a row under it: one home per key.
+        JobEditorModel.Basics.ShouldAllBe(k => JobEditorModel.Controls.Contains(k, StringComparer.OrdinalIgnoreCase));
+        pages.SelectMany(p => p.More).Select(f => f.Key)
+            .Intersect(JobEditorModel.Controls, StringComparer.OrdinalIgnoreCase)
+            .ShouldBeEmpty("a key with a control of its own is not also a row");
     }
 
     /// <summary>A new job never sends <c>--unset</c>, because there is nothing to inherit again.</summary>
@@ -800,7 +799,7 @@ public sealed class JobEditorModelTests
         schedule.Line.ShouldBe(6);
         schedule.Via.ShouldBe("daily");
 
-        JobEditorModel.Sections(view).SelectMany(s => s.Fields).ShouldNotContain(f => f.Key == "daily");
+        JobEditorModel.Pages(view).SelectMany(p => p.More).ShouldNotContain(f => f.Key == "daily");
     }
 
     [Fact]
@@ -885,9 +884,9 @@ public sealed class JobEditorModelTests
     // ---- what the form says beside a field ---------------------------------------------------
 
     [Fact]
-    public void EverySectionedFieldHasAPresentation()
+    public void EveryFieldOnAPageHasAPresentation()
     {
-        foreach (var field in JobEditorModel.Sections(Loaded()).SelectMany(s => s.Fields))
+        foreach (var field in JobEditorModel.Pages(Loaded()).SelectMany(p => p.More))
         {
             var row = JobSchema.Find(field.Key).ShouldNotBeNull();
             var shown = JobEditorModel.Presentation(field);
@@ -1055,18 +1054,6 @@ public sealed class JobEditorModelTests
         JobEditorModel.ChoiceValue(JobEditorModel.InheritChoice).ShouldBeNull();
         JobEditorModel.ChoiceValue("weekly").ShouldBe("weekly");
         JobEditorModel.ChoiceValue(null).ShouldBeNull();
-    }
-
-    [Fact]
-    public void TheAdvancedLinkCountsWhatBasicsCannotShow()
-    {
-        // The fixture sets name, paths, rotate, maxsize and ownr: only ownr is beyond Basics.
-        JobEditorModel.AdvancedSetCount(Loaded()).ShouldBe(1);
-        JobEditorModel.AdvancedSetCount(JobEditorModel.Blank()).ShouldBe(0);
-
-        JobEditorModel.AdvancedLinkText(0, showingAdvanced: false).ShouldBe("Advanced settings");
-        JobEditorModel.AdvancedLinkText(3, showingAdvanced: false).ShouldBe("Advanced settings (3 set)");
-        JobEditorModel.AdvancedLinkText(3, showingAdvanced: true).ShouldBe("Basic settings");
     }
 
     [Fact]
@@ -1273,8 +1260,6 @@ public sealed class JobEditorModelTests
 
         JobEditorModel.Basics.ShouldContain("lockstrategy");
         JobEditorModel.Basics.ShouldContain("olddir");
-        JobEditorModel.AdvancedSetCount(JobEditorModel.From(ShownWith(("name", "\"iis\""), ("olddir", "\"D:/a\""))))
-            .ShouldBe(0, "a key Basics shows is not counted as beyond it");
     }
 
     // ---- the pages ---------------------------------------------------------------------------

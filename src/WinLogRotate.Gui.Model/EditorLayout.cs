@@ -1,29 +1,129 @@
 namespace WinLogRotate.Gui.Cli;
 
-/// <summary>One typed row of the Advanced view, in the content panel's own coordinates.</summary>
+/// <summary>One typed row under a page's divider, in client coordinates.</summary>
 public sealed record AdvancedRow(
     string Key, Box Caption, Box KeyLabel, Box Editor, Box? Unit, Box Source, Box Inherit, Box Description);
-
-/// <summary>One group of the Advanced view: its heading and its rows.</summary>
-public sealed record AdvancedSection(string Title, Box Header, IReadOnlyList<AdvancedRow> Rows);
 
 /// <summary>A key the file writes that this build does not read: shown, and removable.</summary>
 public sealed record ForeignRow(string Key, Box Text, Box Remove);
 
 /// <summary>
-/// Where everything in the job editor goes, for both of its views.
+/// One page of the editor: what it draws of its own, and the rows under its divider.
+/// </summary>
+/// <remarks>
+/// Every page is laid out in client coordinates and shares the client area with the others by
+/// turns, so the rules - nothing overlaps, everything fits - hold per page against the chrome.
+/// </remarks>
+public abstract record PageLayout(JobPageId Id, Box? MoreDivider, IReadOnlyList<AdvancedRow> Rows)
+{
+    /// <summary>Every box the page draws, by name.</summary>
+    public IEnumerable<(string Name, Box Box)> Boxes
+    {
+        get
+        {
+            foreach (var own in Own)
+            {
+                yield return own;
+            }
+
+            if (MoreDivider is { } divider)
+            {
+                yield return ("more divider", divider);
+            }
+
+            foreach (var row in Rows)
+            {
+                yield return ($"{row.Key} caption", row.Caption);
+                yield return ($"{row.Key} key", row.KeyLabel);
+                yield return ($"{row.Key} editor", row.Editor);
+                if (row.Unit is { } unit)
+                {
+                    yield return ($"{row.Key} unit", unit);
+                }
+
+                yield return ($"{row.Key} source", row.Source);
+                yield return ($"{row.Key} inherit", row.Inherit);
+                yield return ($"{row.Key} description", row.Description);
+            }
+        }
+    }
+
+    protected abstract IEnumerable<(string Name, Box Box)> Own { get; }
+}
+
+public sealed record FilesPageLayout(
+    Box NameCaption, Box Name, Box Enabled, Box FilesCaption, Box Files, Box Browse, Box FilesHint, Box Preview,
+    Box? MoreDivider, IReadOnlyList<AdvancedRow> Rows) : PageLayout(JobPageId.Files, MoreDivider, Rows)
+{
+    protected override IEnumerable<(string Name, Box Box)> Own =>
+    [
+        ("name caption", NameCaption), ("name", Name), ("enabled", Enabled), ("files caption", FilesCaption),
+        ("files", Files), ("browse", Browse), ("files hint", FilesHint), ("preview", Preview),
+    ];
+}
+
+public sealed record HowPageLayout(
+    IReadOnlyList<Box> How, Box HowHint,
+    Box? MoreDivider, IReadOnlyList<AdvancedRow> Rows) : PageLayout(JobPageId.How, MoreDivider, Rows)
+{
+    protected override IEnumerable<(string Name, Box Box)> Own =>
+        How.Select((box, i) => ($"how {i}", box)).Append(("how hint", HowHint));
+}
+
+public sealed record WhenPageLayout(
+    Box ScheduleCaption, Box Schedule, Box EarlyLead, Box MaxSize, Box WhenHint,
+    Box? MoreDivider, IReadOnlyList<AdvancedRow> Rows) : PageLayout(JobPageId.When, MoreDivider, Rows)
+{
+    protected override IEnumerable<(string Name, Box Box)> Own =>
+    [
+        ("schedule caption", ScheduleCaption), ("schedule", Schedule), ("early lead", EarlyLead),
+        ("maxsize", MaxSize), ("when hint", WhenHint),
+    ];
+}
+
+public sealed record KeepPageLayout(
+    Box KeepCaption, Box Rotate, Box KeepLead, Box MaxAge, Box KeepUnit,
+    Box? MoreDivider, IReadOnlyList<AdvancedRow> Rows) : PageLayout(JobPageId.Keep, MoreDivider, Rows)
+{
+    protected override IEnumerable<(string Name, Box Box)> Own =>
+    [
+        ("keep caption", KeepCaption), ("rotate", Rotate), ("keep lead", KeepLead), ("maxage", MaxAge), ("keep unit", KeepUnit),
+    ];
+}
+
+public sealed record CopiesPageLayout(
+    Box NamesCaption, Box Names, Box Compression, Box FolderCaption, Box OldDir, Box BrowseFolder, Box CreateOldDir,
+    Box? MoreDivider, IReadOnlyList<AdvancedRow> Rows) : PageLayout(JobPageId.Copies, MoreDivider, Rows)
+{
+    protected override IEnumerable<(string Name, Box Box)> Own =>
+    [
+        ("names caption", NamesCaption), ("names", Names), ("compression", Compression), ("folder caption", FolderCaption),
+        ("olddir", OldDir), ("browse folder", BrowseFolder), ("create olddir", CreateOldDir),
+    ];
+}
+
+/// <summary>A page that is nothing but rows: Before &amp; after, If things go wrong.</summary>
+public sealed record RowsPageLayout(JobPageId Id, IReadOnlyList<AdvancedRow> Rows) : PageLayout(Id, null, Rows)
+{
+    protected override IEnumerable<(string Name, Box Box)> Own => [];
+}
+
+/// <summary>The keys this build does not read, each with its Remove link.</summary>
+public sealed record OtherPageLayout(IReadOnlyList<ForeignRow> Foreign) : PageLayout(JobPageId.Other, null, [])
+{
+    protected override IEnumerable<(string Name, Box Box)> Own =>
+        Foreign.SelectMany(row => new[] { ($"{row.Key} text", row.Text), ($"{row.Key} remove", row.Remove) });
+}
+
+/// <summary>
+/// Where everything in the job editor goes.
 /// </summary>
 /// <remarks>
 /// <para>
-/// One window, one size: a header that names the job and its files, a body that is either the
-/// Basics view or the Advanced view, and the same status line, hint and buttons under both. The
-/// toggle between the views is a visibility flip, never a resize, so nothing has to be placed
-/// after the window has scaled.
-/// </para>
-/// <para>
-/// The Advanced view is taller than any screen, so its rows are laid out in a virtual area that
-/// a scrolling panel shows through <see cref="Viewport"/>. Fixed boxes are in client
-/// coordinates; <see cref="Content"/> boxes are in the content panel's.
+/// One window, one size: a menu of the pages down the left, the page's title and the page
+/// itself on the right, and under both the summary sentence, the status line and the buttons.
+/// Choosing a page is a visibility flip, never a resize, so nothing is placed after the window
+/// has scaled - and nothing scrolls, so a mouse wheel can never change a drop-down by accident.
 /// </para>
 /// <para>
 /// Pure arithmetic in logical pixels at 100 per cent; the window scales it once. Here rather
@@ -33,10 +133,10 @@ public sealed record ForeignRow(string Key, Box Text, Box Remove);
 /// </remarks>
 public sealed record EditorLayout
 {
-    public const int Width = 720;
+    public const int Width = 800;
     public const int Height = 576;
 
-    /// <summary>The height one Advanced row takes, description line included.</summary>
+    /// <summary>The height one typed row takes, description line included.</summary>
     public const int RowPitch = 48;
 
     /// <summary>The height a multi-line row takes.</summary>
@@ -44,80 +144,37 @@ public sealed record EditorLayout
 
     private const int Margin = 16;
     private const int Right = Width - Margin;
-    private const int CaptionWidth = 120;
-    private const int Editor = Margin + CaptionWidth + 4;
+    private const int MenuWidth = 150;
+    private const int BodyLeft = Margin + MenuWidth + 12;
+    private const int BodyWidth = Right - BodyLeft;
+    private const int CaptionWidth = 100;
+    private const int Field = BodyLeft + CaptionWidth + 4;
     private const int EditorHeight = 24;
     private const int CaptionHeight = 18;
     private const int ButtonWidth = 84;
     private const int ButtonHeight = 26;
-    private const int ScrollbarAllowance = 20;
+    private const int Gap = 10;
 
-    // ---- header, in both views -------------------------------------------------------------
+    // Rows under a divider: caption and key on the left, editor, unit, where the value comes
+    // from, the Inherit link at the right edge, and the description under the editor.
+    private const int RowCaption = 170;
+    private const int RowEditorX = BodyLeft + RowCaption + 8;
+    private const int RowEditorWidth = 180;
+    private const int RowUnitX = RowEditorX + RowEditorWidth + 8;
+    private const int RowSourceX = RowUnitX + 48;
+    private const int InheritWidth = 64;
+    private const int RowInheritX = Right - InheritWidth;
 
-    public required Box NameCaption { get; init; }
-    public required Box Name { get; init; }
-    public required Box Enabled { get; init; }
-    public required Box FilesCaption { get; init; }
-    public required Box Files { get; init; }
-    public required Box Browse { get; init; }
-    public required Box FilesHint { get; init; }
-    public required Box Preview { get; init; }
+    public required Box Menu { get; init; }
+    public required Box PageTitle { get; init; }
+    public required IReadOnlyList<PageLayout> Pages { get; init; }
 
-    // ---- the Basics body -------------------------------------------------------------------
-
-    public required Box HowCaption { get; init; }
-
-    /// <summary>The four answers to "how is the log taken away", top to bottom.</summary>
-    public required IReadOnlyList<Box> How { get; init; }
-
-    /// <summary>One line under the radios that follows the chosen answer.</summary>
-    public required Box HowHint { get; init; }
-    public required Box WhenCaption { get; init; }
-    public required Box Schedule { get; init; }
-    public required Box EarlyLead { get; init; }
-    public required Box MaxSize { get; init; }
-    public required Box WhenHint { get; init; }
-    public required Box KeepCaption { get; init; }
-    public required Box Rotate { get; init; }
-    public required Box KeepLead { get; init; }
-    public required Box MaxAge { get; init; }
-    public required Box KeepUnit { get; init; }
-    public required Box KeepHint { get; init; }
-    public required Box CopiesCaption { get; init; }
-    public required Box Names { get; init; }
-    public required Box Compression { get; init; }
-    public required Box FolderCaption { get; init; }
-    public required Box OldDir { get; init; }
-    public required Box BrowseFolder { get; init; }
-    public required Box CreateOldDir { get; init; }
+    /// <summary>The sentence that restates the whole job, under every page.</summary>
     public required Box Summary { get; init; }
-
-    // ---- the Advanced body -----------------------------------------------------------------
-
-    /// <summary>Where the scrolling panel sits, in client coordinates.</summary>
-    public required Box Viewport { get; init; }
-
-    public required IReadOnlyList<AdvancedSection> Sections { get; init; }
-
-    /// <summary>The heading over the foreign keys, or null when the file has none.</summary>
-    public Box? ForeignHeader { get; init; }
-
-    public required IReadOnlyList<ForeignRow> Foreign { get; init; }
-
-    /// <summary>The virtual area the rows are laid out in.</summary>
-    public required int ContentWidth { get; init; }
-
-    public required int ContentHeight { get; init; }
-
-    // ---- under both ------------------------------------------------------------------------
-
     public required Box Status { get; init; }
-    public required Box ButtonsHint { get; init; }
-    public required Box Toggle { get; init; }
 
     /// <summary>The preview of what a rotation of the saved job would do.</summary>
     public required Box WhatWouldHappen { get; init; }
-
     public required Box Check { get; init; }
     public required Box Save { get; init; }
     public required Box Cancel { get; init; }
@@ -125,29 +182,22 @@ public sealed record EditorLayout
     public int ClientWidth => Width;
     public int ClientHeight => Height;
 
-    /// <summary>Every box in client coordinates, by name: the header, the Basics body, the viewport and the chrome.</summary>
+    public FilesPageLayout Files => Pages.OfType<FilesPageLayout>().Single();
+    public HowPageLayout How => Pages.OfType<HowPageLayout>().Single();
+    public WhenPageLayout When => Pages.OfType<WhenPageLayout>().Single();
+    public KeepPageLayout Keep => Pages.OfType<KeepPageLayout>().Single();
+    public CopiesPageLayout Copies => Pages.OfType<CopiesPageLayout>().Single();
+    public OtherPageLayout? Other => Pages.OfType<OtherPageLayout>().SingleOrDefault();
+
+    /// <summary>The chrome every page shares, by name.</summary>
     public IEnumerable<(string Name, Box Box)> Fixed
     {
         get
         {
-            yield return ("name caption", NameCaption);
-            yield return ("name", Name);
-            yield return ("enabled", Enabled);
-            yield return ("files caption", FilesCaption);
-            yield return ("files", Files);
-            yield return ("browse", Browse);
-            yield return ("files hint", FilesHint);
-            yield return ("preview", Preview);
-
-            foreach (var basic in Basics)
-            {
-                yield return basic;
-            }
-
-            yield return ("viewport", Viewport);
+            yield return ("menu", Menu);
+            yield return ("page title", PageTitle);
+            yield return ("summary", Summary);
             yield return ("status", Status);
-            yield return ("buttons hint", ButtonsHint);
-            yield return ("toggle", Toggle);
             yield return ("what would happen", WhatWouldHappen);
             yield return ("check", Check);
             yield return ("save", Save);
@@ -155,175 +205,45 @@ public sealed record EditorLayout
         }
     }
 
-    /// <summary>The Basics body's boxes alone, which share the client area with the viewport by turns.</summary>
-    public IEnumerable<(string Name, Box Box)> Basics
+    /// <summary>Lays the window out for these pages and these foreign keys.</summary>
+    public static EditorLayout Compute(IReadOnlyList<JobPage> pages, IReadOnlyList<string> foreignKeys)
     {
-        get
-        {
-            yield return ("how caption", HowCaption);
-            for (var i = 0; i < How.Count; i++)
-            {
-                yield return ($"how {i}", How[i]);
-            }
-
-            yield return ("how hint", HowHint);
-            yield return ("when caption", WhenCaption);
-            yield return ("schedule", Schedule);
-            yield return ("early lead", EarlyLead);
-            yield return ("maxsize", MaxSize);
-            yield return ("when hint", WhenHint);
-            yield return ("keep caption", KeepCaption);
-            yield return ("rotate", Rotate);
-            yield return ("keep lead", KeepLead);
-            yield return ("maxage", MaxAge);
-            yield return ("keep unit", KeepUnit);
-            yield return ("keep hint", KeepHint);
-            yield return ("copies caption", CopiesCaption);
-            yield return ("names", Names);
-            yield return ("compression", Compression);
-            yield return ("folder caption", FolderCaption);
-            yield return ("olddir", OldDir);
-            yield return ("browse folder", BrowseFolder);
-            yield return ("create olddir", CreateOldDir);
-            yield return ("summary", Summary);
-        }
-    }
-
-    /// <summary>Every box in the content panel's coordinates, by name.</summary>
-    public IEnumerable<(string Name, Box Box)> Content
-    {
-        get
-        {
-            foreach (var section in Sections)
-            {
-                yield return ($"{section.Title} header", section.Header);
-
-                foreach (var row in section.Rows)
-                {
-                    yield return ($"{row.Key} caption", row.Caption);
-                    yield return ($"{row.Key} key", row.KeyLabel);
-                    yield return ($"{row.Key} editor", row.Editor);
-                    if (row.Unit is { } unit)
-                    {
-                        yield return ($"{row.Key} unit", unit);
-                    }
-
-                    yield return ($"{row.Key} source", row.Source);
-                    yield return ($"{row.Key} inherit", row.Inherit);
-                    yield return ($"{row.Key} description", row.Description);
-                }
-            }
-
-            if (ForeignHeader is { } header)
-            {
-                yield return ("foreign header", header);
-            }
-
-            foreach (var row in Foreign)
-            {
-                yield return ($"{row.Key} text", row.Text);
-                yield return ($"{row.Key} remove", row.Remove);
-            }
-        }
-    }
-
-    /// <summary>Lays the window out for these sections and these foreign keys.</summary>
-    public static EditorLayout Compute(IReadOnlyList<JobSection> sections, IReadOnlyList<string> foreignKeys)
-    {
-        const int HintWidth = Right - Editor;
-
-        // Header. The files box is the widest thing on the form and the Browse button sits at
-        // its right; the hint and the preview each take a line under it.
-        var name = new Box(Editor, 12, 240, EditorHeight);
-        var files = new Box(Editor, 44, 456, 44);
-        var browse = new Box(files.Right + 8, files.Y, Right - files.Right - 8, ButtonHeight);
-        var filesHint = new Box(Editor, files.Bottom + 4, HintWidth, CaptionHeight);
-        var preview = new Box(Editor, filesHint.Bottom, HintWidth, CaptionHeight);
-        var bodyTop = preview.Bottom + 8;
+        var pageTitle = new Box(BodyLeft, Margin, BodyWidth, 22);
+        var top = pageTitle.Bottom + Gap;
 
         // Chrome, from the bottom up, so the body is whatever is left.
         var cancel = new Box(Right - ButtonWidth, Height - Margin - ButtonHeight, ButtonWidth, ButtonHeight);
         var save = cancel with { X = cancel.X - 8 - ButtonWidth };
         var check = save with { X = save.X - 8 - ButtonWidth };
-        var toggle = new Box(Margin, cancel.Y + 4, 220, CaptionHeight);
         var whatWouldHappen = new Box(check.X - 8 - 150, cancel.Y, 150, ButtonHeight);
-        var buttonsHint = new Box(Margin, cancel.Y - 8 - 32, Right - Margin, 32);
-        var status = new Box(Margin, buttonsHint.Y - 8 - 34, Right - Margin, 34);
-        var bodyBottom = status.Y - 8;
+        var status = new Box(Margin, cancel.Y - 8 - 34, Right - Margin, 34);
+        var summary = new Box(Margin, status.Y - 6 - 36, Right - Margin, 36);
+        var bottom = summary.Y - Gap;
+        var menu = new Box(Margin, Margin, MenuWidth, bottom - Margin);
 
-        // Basics body: four answers to "how", and one hint that follows the chosen one.
-        var how = Enumerable.Range(0, 4).Select(i => new Box(Editor, bodyTop + (i * 20), HintWidth, 20)).ToArray();
-        var howHint = new Box(Editor + 18, how[^1].Bottom, HintWidth - 18, CaptionHeight);
+        var laidOut = new List<PageLayout>();
 
-        var schedule = new Box(Editor, howHint.Bottom + 8, 150, EditorHeight);
-        var earlyLead = new Box(schedule.Right + 8, schedule.Y + 4, 170, CaptionHeight);
-        var maxSize = new Box(earlyLead.Right + 4, schedule.Y, 80, EditorHeight);
-        var whenHint = new Box(Editor, schedule.Bottom + 4, HintWidth, CaptionHeight);
-
-        var rotate = new Box(Editor, whenHint.Bottom + 6, 56, EditorHeight);
-        var keepLead = new Box(rotate.Right + 8, rotate.Y + 4, 230, CaptionHeight);
-        var maxAge = new Box(keepLead.Right + 4, rotate.Y, 56, EditorHeight);
-        var keepUnit = new Box(maxAge.Right + 8, rotate.Y + 4, 60, CaptionHeight);
-        var keepHint = new Box(Editor, rotate.Bottom + 4, HintWidth, CaptionHeight);
-
-        var names = new Box(Editor, keepHint.Bottom + 6, 260, EditorHeight);
-        var compression = new Box(names.Right + 8, names.Y, 200, EditorHeight);
-
-        var oldDir = new Box(Editor, names.Bottom + 8, 300, EditorHeight);
-        var browseFolder = new Box(oldDir.Right + 8, oldDir.Y - 1, 96, ButtonHeight);
-        var createOldDir = new Box(browseFolder.Right + 8, oldDir.Y, Right - browseFolder.Right - 8, 22);
-
-        var summary = new Box(Editor, oldDir.Bottom + 8, HintWidth, bodyBottom - (oldDir.Bottom + 8));
-
-        // Advanced body: the viewport takes the whole body, and the rows are laid out inside it.
-        var viewport = new Box(Margin, bodyTop, Right - Margin, bodyBottom - bodyTop);
-        var contentWidth = viewport.Width - ScrollbarAllowance;
-        var (laidOut, foreignHeader, foreign, contentHeight) = LayOutContent(sections, foreignKeys, contentWidth);
+        foreach (var page in pages)
+        {
+            laidOut.Add(page.Id switch
+            {
+                JobPageId.Files => FilesPage(page, top),
+                JobPageId.How => HowPage(page, top),
+                JobPageId.When => WhenPage(page, top),
+                JobPageId.Keep => KeepPage(page, top),
+                JobPageId.Copies => CopiesPage(page, top),
+                JobPageId.Other => OtherPage(foreignKeys, top),
+                _ => new RowsPageLayout(page.Id, Rows(page.More, top).Rows),
+            });
+        }
 
         return new EditorLayout
         {
-            NameCaption = new Box(Margin, name.Y + 4, CaptionWidth, CaptionHeight),
-            Name = name,
-            Enabled = new Box(name.Right + 16, name.Y + 1, 120, 22),
-            FilesCaption = new Box(Margin, files.Y + 4, CaptionWidth, CaptionHeight),
-            Files = files,
-            Browse = browse,
-            FilesHint = filesHint,
-            Preview = preview,
-
-            HowCaption = new Box(Margin, how[0].Y + 2, CaptionWidth, CaptionHeight),
-            How = how,
-            HowHint = howHint,
-            WhenCaption = new Box(Margin, schedule.Y + 4, CaptionWidth, CaptionHeight),
-            Schedule = schedule,
-            EarlyLead = earlyLead,
-            MaxSize = maxSize,
-            WhenHint = whenHint,
-            KeepCaption = new Box(Margin, rotate.Y + 4, CaptionWidth, CaptionHeight),
-            Rotate = rotate,
-            KeepLead = keepLead,
-            MaxAge = maxAge,
-            KeepUnit = keepUnit,
-            KeepHint = keepHint,
-            CopiesCaption = new Box(Margin, names.Y + 4, CaptionWidth, CaptionHeight),
-            Names = names,
-            Compression = compression,
-            FolderCaption = new Box(Margin, oldDir.Y + 4, CaptionWidth, CaptionHeight),
-            OldDir = oldDir,
-            BrowseFolder = browseFolder,
-            CreateOldDir = createOldDir,
+            Menu = menu,
+            PageTitle = pageTitle,
+            Pages = laidOut,
             Summary = summary,
-
-            Viewport = viewport,
-            Sections = laidOut,
-            ForeignHeader = foreignHeader,
-            Foreign = foreign,
-            ContentWidth = contentWidth,
-            ContentHeight = contentHeight,
-
             Status = status,
-            ButtonsHint = buttonsHint,
-            Toggle = toggle,
             WhatWouldHappen = whatWouldHappen,
             Check = check,
             Save = save,
@@ -331,70 +251,160 @@ public sealed record EditorLayout
         };
     }
 
-    private static (IReadOnlyList<AdvancedSection>, Box?, IReadOnlyList<ForeignRow>, int) LayOutContent(
-        IReadOnlyList<JobSection> sections, IReadOnlyList<string> foreignKeys, int contentWidth)
+    private static FilesPageLayout FilesPage(JobPage page, int top)
     {
-        const int Left = 8;
-        const int Caption = 180;
-        const int EditorX = Left + Caption + 8;
-        const int EditorWidth = 200;
-        const int UnitX = EditorX + EditorWidth + 8;
-        const int SourceX = UnitX + 48;
-        const int InheritWidth = 64;
-        var right = contentWidth - Left;
-        var inheritX = right - InheritWidth;
+        var name = new Box(Field, top, 240, EditorHeight);
+        var enabled = new Box(name.Right + 16, top + 1, 120, 22);
 
-        var y = 8;
-        var laidOut = new List<AdvancedSection>();
+        // The files box is the one thing on the form that deserves height: one line per file,
+        // and a job that looks after a folder of services has a dozen.
+        var filesY = name.Bottom + Gap;
+        var browse = new Box(Right - ButtonWidth, filesY, ButtonWidth, ButtonHeight);
+        var files = new Box(Field, filesY, browse.X - 8 - Field, 150);
+        var filesHint = new Box(Field, files.Bottom + 4, Right - Field, CaptionHeight);
+        var preview = new Box(Field, filesHint.Bottom, Right - Field, CaptionHeight);
 
-        foreach (var section in sections)
-        {
-            var header = new Box(Left, y, right - Left, 20);
-            y = header.Bottom + 6;
+        var (divider, rows) = More(page, preview.Bottom + Gap);
 
-            var rows = new List<AdvancedRow>();
+        return new FilesPageLayout(
+            NameCaption: new Box(BodyLeft, top + 4, CaptionWidth, CaptionHeight),
+            Name: name,
+            Enabled: enabled,
+            FilesCaption: new Box(BodyLeft, filesY + 4, CaptionWidth, CaptionHeight),
+            Files: files,
+            Browse: browse,
+            FilesHint: filesHint,
+            Preview: preview,
+            MoreDivider: divider,
+            Rows: rows);
+    }
 
-            foreach (var field in section.Fields)
-            {
-                var shown = JobEditorModel.Presentation(field);
-                var lines = shown.Editor == FieldEditor.Lines;
-                var editor = new Box(EditorX, y, EditorWidth, lines ? 64 : EditorHeight);
+    private static HowPageLayout HowPage(JobPage page, int top)
+    {
+        // Five answers at a comfortable pitch, and a note that has two whole lines to itself,
+        // because the longest of them was cut off mid-sentence on one.
+        var how = Enumerable.Range(0, 5).Select(i => new Box(BodyLeft, top + (i * 24), BodyWidth, 22)).ToArray();
+        var hint = new Box(BodyLeft + 18, how[^1].Bottom + 4, BodyWidth - 18, 36);
 
-                rows.Add(new AdvancedRow(
-                    field.Key,
-                    Caption: new Box(Left, y + 4, Caption, CaptionHeight),
-                    KeyLabel: new Box(Left, y + 26, Caption, 14),
-                    Editor: editor,
-                    Unit: shown.Unit is null ? null : new Box(UnitX, y + 4, 40, CaptionHeight),
-                    Source: new Box(SourceX, y + 4, inheritX - 8 - SourceX, CaptionHeight),
-                    Inherit: new Box(inheritX, y + 4, InheritWidth, CaptionHeight),
-                    Description: new Box(EditorX, editor.Bottom + 2, right - EditorX, 16)));
+        var (divider, rows) = More(page, hint.Bottom + Gap);
 
-                y += lines ? LinesPitch : RowPitch;
-            }
+        return new HowPageLayout(how, hint, divider, rows);
+    }
 
-            laidOut.Add(new AdvancedSection(section.Title, header, rows));
-            y += 8;
-        }
+    private static WhenPageLayout WhenPage(JobPage page, int top)
+    {
+        var schedule = new Box(Field, top, 150, EditorHeight);
+        var earlyLead = new Box(schedule.Right + 8, top + 4, 170, CaptionHeight);
+        var maxSize = new Box(earlyLead.Right + 4, top, 80, EditorHeight);
+        var whenHint = new Box(Field, schedule.Bottom + 4, Right - Field, CaptionHeight);
 
-        Box? foreignHeader = null;
+        var (divider, rows) = More(page, whenHint.Bottom + Gap);
+
+        return new WhenPageLayout(
+            ScheduleCaption: new Box(BodyLeft, top + 4, CaptionWidth, CaptionHeight),
+            Schedule: schedule,
+            EarlyLead: earlyLead,
+            MaxSize: maxSize,
+            WhenHint: whenHint,
+            MoreDivider: divider,
+            Rows: rows);
+    }
+
+    private static KeepPageLayout KeepPage(JobPage page, int top)
+    {
+        var rotate = new Box(Field, top, 56, EditorHeight);
+        var keepLead = new Box(rotate.Right + 8, top + 4, 204, CaptionHeight);
+        var maxAge = new Box(keepLead.Right + 4, top, 56, EditorHeight);
+        var keepUnit = new Box(maxAge.Right + 8, top + 4, 60, CaptionHeight);
+
+        var (divider, rows) = More(page, rotate.Bottom + Gap);
+
+        return new KeepPageLayout(
+            KeepCaption: new Box(BodyLeft, top + 4, CaptionWidth, CaptionHeight),
+            Rotate: rotate,
+            KeepLead: keepLead,
+            MaxAge: maxAge,
+            KeepUnit: keepUnit,
+            MoreDivider: divider,
+            Rows: rows);
+    }
+
+    private static CopiesPageLayout CopiesPage(JobPage page, int top)
+    {
+        var names = new Box(Field, top, 240, EditorHeight);
+        var compression = new Box(names.Right + 8, top, 200, EditorHeight);
+
+        var folderY = names.Bottom + Gap;
+        var oldDir = new Box(Field, folderY, 250, EditorHeight);
+        var browseFolder = new Box(oldDir.Right + 8, folderY - 1, 96, ButtonHeight);
+        var createOldDir = new Box(browseFolder.Right + 8, folderY, Right - browseFolder.Right - 8, 22);
+
+        var (divider, rows) = More(page, oldDir.Bottom + Gap);
+
+        return new CopiesPageLayout(
+            NamesCaption: new Box(BodyLeft, top + 4, CaptionWidth, CaptionHeight),
+            Names: names,
+            Compression: compression,
+            FolderCaption: new Box(BodyLeft, folderY + 4, CaptionWidth, CaptionHeight),
+            OldDir: oldDir,
+            BrowseFolder: browseFolder,
+            CreateOldDir: createOldDir,
+            MoreDivider: divider,
+            Rows: rows);
+    }
+
+    private static OtherPageLayout OtherPage(IReadOnlyList<string> foreignKeys, int top)
+    {
+        var y = top;
         var foreign = new List<ForeignRow>();
 
-        if (foreignKeys.Count > 0)
+        foreach (var key in foreignKeys)
         {
-            foreignHeader = new Box(Left, y, right - Left, 20);
-            y = foreignHeader.Value.Bottom + 6;
-
-            foreach (var key in foreignKeys)
-            {
-                foreign.Add(new ForeignRow(
-                    key,
-                    Text: new Box(Left, y, inheritX - 8 - Left, 20),
-                    Remove: new Box(inheritX, y, InheritWidth, 20)));
-                y += 26;
-            }
+            foreign.Add(new ForeignRow(
+                key,
+                Text: new Box(BodyLeft, y, RowInheritX - 8 - BodyLeft, 20),
+                Remove: new Box(RowInheritX, y, InheritWidth, 20)));
+            y += 26;
         }
 
-        return (laidOut, foreignHeader, foreign, y + 8);
+        return new OtherPageLayout(foreign);
+    }
+
+    /// <summary>The divider and the rows under a page's own controls; no divider when there are no rows.</summary>
+    private static (Box? Divider, IReadOnlyList<AdvancedRow> Rows) More(JobPage page, int y)
+    {
+        if (page.More.Count == 0)
+        {
+            return (null, []);
+        }
+
+        var divider = new Box(BodyLeft, y, BodyWidth, 20);
+        return (divider, Rows(page.More, divider.Bottom + 8).Rows);
+    }
+
+    private static (IReadOnlyList<AdvancedRow> Rows, int Bottom) Rows(IReadOnlyList<JobField> fields, int y)
+    {
+        var rows = new List<AdvancedRow>();
+
+        foreach (var field in fields)
+        {
+            var shown = JobEditorModel.Presentation(field);
+            var lines = shown.Editor == FieldEditor.Lines;
+            var editor = new Box(RowEditorX, y, RowEditorWidth, lines ? 64 : EditorHeight);
+
+            rows.Add(new AdvancedRow(
+                field.Key,
+                Caption: new Box(BodyLeft, y + 4, RowCaption, CaptionHeight),
+                KeyLabel: new Box(BodyLeft, y + 26, RowCaption, 14),
+                Editor: editor,
+                Unit: shown.Unit is null ? null : new Box(RowUnitX, y + 4, 40, CaptionHeight),
+                Source: new Box(RowSourceX, y + 4, RowInheritX - 8 - RowSourceX, CaptionHeight),
+                Inherit: new Box(RowInheritX, y + 4, InheritWidth, CaptionHeight),
+                Description: new Box(RowEditorX, editor.Bottom + 2, Right - RowEditorX, 16)));
+
+            y += lines ? LinesPitch : RowPitch;
+        }
+
+        return (rows, y);
     }
 }
