@@ -124,6 +124,26 @@ public sealed class PlanExecutor(
         // rotates into a slot that really is free.
         var stillThere = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
 
+        // The other half: every name a failed operation was meant to produce and did not, with why.
+        // An operation reading one of them is not attempted. With compression on, a live log whose
+        // rename the writer's sharing refused left no app.log.1, and the compress of app.log.1 then
+        // ran anyway and failed as a second error - "the file no longer exists", about a file that
+        // never did - for one locked log. It is recorded as skipped, with the reason, instead; and
+        // what it would have produced is never produced either, so the chain behind it stops too.
+        var neverProduced = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+
+        void NotProduced(PlannedOp failed)
+        {
+            // Create is exempt, as it is below: it recreates the live log in place, and nothing
+            // later in a plan reads that path.
+            if (failed.Destination is { } target && failed.Action != PlannedAction.Create)
+            {
+                neverProduced.TryAdd(target,
+                    $"not attempted: '{WinPath.FileName(target)}' was never produced, because the "
+                    + $"{failed.Action.ToString().ToLowerInvariant()} of '{WinPath.FileName(failed.Source)}' failed");
+            }
+        }
+
         foreach (var op in plan.Operations)
         {
             if (op.Action == PlannedAction.Skip)
@@ -140,6 +160,19 @@ public sealed class PlanExecutor(
                 continue;
             }
 
+            if (neverProduced.TryGetValue(op.Source, out var because))
+            {
+                skipped++;
+
+                if (op.Destination is { } onward && op.Action != PlannedAction.Create)
+                {
+                    neverProduced.TryAdd(onward, because);
+                }
+
+                Emit(plan, op, Phase.Apply, OpResult.Skipped, null, 0, reason: because);
+                continue;
+            }
+
             // Re-check immediately before acting, not only at plan time. The plan may be
             // seconds old, and this is the last moment before something is destroyed.
             //
@@ -153,6 +186,7 @@ public sealed class PlanExecutor(
             if (Refused(op.Source) || (op.Destination is { } to && Refused(to)))
             {
                 stillThere.Add(op.Source);
+                NotProduced(op);
                 continue;
             }
 
@@ -164,6 +198,7 @@ public sealed class PlanExecutor(
             {
                 failed++;
                 stillThere.Add(op.Source);
+                NotProduced(op);
                 var blocked = Diagnose.WouldOverwrite(op, plan.JobName);
                 errors.Add(blocked.Message);
                 diagnostics.Add(blocked);
@@ -234,6 +269,7 @@ public sealed class PlanExecutor(
             {
                 failed++;
                 stillThere.Add(op.Source);
+                NotProduced(op);
                 var failure = Diagnose.Failure(op.Action, op.Source, e, plan.JobName, op.Destination);
                 errors.Add(failure.Message);
                 diagnostics.Add(failure);
@@ -344,7 +380,7 @@ public sealed class PlanExecutor(
 
     private void Emit(
         JobPlan plan, PlannedOp op, string phase, string? result,
-        string? error, long ms, long? bytesAfter = null) =>
+        string? error, long ms, long? bytesAfter = null, string? reason = null) =>
         journal.Write(new CliEvent
         {
             Ts = string.Empty,
@@ -373,7 +409,7 @@ public sealed class PlanExecutor(
             // ever written. It is also the only way to tell afterwards what lockstrategy = "auto"
             // actually resolved to, which is now a question worth being able to answer.
             Strategy = op.Strategy?.ToString().ToLowerInvariant(),
-            Reason = op.Reason,
+            Reason = reason ?? op.Reason,
             Error = error,
             Ms = ms == 0 ? null : ms,
         });

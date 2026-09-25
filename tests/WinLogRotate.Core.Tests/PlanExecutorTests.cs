@@ -158,7 +158,14 @@ public sealed class PlanExecutorTests : IDisposable
         files.Exists(@"C:\logs\app.log.1").ShouldBeTrue("yesterday's archive is untouched");
         files.Exists(@"C:\logs\app.log").ShouldBeTrue("the live log stayed where it was");
         result.Rotated.ShouldBeEmpty("nothing moved, so nothing is due again tomorrow");
-        result.Failed.ShouldBe(3);
+
+        // The compress, and the live rename it left nowhere to land. The shift between them moves
+        // the archive the compress never produced, so it is not attempted - it used to be, and
+        // failed as a third error about "a file that no longer exists" for one full disk.
+        result.Failed.ShouldBe(2);
+        _journal.Entries.ShouldContain(e =>
+            e.Operation == Op.Rename && e.Phase == Phase.Apply && e.Result == OpResult.Skipped
+            && e.Src == @"C:\logs\app.log.1.zip");
     }
 
     private JobPlan PlanDeleting(params string[] names)
@@ -460,4 +467,28 @@ public sealed class PlanExecutorTests : IDisposable
             .Execute(PlanDeleting("a.log.gz"), Job(), dryRun: false)
             .Completed.ShouldBe(1);
     }
+}
+
+/// <summary>An operation that was not attempted reads as not done.</summary>
+/// <remarks>
+/// Every applied event that did not fail read "did": a compress the executor skipped because its
+/// archive was never produced would have read "did compress", and a notification channel the
+/// breaker suppressed already read "did run hook".
+/// </remarks>
+public sealed class SkippedEventTextTests
+{
+    [Fact]
+    public void AnOperationNotAttemptedReadsAsNotDone() =>
+        CliEventText.Describe(new CliEvent
+        {
+            Ts = "2026-09-25T03:00:00Z",
+            Run = "r",
+            Operation = Op.Compress,
+            Phase = Phase.Apply,
+            Result = OpResult.Skipped,
+            Job = "app",
+            Src = @"C:\logs\app.log.1",
+            Dst = @"C:\logs\app.log.1.zip",
+            Reason = "not attempted",
+        }).ShouldBe(@"  [app] did not compress C:\logs\app.log.1 -> C:\logs\app.log.1.zip  (not attempted)");
 }

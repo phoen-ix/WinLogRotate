@@ -200,6 +200,28 @@ public sealed class RotationOutcomeTests : IDisposable
         state.Get(Live).ShouldNotBeNull().LastRotated.ShouldBe(Now.AddDays(-2), "the clock advances only for a real move");
     }
 
+    /// <summary>
+    /// A live log that could not be moved is one failure, not one per operation behind it.
+    /// </summary>
+    /// <remarks>
+    /// With compression on - the default - the plan renames the log to <c>app.log.1</c> and then
+    /// compresses <c>app.log.1</c>. A rename the writer's sharing refused left nothing to
+    /// compress, and the compress was attempted anyway and reported as a second failure: "the
+    /// file no longer exists", about a file that never existed, for one locked log.
+    /// </remarks>
+    [Fact]
+    public void ALogThatCouldNotBeMovedIsOneFailure()
+    {
+        var files = new FakeFiles().Add(Live, bytes: 100);
+        var applier = new FakeApplier(files).Fail(op => op.IsLiveRotation);
+
+        var report = Run(Job(compress: true), files, applier, State());
+
+        report.Failed.ShouldBe(1);
+        report.Diagnostics.ShouldHaveSingleItem().Message.ShouldContain("held by another process");
+        applier.Attempted.ShouldNotContain(op => op.Action == PlannedAction.Compress, "there was nothing to compress");
+    }
+
     /// <summary>A shifted archive is not a log and gets no rotation clock of its own.</summary>
     /// <remarks>
     /// Every completed rename used to become a state row with <c>LastRotated = now</c>, refreshed

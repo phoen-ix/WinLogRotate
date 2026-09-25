@@ -57,16 +57,18 @@ public static class CliEventText
     /// where this one says "did delete". That is the shape of defect the previous milestone spent
     /// itself removing; one rendering with two entry points is not.
     /// <para>
-    /// Three states, not two. While the only events reaching a sink were the notification
+    /// Four states, not two. While the only events reaching a sink were the notification
     /// phase's, "would" in the plan phase and "did" otherwise was true; it is not true of an
     /// operation that threw, which was rendered "did delete C:\logs\app.log" with the truth
-    /// left to a diagnostic printed underneath it.
+    /// left to a diagnostic printed underneath it - nor of one that was not attempted at all: a
+    /// compress whose archive was never produced, or a channel the breaker suppressed, read "did".
     /// </para>
     /// </remarks>
     public static string Action(CliEvent e)
     {
         var verb = e.Result == OpResult.Failed ? "failed to"
             : e.Phase == Phase.Plan ? "would"
+            : e.Result == OpResult.Skipped ? "did not"
             : "did";
 
         return e.Operation switch
