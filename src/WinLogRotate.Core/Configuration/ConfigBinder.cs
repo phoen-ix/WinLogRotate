@@ -23,6 +23,7 @@ public static class ConfigBinder
     {
         ReportSyntaxErrors(file, diagnostics);
         CheckSchema(file, diagnostics);
+        ReportUnknownRoot(file, diagnostics);
 
         var table = FindTable(file.Document, "defaults");
         if (table is null)
@@ -82,6 +83,157 @@ public static class ConfigBinder
         }
     }
 
+    /// <summary>The tables config.toml is read for, by their one-part name.</summary>
+    private static readonly string[] RootTables = ["defaults", "notify", "journal", "host"];
+
+    /// <summary>The kinds a <c>[notify.KIND.NAME]</c> provider table may have.</summary>
+    private static readonly string[] ProviderKinds = ["email", "pushover", "webhook"];
+
+    /// <summary>
+    /// Reports what config.toml says outside every table this product reads.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// A table name was never checked. <c>[defualts]</c> took every default in it along, silently:
+    /// a <c>rotate = 30</c> there became 7 and the next run deleted generations 8 to 30 - the
+    /// outcome <c>ConfigLoader</c> refuses to quarantine this file over. A key above every table
+    /// went the same way, and <c>rotate = 30</c> is what somebody who copied it out of a job file
+    /// writes there.
+    /// </para>
+    /// <para>
+    /// Warnings, as an unknown key in <c>[notify]</c> or <c>[host]</c> is. An array of
+    /// <c>[[notify.*]]</c> tables is left alone here: <see cref="BindProviders"/> refuses it as an
+    /// error of its own, and one line said twice reads like two problems.
+    /// </para>
+    /// </remarks>
+    private static void ReportUnknownRoot(TomlFile file, DiagnosticBag d)
+    {
+        foreach (var kv in file.Document.KeyValues)
+        {
+            var key = KeyName(kv);
+
+            if (key.Equals("schema", StringComparison.OrdinalIgnoreCase))
+            {
+                continue;
+            }
+
+            d.Warn(file.Path, DiagnosticCode.ConfigInvalid,
+                $"'{key}' is not a setting at the top of config.toml, and is ignored.",
+                LineOf(kv), ColumnOf(kv),
+                remedy: DefaultsKeys.Contains(key, StringComparer.OrdinalIgnoreCase)
+                    ? "Put it under [defaults] to apply it to every job."
+                    : "Only schema goes above the tables; config.toml reads [defaults], [notify], [journal] and [host].");
+        }
+
+        foreach (var table in file.Document.Tables)
+        {
+            var parts = KeyParts(table);
+
+            if (IsReadTable(parts)
+                || (table is TableArraySyntax && parts is [var first, ..]
+                    && first.Equals("notify", StringComparison.OrdinalIgnoreCase)))
+            {
+                continue;
+            }
+
+            var header = string.Join('.', parts);
+
+            d.Warn(file.Path, DiagnosticCode.ConfigInvalid,
+                $"[{header}] is not a table config.toml reads, and is ignored.",
+                LineOf(table), ColumnOf(table),
+                remedy: parts switch
+                {
+                    [var n, var kind] when n.Equals("notify", StringComparison.OrdinalIgnoreCase)
+                        => $"A provider has a name: [notify.{kind}.a-name].",
+                    [var n, ..] when n.Equals("notify", StringComparison.OrdinalIgnoreCase)
+                        => "Providers are [notify.email.NAME], [notify.pushover.NAME] or [notify.webhook.NAME].",
+                    [var one] when Nearest(one, RootTables) is { } near => $"Did you mean [{near}]?",
+                    _ => "config.toml reads [defaults], [notify], [journal] and [host].",
+                });
+        }
+    }
+
+    /// <summary>Whether the binder reads a table with this header.</summary>
+    private static bool IsReadTable(string[] parts) => parts switch
+    {
+        [var one] => RootTables.Contains(one, StringComparer.OrdinalIgnoreCase),
+        [var n, var kind, _] => n.Equals("notify", StringComparison.OrdinalIgnoreCase)
+                                && ProviderKinds.Contains(kind, StringComparer.OrdinalIgnoreCase),
+        _ => false,
+    };
+
+    /// <summary>
+    /// Reports a key in <paramref name="table"/> that is not one of <paramref name="known"/>.
+    /// </summary>
+    /// <remarks>
+    /// The shape <c>[notify]</c> and <c>[host]</c> already report in, for the tables that did not:
+    /// a mistyped <c>retian</c> in <c>[journal]</c>, or <c>hots</c> on a relay, was read by nothing
+    /// and said by nothing.
+    /// </remarks>
+    private static void ReportUnknownKeys(
+        TableSyntaxBase table, IReadOnlyList<string> known, string tableName, string code, string file, DiagnosticBag d)
+    {
+        foreach (var kv in table.Items.OfType<KeyValueSyntax>())
+        {
+            var key = KeyName(kv);
+
+            if (known.Contains(key, StringComparer.OrdinalIgnoreCase))
+            {
+                continue;
+            }
+
+            d.Warn(file, code,
+                $"'{key}' is not a {tableName} setting, and is ignored.",
+                LineOf(kv), ColumnOf(kv),
+                remedy: Nearest(key, known) is { } near
+                    ? $"Did you mean '{near}'?"
+                    : $"Valid settings: {string.Join(", ", known)}.");
+        }
+    }
+
+    /// <summary>
+    /// The one candidate a single slip away from <paramref name="word"/>, or null.
+    /// </summary>
+    /// <remarks>
+    /// One insertion, deletion, substitution or swap of neighbours - the swap is what
+    /// <c>defualts</c> and <c>retian</c> are, and it is the commonest slip there is. Only a unique
+    /// answer is offered; two equally near is a guess.
+    /// </remarks>
+    private static string? Nearest(string word, IReadOnlyList<string> candidates)
+    {
+        var near = candidates.Where(c => OneSlip(word.ToLowerInvariant(), c.ToLowerInvariant())).ToArray();
+        return near.Length == 1 ? near[0] : null;
+    }
+
+    private static bool OneSlip(string a, string b)
+    {
+        if (a == b || Math.Abs(a.Length - b.Length) > 1)
+        {
+            return false;
+        }
+
+        var i = 0;
+        while (i < a.Length && i < b.Length && a[i] == b[i])
+        {
+            i++;
+        }
+
+        // A swap of neighbours: ab -> ba, and the rest identical.
+        if (a.Length == b.Length && i + 1 < a.Length
+            && a[i] == b[i + 1] && a[i + 1] == b[i] && a[(i + 2)..] == b[(i + 2)..])
+        {
+            return true;
+        }
+
+        // Otherwise one character differs, is extra, or is missing, and the tails agree.
+        return a.Length == b.Length ? a[(i + 1)..] == b[(i + 1)..]
+            : a.Length > b.Length ? a[(i + 1)..] == b[i..]
+            : a[i..] == b[(i + 1)..];
+    }
+
+    /// <summary>The keys <c>[journal]</c> reads.</summary>
+    private static readonly string[] JournalKeys = ["enabled", "retain", "compress", "maxsize", "notify"];
+
     /// <summary>Binds the <c>[journal]</c> table from <c>config.toml</c>.</summary>
     public static JournalSettings BindJournal(TomlFile file, DiagnosticBag diagnostics)
     {
@@ -90,6 +242,8 @@ public static class ConfigBinder
         {
             return JournalSettings.Default;
         }
+
+        ReportUnknownKeys(table, JournalKeys, "[journal]", DiagnosticCode.ConfigInvalid, file.Path, diagnostics);
 
         var defaults = JournalSettings.Default;
 
@@ -349,6 +503,8 @@ public static class ConfigBinder
     private static NotifyProvider BindProvider(
         TableSyntaxBase table, NotifyProviderKind kind, string name, string file, DiagnosticBag d)
     {
+        ReportUnknownKeys(table, ProviderKeys(kind), $"[notify.{name}]", DiagnosticCode.NotifyMisconfigured, file, d);
+
         var provider = new NotifyProvider
         {
             Name = name,
@@ -392,6 +548,18 @@ public static class ConfigBinder
             },
         };
     }
+
+    /// <summary>The keys a provider of this kind reads - the ones <see cref="BindProvider"/> asks for.</summary>
+    private static string[] ProviderKeys(NotifyProviderKind kind) => kind switch
+    {
+        NotifyProviderKind.Email =>
+        [
+            "enabled", "host", "port", "auth", "tls", "delivery", "pickup_directory",
+            "from", "to", "username", "password", "subject_prefix",
+        ],
+        NotifyProviderKind.Pushover => ["enabled", "token", "user_key", "priority"],
+        _ => ["enabled", "url", "method", "content_type", "body", "max_message"],
+    };
 
     /// <summary>
     /// The webhook's <c>method</c>, or POST with a warning when what was written is not one.
@@ -814,9 +982,15 @@ public static class ConfigBinder
         }
     }
 
+    /// <summary>The top-level table called <paramref name="name"/>, by its parsed header.</summary>
+    /// <remarks>
+    /// By <see cref="KeyParts"/> rather than by the header's text, which is the reading
+    /// <see cref="FindTablesUnder"/> and <see cref="ReportUnknownRoot"/> use: compared as text,
+    /// <c>["journal"]</c> - the same table as <c>[journal]</c> in TOML - was read by nothing.
+    /// </remarks>
     private static TableSyntaxBase? FindTable(DocumentSyntax doc, string name) =>
         doc.Tables.FirstOrDefault(t =>
-            string.Equals(t.Name?.ToString().Trim(), name, StringComparison.OrdinalIgnoreCase));
+            KeyParts(t) is [var only] && string.Equals(only, name, StringComparison.OrdinalIgnoreCase));
 
     /// <summary>
     /// The dotted parts of a table header, taken from the syntax tree rather than by splitting
