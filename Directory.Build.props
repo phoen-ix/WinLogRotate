@@ -20,9 +20,9 @@
     <Copyright>Copyright (c) 2026 phoen-ix</Copyright>
     <PackageLicenseExpression>MIT</PackageLicenseExpression>
 
-    <!-- Nothing here is localized yet; every user-facing string goes through the
-         Strings resource layer so adding a language later is a translation job,
-         not a refactor. Until then, don't carry satellite assemblies around. -->
+    <!-- Nothing here is localized, and there is no resource layer yet: user-facing strings
+         are written where they are used. Until a language is added, don't carry satellite
+         assemblies around. -->
     <SatelliteResourceLanguages>en</SatelliteResourceLanguages>
 
     <!-- Lets the Windows-desktop (WinForms) project restore and type-check on a Linux

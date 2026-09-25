@@ -177,6 +177,26 @@ public sealed class HostUseTests
         d.Remedy.ShouldNotBeNull().ShouldContain("24-hour");
     }
 
+    /// <summary>
+    /// A [host] table added to a CRLF config.toml is written in CRLF.
+    /// </summary>
+    /// <remarks>
+    /// The installer seeds the file with CRLF, and every install older than the table has one
+    /// without it. The table went in with "\n" inside and Environment.NewLine around it, so the
+    /// file came out with both - which TomlEditor, reading the ending from the file, never does.
+    /// </remarks>
+    [Fact]
+    public void AnAddedTableKeepsTheFilesLineEndings()
+    {
+        var dir = ConfigDir("schema = 1\r\n\r\n[defaults]\r\nrotate = 7\r\n");
+
+        Cli.Commands.HostCommand.Remember(InstallPaths.Resolve(dir), new TimeSpan(22, 30, 0)).ShouldBeNull();
+
+        var written = File.ReadAllText(Path.Combine(dir, "config.toml"));
+        written.ShouldEndWith("[host]\r\ntime = \"22:30\"\r\n");
+        written.Replace("\r\n", string.Empty, StringComparison.Ordinal).ShouldNotContain('\n', "every line ends the file's own way");
+    }
+
     /// <summary>A run model is a name: <c>host use 0</c> is refused, not read as <c>none</c>.</summary>
     /// <remarks>
     /// <c>Enum.TryParse</c> reads a number as the member with that value, so <c>0</c> meant

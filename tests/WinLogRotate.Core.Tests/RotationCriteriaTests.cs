@@ -289,6 +289,27 @@ public class RotationCriteriaTests
     }
 
     /// <summary>
+    /// A clock an older build wrote in UTC is read on the machine's own calendar.
+    /// </summary>
+    /// <remarks>
+    /// Builds before v0.17 kept every clock in UTC. The calendar questions are asked of date
+    /// fields, and those were read in whatever offset the clock was stored with - so at UTC+10 a
+    /// monthly rotation at 03:00 on 1 September, written as 17:00 on 31 August, read as August's,
+    /// and September's rotation happened again the next night. Converting the clock into the
+    /// machine's zone first is what makes an instant mean the same day it did when it was written.
+    /// </remarks>
+    [Fact]
+    public void AClockWrittenInUtcIsReadOnTheMachinesCalendar()
+    {
+        var zone = TimeZoneInfo.CreateCustomTimeZone("Test+10", TimeSpan.FromHours(10), "Test+10", "Test+10");
+        var last = new DateTimeOffset(2026, 8, 31, 17, 0, 0, TimeSpan.Zero);
+        var now = new DateTimeOffset(2026, 9, 2, 3, 0, 0, TimeSpan.FromHours(10));
+
+        RotationCriteria.Evaluate(Job(Schedule.Monthly), last, now, 5000, now, force: false, zone: zone)
+            .Due.ShouldBeFalse("September had its rotation on the 1st, local time");
+    }
+
+    /// <summary>
     /// A VM restored from a snapshot, or an NTP correction, can leave a "last rotated" stamp
     /// in the future. Treating that as due is the right call: parking until that date arrives
     /// would silently stop rotating for however long the clock was wrong.

@@ -294,7 +294,8 @@ public sealed record HostSettings
 /// deletes your logs at one megabyte and keeps nothing. That is defensible for a config
 /// language nobody writes bare, and indefensible behind a GUI where a half-filled form is a
 /// normal intermediate state. The divergence is documented in
-/// <c>docs/logrotate-compatibility.md</c> and restated as a comment in every generated config.
+/// <c>docs/logrotate-compatibility.md</c> and restated as a comment in the config.toml the
+/// installer seeds.
 /// </remarks>
 public static class BuiltInDefaults
 {

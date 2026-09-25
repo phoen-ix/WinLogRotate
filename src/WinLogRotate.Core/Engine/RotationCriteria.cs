@@ -78,6 +78,13 @@ public static class RotationCriteria
     /// <param name="lastRotated">The log's clock, or null for a log seen for the first time.</param>
     /// <param name="force">Rotate whatever the calendar says; the three suppressions still apply.</param>
     /// <param name="catchup">Rotate a log seen for the first time; otherwise the schedule decides.</param>
+    /// <param name="zone">
+    /// The machine's time zone, which <paramref name="now"/> is in. The clock is converted into it
+    /// before any calendar field is read, because a clock keeps the offset it was written with:
+    /// builds before v0.17 wrote UTC, and at UTC+10 a rotation at 03:00 on 1 September was stored
+    /// as 31 August - read as August's, so September rotated again the next night. Null reads the
+    /// clock as stored, which is what a caller with no zone to offer can do.
+    /// </param>
     public static DueVerdict Evaluate(
         EffectiveJob job,
         DateTimeOffset? lastRotated,
@@ -85,8 +92,14 @@ public static class RotationCriteria
         long fileSize,
         DateTimeOffset fileModified,
         bool force,
-        bool catchup = false)
+        bool catchup = false,
+        TimeZoneInfo? zone = null)
     {
+        if (lastRotated is { } stored && zone is not null)
+        {
+            lastRotated = TimeZoneInfo.ConvertTime(stored, zone);
+        }
+
         // A log seen for the first time gets a baseline and nothing else, matching logrotate.
         // Anyone who has deleted a state file and wondered why nothing rotated that night has
         // met this rule. Nothing else is asked - not even maxsize - because the first night after

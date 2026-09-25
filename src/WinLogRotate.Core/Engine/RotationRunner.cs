@@ -878,7 +878,7 @@ public sealed class RotationRunner(
             // other - which a verdict synthesised here used to wave past.
             due[file.Path] = RotationCriteria.Evaluate(
                 job, first ? null : state.Get(file.Path)?.LastRotated, now, file.Length,
-                file.LastWriteUtc, options.Force, options.Catchup);
+                file.LastWriteUtc, options.Force, options.Catchup, clock.LocalTimeZone);
 
             // A log that was due and was held back anyway is worth saying out loud. "Why did this
             // not rotate last night?" is the question an operator actually asks, and the three

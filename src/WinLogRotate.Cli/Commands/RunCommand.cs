@@ -212,7 +212,7 @@ internal static class RunCommand
                 Severity = Severity.Warning,
                 Code = DiagnosticCode.StateUnreadable,
                 Message = $"The state file could not be read ({problem.Message}); starting from a fresh baseline.",
-                Path = paths.StateFile,
+                Path = stateOverride ?? paths.StateFile,
                 Remedy = "Every log will wait one full interval before its next rotation.",
             });
         }
@@ -359,8 +359,9 @@ internal static class RunCommand
               + (report.Retries > 0 ? $" {report.Retries} retry(s) - something else was holding a file." : string.Empty))
             + refused);
 
-        // After the journal is closed and after state.Save, so a notification can never delay or
-        // fail the thing it is reporting on.
+        // After state.Save and after the last operation is journaled, so a notification can never
+        // delay or fail the thing it is reporting on. (The journal stays open until the verb
+        // returns; nothing here writes to it.)
         NotifyPhase.Run(ctx, paths, config, report, options, started);
 
         var result = new RunResult

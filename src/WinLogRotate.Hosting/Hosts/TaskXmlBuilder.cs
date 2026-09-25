@@ -97,7 +97,7 @@ public static class TaskXmlBuilder
                 new XAttribute("version", "1.4"),
                 new XElement(Ns + "RegistrationInfo",
                     new XElement(Ns + "Description", definition.Description),
-                    new XElement(Ns + "URI", @"\WinLogRotate\Rotate")),
+                    new XElement(Ns + "URI", Names.TaskPath)),
                 new XElement(Ns + "Triggers", trigger),
                 new XElement(Ns + "Principals",
                     new XElement(Ns + "Principal",

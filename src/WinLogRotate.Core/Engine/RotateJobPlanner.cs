@@ -107,9 +107,9 @@ public static class RotateJobPlanner
             job.Rotate >= 0 && index >= job.Rotate + job.Start - 1 && byIndex.Count >= job.Rotate;
 
         // Step 2: the generation delaycompress deferred last time. Compressing it now means the
-        // shift below operates on a uniformly-named chain. This also covers the awkward case
-        // where an operator turned delaycompress off and left one uncompressed file stranded
-        // among compressed ones.
+        // shift below operates on a uniformly-named chain. Only while delaycompress is on: an
+        // operator who turns it off leaves that one generation uncompressed, and it shifts up the
+        // chain as it is until the count or maxage disposes of it.
         if (job is { DelayCompress: true, CompressType: not CompressType.None }
             && !Doomed(job.Start)
             && byIndex.TryGetValue(job.Start, out var newest)

@@ -277,15 +277,19 @@ internal static class HostCommand
     /// rewrite driven by a partial parse is how a typo becomes data loss.
     /// </para>
     /// </remarks>
-    private static CliDiagnostic? Remember(InstallPaths paths, TimeSpan time)
+    internal static CliDiagnostic? Remember(InstallPaths paths, TimeSpan time)
     {
         var text = new HostSettings { Time = time }.TimeText;
-        var table = $"[host]\ntime = \"{text}\"\n";
         TomlFile file;
+
+        // In the file's own line ending, never the machine's - TomlEditor's rule. The installer
+        // seeds config.toml with CRLF, and a table appended with "\n" inside and
+        // Environment.NewLine around it left one file with both.
+        string Table(string eol) => $"[host]{eol}time = \"{text}\"{eol}";
 
         if (!File.Exists(paths.ConfigFile))
         {
-            file = TomlFile.Parse($"schema = 1\n\n{table}", paths.ConfigFile);
+            file = TomlFile.Parse($"schema = 1\n\n{Table("\n")}", paths.ConfigFile);
         }
         else
         {
@@ -324,9 +328,11 @@ internal static class HostCommand
                     };
                 }
 
+                var written = file.ToString();
+                var eol = written.Contains("\r\n", StringComparison.Ordinal) ? "\r\n" : "\n";
+
                 file = TomlFile.Parse(
-                    file.ToString().TrimEnd('\r', '\n') + Environment.NewLine + Environment.NewLine + table,
-                    paths.ConfigFile);
+                    written.TrimEnd('\r', '\n') + eol + eol + Table(eol), paths.ConfigFile);
             }
         }
 

@@ -124,6 +124,28 @@ public sealed class RunStateTests : IDisposable
         sink.Diagnostics.ShouldNotContain(d => d.Code == DiagnosticCode.StateUnreadable, "nothing was started over");
     }
 
+    /// <summary>A state file that will not parse is named where it is, --state or not.</summary>
+    /// <remarks>
+    /// The refusal above named the <c>--state</c> file; the fresh-baseline warning beside it named
+    /// the installed one, which is not the file that would not parse.
+    /// </remarks>
+    [Fact]
+    public void AStateFileThatWillNotParseIsNamedWhereItIs()
+    {
+        var conf = Directory.CreateDirectory(Path.Combine(_dir.FullName, "conf"));
+        File.WriteAllText(Path.Combine(conf.FullName, "config.toml"), "schema = 1\n");
+        Directory.CreateDirectory(Path.Combine(conf.FullName, "conf.d"));
+        File.WriteAllText(StatePath, "{ this is not json");
+
+        var sink = new Recorder();
+        var parse = Cli.Commands.CommandTree.Build().Parse(["run", "--dry-run", "--no-notify", "--no-event-log"]);
+
+        Cli.Commands.RunCommand.Run(
+            new Cli.Commands.CommandContext(sink, parse), new RunOptions { DryRun = true }, conf.FullName, StatePath);
+
+        sink.Diagnostics.Single(d => d.Code == DiagnosticCode.StateUnreadable).Path.ShouldBe(StatePath);
+    }
+
     /// <summary>A sink that keeps what it was told, for a verb driven in-process.</summary>
     private sealed class Recorder : Cli.Output.IOutputSink
     {
