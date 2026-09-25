@@ -123,8 +123,15 @@ public sealed record LoadedConfig
 /// and <c>run</c> returned <c>ExitCode.ConfigInvalid</c> having attempted nothing. The file was
 /// then renamed on the way out, so the next run looked healthy and the outage did not repeat.
 /// <see cref="ConfigDiagnostic.FileScoped"/> is what makes the sentence above true; it applies to
-/// a file that will not <i>parse</i>, and deliberately not to a binder error, which still has
-/// nothing smaller than the machine to blame.
+/// a file that will not <i>parse</i>, where there is no job to name.
+/// </para>
+/// <para>
+/// A file that parses and binds a job with a name charges that job instead: <see cref="Judge"/>
+/// attributes what the binder said to it, and a value the binder refused makes it
+/// <see cref="JobOutcome.Invalid"/>, skipped and named while the rest rotate. Binder errors used
+/// to count against the whole configuration, so <c>compresstype = "bogus"</c> in one file stopped
+/// every job on the machine. What still has nothing smaller to blame is a job file with no
+/// <c>[job]</c> table or no paths, and a name another file already has.
 /// </para>
 /// </remarks>
 public static class ConfigLoader
@@ -423,6 +430,14 @@ public static class ConfigLoader
             return new JobVerdict { Job = job, Outcome = JobOutcome.Duplicate, Diagnostics = bag.Items };
         }
 
+        // What binding said is this job's from here on, as validation's is. A value the binder
+        // refused - compresstype = "bogus", a kind it does not know - is in a job with a name, and
+        // it used to count as a fault with the configuration as a whole: HasErrors, exit 2, and
+        // nothing rotated anywhere, over one word in one file. The job is skipped and named
+        // instead, rather than run with a default standing in for what the operator wrote.
+        var bound = bag.Items.Select(item => item with { Job = job.Name }).ToArray();
+        var refused = bound.Any(item => item.Severity >= Severity.Error);
+
         var effective = SettingsMerge.Resolve(job, defaults);
 
         // Into a bag of its own, so what validation says about this job can be attributed to
@@ -430,17 +445,12 @@ public static class ConfigLoader
         var jobBag = new DiagnosticBag();
         ConfigValidator.Validate(effective, guard, jobBag);
 
-        foreach (var item in jobBag.Items)
-        {
-            bag.Add(item with { Job = effective.Name });
-        }
-
         return new JobVerdict
         {
             Job = job,
             Effective = effective,
-            Outcome = jobBag.HasErrors ? JobOutcome.Invalid : JobOutcome.Ready,
-            Diagnostics = bag.Items,
+            Outcome = refused || jobBag.HasErrors ? JobOutcome.Invalid : JobOutcome.Ready,
+            Diagnostics = [.. bound, .. jobBag.Items.Select(item => item with { Job = effective.Name })],
         };
     }
 

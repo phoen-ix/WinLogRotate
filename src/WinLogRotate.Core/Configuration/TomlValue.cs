@@ -27,10 +27,10 @@ public enum TomlValueKind
 /// <see cref="TomlEditor"/> could write only quoted strings, and every caller it had wanted one.
 /// The moment anything wanted to write a job key that is not a string, that limit stopped being a
 /// simplification and became an outage: <c>enabled = "false"</c> is a string where
-/// <see cref="ConfigBinder"/> requires a bool, so the binder errors, the job is <b>not</b>
-/// disabled, and - because that error is raised against the whole configuration rather than
-/// against one file - <c>LoadedConfig.HasErrors</c> is true and a run exits 2 having rotated
-/// nothing on the machine. Two wrong answers from one keystroke.
+/// <see cref="ConfigBinder"/> requires a bool, so the binder errors and the job is <b>not</b>
+/// disabled - it is refused, and while binder errors were raised against the whole configuration
+/// rather than against one job, <c>LoadedConfig.HasErrors</c> was true and a run exited 2 having
+/// rotated nothing on the machine. Two wrong answers from one keystroke.
 /// </para>
 /// <para>
 /// So the type travels with the value, and it comes from the schema rather than from the text.

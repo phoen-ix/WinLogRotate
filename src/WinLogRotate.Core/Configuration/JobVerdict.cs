@@ -5,7 +5,7 @@ namespace WinLogRotate.Core.Configuration;
 /// <summary>What a run would do with one job file.</summary>
 public enum JobOutcome
 {
-    /// <summary>It did not bind at all: no <c>[job]</c> table, no paths, an unreadable kind.</summary>
+    /// <summary>It did not bind at all: no <c>[job]</c> table, no paths, a reserved name.</summary>
     NotBound,
 
     /// <summary>It bound, and another file already has that name.</summary>
@@ -43,9 +43,10 @@ public sealed record JobVerdict
     /// Everything worth saying about it, shaped as the loader files them.
     /// </summary>
     /// <remarks>
-    /// Validation's findings carry <c>Job</c>, so they can be weighed against that job; binding's
-    /// and the duplicate-name refusal do not, because they are faults with the configuration as a
-    /// whole and <c>LoadedConfig.HasErrors</c> reads exactly that distinction.
+    /// Binding's and validation's findings carry <c>Job</c> once a named job has bound, so they
+    /// can be weighed against that job. A file that did not bind, and the duplicate-name refusal,
+    /// do not, because they are faults with the configuration as a whole and
+    /// <c>LoadedConfig.HasErrors</c> reads exactly that distinction.
     /// </remarks>
     public required IReadOnlyList<ConfigDiagnostic> Diagnostics { get; init; }
 

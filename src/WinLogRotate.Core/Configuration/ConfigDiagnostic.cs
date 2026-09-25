@@ -39,9 +39,10 @@ public sealed record ConfigDiagnostic
     /// the machine.
     /// </para>
     /// <para>
-    /// <b>Set only where the file could not be parsed at all.</b> A binder error - a job with no
-    /// paths, a duplicate job name - still has nothing smaller than the configuration to blame
-    /// and still stops everything, which is correct and is a separate question. Stamping this
+    /// <b>Set only where the file could not be parsed at all.</b> A file that binds a named job
+    /// charges its findings to that job through <see cref="Job"/> instead; a job with no paths, or
+    /// a duplicate job name, still has nothing smaller than the configuration to blame and still
+    /// stops everything, which is correct and is a separate question. Stamping this
     /// onto every diagnostic that happens to come from a file would silently demote real errors
     /// to a run that reports success.
     /// </para>

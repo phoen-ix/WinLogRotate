@@ -220,4 +220,50 @@ public sealed class BrokenJobFileTests : IDisposable
         config.HasErrors.ShouldBeTrue("config.toml has nothing smaller than the machine to blame");
         config.Unloadable.ShouldBeEmpty("the root file is not one job's file");
     }
+
+    /// <summary>
+    /// A value the binder refuses costs the job it is in, and the other jobs still load.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// The binder's findings carried no <c>Job</c>, so <c>compresstype = "bogus"</c> in one file
+    /// set <c>HasErrors</c> and <c>run</c> exited 2 having rotated nothing on the machine - while
+    /// docs/configuration.md promised "one job's mistake never stops the others". A named job has
+    /// something smaller than the machine to blame, and the value is in it.
+    /// </para>
+    /// <para>
+    /// Skipped, not run with the default in its place: the operator asked for something, and
+    /// rotating with a compression they did not choose is not what they asked for.
+    /// </para>
+    /// </remarks>
+    [Theory]
+    [InlineData("compresstype = \"bogus\"")]
+    [InlineData("rotate = \"thirty\"")]
+    [InlineData("kind = \"sometimes\"")]
+    public void AValueTheBinderRefusesCostsThatJobAlone(string line)
+    {
+        var config = Load(
+            ("good.toml", Healthy("good")),
+            ("bad.toml", $"schema = 1\n[job]\nname = \"bad\"\npaths = [\"C:/logs/bad/*.log\"]\n{line}\n"));
+
+        config.HasErrors.ShouldBeFalse("one job's bad value is not a fault with the machine");
+        config.Jobs.ShouldHaveSingleItem().Name.ShouldBe("good");
+        config.SkippedJobs.ShouldHaveSingleItem().Name.ShouldBe("bad");
+        config.Diagnostics.ShouldContain(d => d.Severity == Severity.Error && d.Job == "bad");
+    }
+
+    /// <summary>A job file that names no paths still has nothing to run, and still stops the machine.</summary>
+    /// <remarks>
+    /// The line this does not move. With no paths the binder has no job to hand back, so there is
+    /// nothing to skip and nothing to name in a list of skipped jobs.
+    /// </remarks>
+    [Fact]
+    public void AJobWithNoPathsStillStopsEverything()
+    {
+        var config = Load(
+            ("good.toml", Healthy("good")),
+            ("empty.toml", "schema = 1\n[job]\nname = \"empty\"\n"));
+
+        config.HasErrors.ShouldBeTrue();
+    }
 }

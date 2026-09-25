@@ -545,11 +545,14 @@ public static class ConfigBinder
             }
             else
             {
+                // Recorded and bound on, rather than returned as null. The job has a name, so the
+                // loader can skip it and name it while every other job still rotates; null left it
+                // nothing to skip, and one mistyped word stopped the machine. The kind it binds
+                // with is never used, because an error makes the job one that does not run.
                 diagnostics.Error(file.Path, DiagnosticCode.ConfigInvalid,
                     $"'{kindText}' is not a job kind.",
                     LineOf(table), ColumnOf(table),
                     "Use kind = \"rotate\" (we rotate) or kind = \"manage\" (the application rotates; we compress and retain).");
-                return null;
             }
         }
 
