@@ -74,12 +74,16 @@ public static class Compressor
         string source, CompressType type, CompressionLevel level = CompressionLevel.Optimal,
         int retryCount = 5, int retryIntervalMs = 100, Action<int, Exception>? onRetry = null)
     {
-        if (type == CompressType.None)
+        // Every type without an extension, not only None. The destination is the source plus the
+        // extension, so a type with none - an undefined value the binder once let through - named
+        // the log itself: the archive was moved over it and it was then deleted, and nothing threw.
+        var extension = Extension(type);
+        if (extension.Length == 0)
         {
-            throw new ArgumentException("Nothing to do for CompressType.None.", nameof(type));
+            throw new ArgumentException($"{type} is not a compression type, so there is nothing to do.", nameof(type));
         }
 
-        var destination = source + Extension(type);
+        var destination = source + extension;
         var temp = destination + ".tmp";
         var info = new FileInfo(source);
         var before = info.Length;

@@ -318,8 +318,8 @@ public sealed class JobSchemaTests
     /// <remarks>
     /// Both halves matter. A floor the validator does not have would make a form refuse a value
     /// the CLI accepts; a floor the schema does not declare is a refusal the form only learns of
-    /// from the dry run. maxage and minage have no floor either side, and that is recorded here
-    /// rather than papered over.
+    /// from the dry run. maxage and minage had no floor either side, and maxage = -1 deleted every
+    /// archive a job kept; both floors are zero now, on both sides.
     /// </remarks>
     [Fact]
     public void EveryIntegerRangeIsTheValidatorsOwn()

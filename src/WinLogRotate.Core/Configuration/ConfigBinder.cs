@@ -539,7 +539,7 @@ public static class ConfigBinder
         var kind = JobKind.Rotate;
         if (GetString(table, "kind", file.Path, diagnostics) is { } kindText)
         {
-            if (Enum.TryParse<JobKind>(kindText, ignoreCase: true, out var parsed))
+            if (TryParseName<JobKind>(kindText, out var parsed))
             {
                 kind = parsed;
             }
@@ -649,7 +649,7 @@ public static class ConfigBinder
             else if (string.Equals(key, "schedule", StringComparison.OrdinalIgnoreCase)
                      && GetString(table, key, file, d) is { } scheduleText)
             {
-                if (Enum.TryParse<Schedule>(scheduleText, ignoreCase: true, out var parsed))
+                if (TryParseName<Schedule>(scheduleText, out var parsed))
                 {
                     schedule = parsed;
                 }
@@ -1036,7 +1036,7 @@ public static class ConfigBinder
             return null;
         }
 
-        if (Enum.TryParse<T>(text, ignoreCase: true, out var parsed))
+        if (TryParseName<T>(text, out var parsed))
         {
             return parsed;
         }
@@ -1047,6 +1047,40 @@ public static class ConfigBinder
             LineOf(kv), ColumnOf(kv),
             $"Valid values: {string.Join(", ", Enum.GetNames<T>().Select(n => n.ToLowerInvariant()))}.");
         return null;
+    }
+
+    /// <summary>
+    /// A member of <typeparamref name="T"/> by its name, in any case, and by nothing else.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// Not <c>Enum.TryParse</c>, which also reads a number as the member with that value and a
+    /// comma list as the members OR-ed together - and hands back a value that is no member at all
+    /// when there is none. <c>compresstype = "3"</c> bound cleanly to a compression type that does
+    /// not exist; its extension was empty, so the archive was written over the log it came from and
+    /// the log then deleted. <c>host use 0</c> meant <c>none</c> and unregistered the task.
+    /// </para>
+    /// <para>
+    /// Public for the same reason <see cref="TryParseDuration"/> is: every place that turns an
+    /// operator's word into one of these should accept the same words.
+    /// </para>
+    /// </remarks>
+    public static bool TryParseName<T>(string text, out T value)
+        where T : struct, Enum
+    {
+        var trimmed = text.Trim();
+
+        foreach (var member in Enum.GetValues<T>())
+        {
+            if (string.Equals(member.ToString(), trimmed, StringComparison.OrdinalIgnoreCase))
+            {
+                value = member;
+                return true;
+            }
+        }
+
+        value = default;
+        return false;
     }
 
     /// <summary>
@@ -1146,7 +1180,19 @@ public static class ConfigBinder
 
         if (kv.Value is IntegerValueSyntax i)
         {
-            return i.Value;
+            if (i.Value >= 0)
+            {
+                return i.Value;
+            }
+
+            // The quoted form has always refused this; the bare one went straight through, and a
+            // negative threshold is one every file is above - size = -1 rotated every log on
+            // every run, and maxsize = -1 forced a rotation whatever the schedule said.
+            d.Error(file, DiagnosticCode.ConfigInvalid,
+                $"'{key}' is {i.Value}, and a size cannot be negative.",
+                LineOf(kv), ColumnOf(kv),
+                "Write a byte count or a size such as \"100M\", or remove the key.");
+            return null;
         }
 
         if (kv.Value is StringValueSyntax { Value: { } sizeText } && TryParseSize(sizeText, out var bytes))

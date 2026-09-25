@@ -1,6 +1,7 @@
 using System.Diagnostics;
 using System.Runtime.Versioning;
 using Microsoft.Win32;
+using WinLogRotate.Core.Configuration;
 
 namespace WinLogRotate.Hosting.Hosts;
 
@@ -105,7 +106,7 @@ public sealed class TaskRunHost(TimeProvider clock) : IRunHost
             {
                 using var key = hive.OpenSubKey(Names.UninstallKey);
                 if (key?.GetValue(Names.HostKindValue) is string kind
-                    && Enum.TryParse<RunHostKind>(kind, ignoreCase: true, out var parsed))
+                    && ConfigBinder.TryParseName<RunHostKind>(kind, out var parsed))
                 {
                     return parsed;
                 }

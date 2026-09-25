@@ -193,4 +193,23 @@ public sealed class CompressionTests : IDisposable
         File.Exists(source + ".zip.tmp").ShouldBeFalse(
             "a staging file nothing in the product ever collects was left in the log directory");
     }
+
+    /// <summary>A type with no extension is refused before anything is written, and the log survives.</summary>
+    /// <remarks>
+    /// The destination is the source plus the type's extension. A type with none - an undefined
+    /// value the binder used to let through - made the destination the log itself: the archive was
+    /// moved over the log, the log was then deleted, and nothing threw. The binder refuses such a
+    /// value now; this is the backstop that makes the same mistake from anywhere else a refusal
+    /// rather than a loss.
+    /// </remarks>
+    [Fact]
+    public void ATypeWithNoExtensionIsRefusedAndTheLogSurvives()
+    {
+        var source = Seed("app.log.1", "precious");
+
+        Should.Throw<ArgumentException>(() => Compressor.Compress(source, (CompressType)3));
+
+        File.ReadAllText(source).ShouldBe("precious");
+        Directory.GetFiles(_dir.FullName).ShouldHaveSingleItem();
+    }
 }

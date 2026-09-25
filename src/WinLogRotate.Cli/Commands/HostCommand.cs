@@ -58,7 +58,7 @@ internal static class HostCommand
         CommandContext ctx, string kind, string? configDir, IRunHost? host, Func<bool>? elevated, string verb,
         string? at = null)
     {
-        if (!Enum.TryParse<RunHostKind>(kind, ignoreCase: true, out var wanted))
+        if (!ConfigBinder.TryParseName<RunHostKind>(kind, out var wanted))
         {
             return Refusals.CannotUse<HostResult>(
                 ctx, verb, kind, "a run model", "Use task or none.");

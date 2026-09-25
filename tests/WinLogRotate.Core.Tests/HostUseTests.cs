@@ -177,6 +177,28 @@ public sealed class HostUseTests
         d.Remedy.ShouldNotBeNull().ShouldContain("24-hour");
     }
 
+    /// <summary>A run model is a name: <c>host use 0</c> is refused, not read as <c>none</c>.</summary>
+    /// <remarks>
+    /// <c>Enum.TryParse</c> reads a number as the member with that value, so <c>0</c> meant
+    /// <c>none</c> - which unregisters the scheduled task - and <c>7</c> a run model that does not
+    /// exist.
+    /// </remarks>
+    [Theory]
+    [InlineData("0")]
+    [InlineData("1")]
+    [InlineData("7")]
+    public void ARunModelIsANameAndNeverANumber(string kind)
+    {
+        var host = new FakeRunHost();
+        var (sink, ctx) = Context("host", "use", kind);
+
+        var exit = Cli.Commands.HostCommand.Use(ctx, kind, null, host, elevated: () => true, verb: "host use");
+
+        exit.ShouldBe(ExitCode.ConfigInvalid);
+        host.Calls.ShouldBeEmpty();
+        sink.Diagnostics.ShouldHaveSingleItem().Code.ShouldBe(DiagnosticCode.ArgumentUnusable);
+    }
+
     /// <summary>--at says when the task fires, and 'none' registers no task.</summary>
     [Fact]
     public void AtMeansNothingWithoutATask()

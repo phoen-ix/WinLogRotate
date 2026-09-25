@@ -97,6 +97,25 @@ public static class ConfigValidator
                 remedy: "Set maxage, or give rotate a count.");
         }
 
+        // maxage is a cutoff of now minus that many days, so a negative one lies in the future and
+        // every archive is older than it: maxage = -1 deleted everything the job had kept. It reads
+        // like rotate = -1, which keeps everything - the opposite - and nothing said a word. A
+        // negative minage only ever lets a rotation through; it is refused so the two read alike.
+        if (job.MaxAge < 0)
+        {
+            d.Error(file, DiagnosticCode.ConfigInvalid,
+                $"maxage = {job.MaxAge} is negative, and would delete every archive this job has kept.",
+                remedy: "maxage is a number of days. To keep archives whatever their age, remove it; "
+                      + "rotate = -1 is the one that means 'keep everything'.");
+        }
+
+        if (job.MinAge < 0)
+        {
+            d.Error(file, DiagnosticCode.ConfigInvalid,
+                $"minage = {job.MinAge} is negative.",
+                remedy: "minage is a number of days; remove it to rotate a log whatever its age.");
+        }
+
         if (job.LiveFiles < 0)
         {
             d.Error(file, DiagnosticCode.ConfigInvalid, $"livefiles = {job.LiveFiles} is negative.");

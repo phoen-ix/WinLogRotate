@@ -76,6 +76,29 @@ public sealed class ConfigValidatorTests
         Errors(Validate(Fixtures.Job() with { Start = 0 })).ShouldBeEmpty();
     }
 
+    /// <summary>A negative age is refused.</summary>
+    /// <remarks>
+    /// maxage is a cutoff of now minus that many days, so -1 puts it tomorrow and every archive is
+    /// older than that: <c>maxage = -1</c> deleted everything a job had kept, and config check
+    /// said nothing. It reads like <c>rotate = -1</c>, which keeps everything - the opposite. A
+    /// negative minage only ever lets a rotation through, and is refused so the two read alike.
+    /// </remarks>
+    [Theory]
+    [InlineData("maxage")]
+    [InlineData("minage")]
+    public void ANegativeAgeIsRefused(string key)
+    {
+        var job = key == "maxage" ? Fixtures.Job() with { MaxAge = -1 } : Fixtures.Job() with { MinAge = -1 };
+
+        Errors(Validate(job)).ShouldContain(d => d.Message.StartsWith(key, StringComparison.Ordinal));
+    }
+
+    [Fact]
+    public void ZeroIsAnAge()
+    {
+        Errors(Validate(Fixtures.Job() with { MaxAge = 0, MinAge = 0 })).ShouldBeEmpty();
+    }
+
     /// <summary>
     /// A dateformat the engine could not format, or could not find again, is refused.
     /// </summary>

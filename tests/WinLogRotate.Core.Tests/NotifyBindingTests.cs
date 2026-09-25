@@ -22,6 +22,20 @@ public sealed class NotifyBindingTests
 
     private IReadOnlyList<ConfigDiagnostic> Diagnostics => _bag.Items;
 
+    /// <summary>
+    /// A [notify] choice is a name too: <c>threshold = "9"</c> was a severity above Critical, and
+    /// nothing would ever have been worth reporting.
+    /// </summary>
+    [Theory]
+    [InlineData("threshold = \"9\"")]
+    [InlineData("on = \"1\"")]
+    public void ANotifyChoiceIsNeverANumber(string line)
+    {
+        Bind($"schema = 1\n[notify]\n{line}\n");
+
+        Diagnostics.ShouldContain(d => d.Severity == Severity.Error);
+    }
+
     [Fact]
     public void DefaultsApplyWhenTheTableIsAbsent()
     {

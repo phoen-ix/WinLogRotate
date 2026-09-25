@@ -89,6 +89,55 @@ public class ConfigBinderTests
         job.CompressType.ShouldBe(CompressType.Gzip);
     }
 
+    /// <summary>A key with a closed set of values takes one of their names, and never a number.</summary>
+    /// <remarks>
+    /// <c>Enum.TryParse</c> reads <c>"1"</c> as the second member and <c>"3"</c> as a member that
+    /// does not exist, so <c>compresstype = "3"</c> bound cleanly to nothing the product has -
+    /// whose extension is empty, so the "compressed" archive was written over the log it came from
+    /// and the log then deleted. <c>"zip,gzip"</c> is a flags spelling and the same hole.
+    /// </remarks>
+    [Theory]
+    [InlineData("compresstype = \"3\"")]
+    [InlineData("compresstype = \"1\"")]
+    [InlineData("compresstype = \"zip,gzip\"")]
+    [InlineData("lockstrategy = \"0\"")]
+    [InlineData("kind = \"1\"")]
+    [InlineData("schedule = \"2\"")]
+    public void AChoiceIsANameAndNeverANumber(string line)
+    {
+        var (_, d) = Bind($"schema = 1\n[job]\nname = \"x\"\npaths = [\"C:/logs/*.log\"]\n{line}\n");
+
+        d.HasErrors.ShouldBeTrue(line);
+    }
+
+    [Theory]
+    [InlineData("compresstype = \" GZIP \"", CompressType.Gzip)]
+    [InlineData("compresstype = \"None\"", CompressType.None)]
+    public void AChoiceIsReadByNameWhateverItsCase(string line, CompressType expected)
+    {
+        var (job, d) = Bind($"schema = 1\n[job]\nname = \"x\"\npaths = [\"C:/logs/*.log\"]\n{line}\n");
+
+        d.HasErrors.ShouldBeFalse();
+        job.ShouldNotBeNull().CompressType.ShouldBe(expected);
+    }
+
+    /// <summary>A size is never negative, bare or quoted.</summary>
+    /// <remarks>
+    /// The quoted form always refused one; a bare integer went straight through, so
+    /// <c>size = -1</c> made every log due on every run, and <c>maxsize = -1</c> forced a rotation
+    /// on every run whatever the schedule said.
+    /// </remarks>
+    [Theory]
+    [InlineData("size = -1")]
+    [InlineData("maxsize = -1")]
+    [InlineData("minsize = -5")]
+    public void ASizeIsNeverNegative(string line)
+    {
+        var (_, d) = Bind($"schema = 1\n[job]\nname = \"x\"\npaths = [\"C:/logs/*.log\"]\n{line}\n");
+
+        d.HasErrors.ShouldBeTrue(line);
+    }
+
     // Requiring brackets for a single path is the sort of friction that gets a config written
     // wrong once and the documentation abandoned.
     [Fact]
