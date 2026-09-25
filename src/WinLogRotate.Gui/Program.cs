@@ -1,4 +1,3 @@
-using WinLogRotate.Core;
 using WinLogRotate.Gui.Cli;
 using WinLogRotate.Gui.Ui;
 

@@ -32,10 +32,6 @@ public static partial class Redaction
     /// </remarks>
     public const int MinLength = 3;
 
-    /// <summary>Query-string keys whose values are credentials rather than parameters.</summary>
-    [GeneratedRegex(@"(?i)\b(token|key|secret|pass(word)?|sig|signature|auth|api[-_]?key)\b")]
-    private static partial Regex SensitiveParameter();
-
     /// <summary>Masks a target for display, according to what kind of thing it is.</summary>
     public static string MaskTarget(HookScheme scheme, string target) =>
         HookSchemes.TargetIsUrl(scheme) ? MaskUrl(target) : target;
@@ -91,7 +87,4 @@ public static partial class Redaction
 
     [GeneratedRegex(@"https?://[^\s""'<>]+")]
     private static partial Regex UrlInText();
-
-    /// <summary>True if a query-string key names something that should never be printed.</summary>
-    public static bool IsSensitiveParameter(string key) => SensitiveParameter().IsMatch(key);
 }

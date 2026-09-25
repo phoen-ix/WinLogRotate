@@ -44,7 +44,7 @@ internal static class SecretCommand
         SecretString value;
         if (fromFile is not null)
         {
-            if (!ReadFile(ctx, "secret set", fromFile, out var text))
+            if (!ReadFile(ctx, fromFile, out var text))
             {
                 return ctx.Output.Complete<SecretResult>("secret set", ExitCode.Errors, null);
             }
@@ -571,7 +571,7 @@ internal static class SecretCommand
         string text;
         if (fromFile is not null)
         {
-            if (!ReadFile(ctx, "secret import", fromFile, out text))
+            if (!ReadFile(ctx, fromFile, out text))
             {
                 return ctx.Output.Complete<SecretResult>("secret import", ExitCode.Errors, null);
             }
@@ -791,7 +791,7 @@ internal static class SecretCommand
     /// the way the console and the pipe do, and <c>secret import</c> splits lines - so a trim
     /// here was either wrong or redundant, depending on the caller.
     /// </remarks>
-    private static bool ReadFile(CommandContext ctx, string verb, FileInfo file, out string text)
+    private static bool ReadFile(CommandContext ctx, FileInfo file, out string text)
     {
         text = string.Empty;
         try

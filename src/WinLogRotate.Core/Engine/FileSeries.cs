@@ -1,6 +1,4 @@
 using System.Globalization;
-using WinLogRotate.Core.Compression;
-using WinLogRotate.Core.Configuration;
 using WinLogRotate.Core.Globbing;
 using WinLogRotate.Core.Safety;
 
@@ -176,9 +174,4 @@ public static class FileSeries
     }
 
     private static int CountDigitsIn(string format) => format.Length;
-
-    /// <summary>True when a file already carries a compression extension.</summary>
-    public static bool IsAlreadyCompressed(string path, CompressType type) =>
-        type != CompressType.None &&
-        path.EndsWith(Compressor.Extension(type), StringComparison.OrdinalIgnoreCase);
 }

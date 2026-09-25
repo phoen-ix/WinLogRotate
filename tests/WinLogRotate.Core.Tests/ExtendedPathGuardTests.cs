@@ -32,13 +32,6 @@ public sealed class ExtendedPathGuardTests
         ProtectedRoots = [@"C:\Windows", @"C:\Program Files"],
     });
 
-    /// <summary>The same guard on a machine whose conf.d is hardened, so overrides are honoured.</summary>
-    private static PathGuard Honouring() => new(new GuardOptions
-    {
-        ProtectedRoots = [@"C:\Windows", @"C:\Program Files"],
-        Overrides = OverrideGate.Open,
-    });
-
     /// <summary>
     /// A protected location is protected however it is spelled.
     /// </summary>

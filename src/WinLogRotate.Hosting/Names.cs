@@ -31,9 +31,7 @@ public static class Names
     /// <summary>The Windows service, when the service host is the chosen run model.</summary>
     public const string ServiceName = "WinLogRotate";
 
-    /// <summary>Folder and task, as they appear in taskschd.msc.</summary>
-    public const string TaskFolder = @"\WinLogRotate";
-    public const string TaskName = "Rotate";
+    /// <summary>The task's folder and name, as they appear in taskschd.msc.</summary>
     public const string TaskPath = @"\WinLogRotate\Rotate";
 
     /// <summary>Event Log source, registered by the installer because creating one needs admin,

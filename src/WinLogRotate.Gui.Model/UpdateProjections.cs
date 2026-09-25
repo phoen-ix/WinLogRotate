@@ -1,4 +1,3 @@
-using System.Globalization;
 using System.Text.Json;
 using WinLogRotate.Contracts;
 
@@ -219,7 +218,4 @@ public static class UpdateApplyProjection
     /// <summary>For the tests: a stamp in a known zone.</summary>
     public static string Stamp(DateTimeOffset utc, TimeZoneInfo zone) =>
         UpdateText.LastChecked(TimeZoneInfo.ConvertTime(utc, zone));
-
-    internal static string Invariant(DateTimeOffset value) =>
-        value.ToString("O", CultureInfo.InvariantCulture);
 }

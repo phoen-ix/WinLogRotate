@@ -14,9 +14,6 @@ public static class ReleaseAssets
     /// <summary>Every download's SHA-256, one per line, beside the downloads.</summary>
     public const string SumsFileName = "SHA256SUMS.txt";
 
-    /// <summary>The two GUI builds an installer can carry.</summary>
-    public static readonly IReadOnlyList<string> Variants = ["full", "min"];
-
     public static bool IsVariant(string? variant) => variant is "full" or "min";
 
     /// <summary>

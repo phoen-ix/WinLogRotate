@@ -146,14 +146,6 @@ public sealed class CompressionTests : IDisposable
         Directory.GetFiles(_dir.FullName).ShouldHaveSingleItem();
     }
 
-    [Theory]
-    [InlineData("-1", CompressionLevel.Fastest)]
-    [InlineData("--best", CompressionLevel.SmallestSize)]
-    [InlineData("-6", CompressionLevel.Optimal)]
-    [InlineData(null, CompressionLevel.Optimal)]
-    [InlineData("nonsense", CompressionLevel.Optimal)]
-    public void LogrotateCompressionOptionsMapToDotNetLevels(string? option, CompressionLevel expected) =>
-        Compressor.MapLevel(option).ShouldBe(expected);
     /// <summary>
     /// A compression that fails leaves no staging file behind.
     /// </summary>

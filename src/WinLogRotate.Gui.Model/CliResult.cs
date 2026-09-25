@@ -1,5 +1,3 @@
-using WinLogRotate.Core;
-
 namespace WinLogRotate.Gui.Cli;
 
 /// <summary>Why an invocation did not produce a result.</summary>

@@ -20,7 +20,7 @@ public class ProductInfoTests
         var a = Version.Parse(threePart);
         var b = Version.Parse(fourPart);
 
-        ProductInfo.SameVersion(a, b).ShouldBeTrue();
+        ProductInfo.Normalize(a).ShouldBe(ProductInfo.Normalize(b));
         ProductInfo.IsNewer(current: a, candidate: b).ShouldBeFalse();
         ProductInfo.IsNewer(current: b, candidate: a).ShouldBeFalse();
     }

@@ -157,7 +157,7 @@ public sealed class NotifyPhaseWiringTests : IDisposable
 
         Baseline(paths);
 
-        var (sink, ctx) = Failing();
+        var (_, ctx) = Failing();
 
         Cli.Commands.NotifyPhase.Run(
             ctx, paths, Load(paths), report: null, new RunOptions(), DateTimeOffset.UtcNow);

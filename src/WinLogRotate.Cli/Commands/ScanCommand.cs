@@ -1,5 +1,4 @@
 using WinLogRotate.Cli.Output;
-using WinLogRotate.Contracts;
 using WinLogRotate.Core;
 using WinLogRotate.Hosting.Discovery;
 

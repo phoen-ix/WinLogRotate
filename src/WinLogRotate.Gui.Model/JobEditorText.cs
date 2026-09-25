@@ -94,8 +94,6 @@ public static class JobEditorText
 
     public const string RemoveLink = "Remove";
 
-    public const string ForeignSection = "Other keys in this file";
-
     public const string InheritedTooltip =
         "The built-in default; a [defaults] table in config.toml overrides it for every job.";
 

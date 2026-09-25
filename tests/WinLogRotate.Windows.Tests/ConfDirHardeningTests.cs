@@ -96,7 +96,7 @@ public sealed class ConfDirHardeningTests : IDisposable
 
         // Exactly the bug that shipped: the root looks perfect and conf.d is still writable.
         MakeItLookLikeProgramData(_root);
-        var confd = _root.CreateSubdirectory("conf.d");
+        _root.CreateSubdirectory("conf.d");
 
         Harden(_root);
 

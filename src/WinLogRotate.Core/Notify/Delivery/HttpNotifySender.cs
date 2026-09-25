@@ -1,5 +1,4 @@
 using System.Globalization;
-using System.Net.Http;
 using System.Text;
 
 namespace WinLogRotate.Core.Notify.Delivery;

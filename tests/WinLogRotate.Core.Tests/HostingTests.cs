@@ -435,15 +435,6 @@ public class SddlTests
         sddl.ShouldNotContain("CO");   // CREATOR OWNER - the exact ProgramData hole
     }
 
-    [Fact]
-    public void TheRunAccountGetsWriteOnlyWhereItIsNeeded()
-    {
-        var sddl = Sddl.WritableFor("S-1-5-21-1-2-3-1001");
-
-        sddl.ShouldContain("S-1-5-21-1-2-3-1001");
-        sddl.ShouldContain("D:PAI");
-    }
-
     /// <summary>
     /// Never by name. On this developer's machine the Administrators group is called
     /// "Administratoren", and an icacls that fails on a localised name leaves the permissive
@@ -454,7 +445,6 @@ public class SddlTests
     {
         Sddl.WellKnown.LocalSystem.ShouldBe("S-1-5-18");
         Sddl.WellKnown.Administrators.ShouldBe("S-1-5-32-544");
-        Sddl.WellKnown.CreatorOwner.ShouldBe("S-1-3-0");
     }
 }
 

@@ -21,7 +21,6 @@ namespace WinLogRotate.Hosting.Diagnostics;
 [SupportedOSPlatform("windows")]
 internal static partial class EventLogNative
 {
-    internal const ushort EventLogSuccessType = 0x0000;
     internal const ushort EventLogErrorType = 0x0001;
     internal const ushort EventLogWarningType = 0x0002;
     internal const ushort EventLogInformationType = 0x0004;

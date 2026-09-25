@@ -38,17 +38,6 @@ public static class Sddl
         "O:BAG:SYD:PAI(A;OICI;FA;;;SY)(A;OICI;FA;;;BA)(A;OICI;0x1200a9;;;BU)";
 
     /// <summary>
-    /// Same, plus write access for a non-SYSTEM run account.
-    /// </summary>
-    /// <remarks>
-    /// Only the state, journal and run directories ever get this - <c>conf.d</c> never does.
-    /// The run account executes hooks, so granting it write access to the files that define
-    /// those hooks would reintroduce exactly the escalation this design closes.
-    /// </remarks>
-    public static string WritableFor(string runAccountSid) =>
-        $"O:BAG:SYD:PAI(A;OICI;FA;;;SY)(A;OICI;FA;;;BA)(A;OICI;FA;;;{runAccountSid})(A;OICI;0x1200a9;;;BU)";
-
-    /// <summary>
     /// The secrets file: SYSTEM and Administrators, and deliberately no Users ACE at all.
     /// </summary>
     /// <remarks>
@@ -90,8 +79,6 @@ public static class Sddl
         public const string Administrators = "S-1-5-32-544";
         public const string Users = "S-1-5-32-545";
         public const string TrustedInstaller = "S-1-5-80-956008885-3418522649-1831038044-1853292631-2271478464";
-        public const string CreatorOwner = "S-1-3-0";
         public const string Everyone = "S-1-1-0";
-        public const string AuthenticatedUsers = "S-1-5-11";
     }
 }

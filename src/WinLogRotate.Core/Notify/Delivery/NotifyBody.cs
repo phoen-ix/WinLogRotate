@@ -23,10 +23,6 @@ namespace WinLogRotate.Core.Notify.Delivery;
 /// </remarks>
 public static class NotifyBody
 {
-    /// <summary>The fields a template may name.</summary>
-    public static readonly string[] Placeholders =
-        ["subject", "body", "severity", "job", "machine", "reason", "run", "fingerprint"];
-
     /// <param name="redact">
     /// The operator's <c>redact</c> list, applied to every field. The subject and body arrive
     /// already masked; <c>{machine}</c> and <c>{job}</c> did not, so an internal hostname listed

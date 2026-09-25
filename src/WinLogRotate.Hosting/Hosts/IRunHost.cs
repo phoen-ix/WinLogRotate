@@ -22,7 +22,6 @@ public sealed record HostStatus
     public required RunHostKind Actual { get; init; }
     public bool Registered { get; init; }
     public string? Detail { get; init; }
-    public DateTimeOffset? NextRun { get; init; }
 
     /// <summary>True when reality and configuration disagree - usually because somebody deleted
     /// the task by hand, which is a thing that happens and should be reported rather than

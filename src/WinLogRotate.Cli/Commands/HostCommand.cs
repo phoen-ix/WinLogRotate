@@ -1,9 +1,7 @@
-using System.Runtime.Versioning;
 using WinLogRotate.Cli.Output;
 using WinLogRotate.Contracts;
 using WinLogRotate.Core;
 using WinLogRotate.Core.Configuration;
-using WinLogRotate.Hosting;
 using WinLogRotate.Hosting.Hosts;
 using WinLogRotate.Hosting.Security;
 

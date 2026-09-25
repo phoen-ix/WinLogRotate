@@ -69,18 +69,6 @@ internal sealed class ConsoleInputSource : IInputSource
     }
 
     /// <summary>
-    /// Reads piped input, stripping at most one trailing newline.
-    /// </summary>
-    /// <remarks>
-    /// One newline, and nothing else. A password may legitimately end in a space, and trimming
-    /// whitespace to be helpful would silently store something other than what the operator
-    /// piped in - the worst possible failure here, because it only shows up as an
-    /// authentication error somewhere else entirely. <c>secret test</c> reports the length for
-    /// exactly this reason.
-    /// </remarks>
-    private string ReadPiped() => SecretInput.StripOneNewline(ReadAllText());
-
-    /// <summary>
     /// The piped path's rules, without the console.
     /// </summary>
     /// <remarks>

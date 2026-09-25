@@ -3,7 +3,6 @@ using WinLogRotate.Cli.Output;
 using WinLogRotate.Core;
 using WinLogRotate.Core.Configuration;
 using WinLogRotate.Core.Engine;
-using WinLogRotate.Core.Secrets;
 using WinLogRotate.Hosting.Security;
 
 namespace WinLogRotate.Cli.Commands;

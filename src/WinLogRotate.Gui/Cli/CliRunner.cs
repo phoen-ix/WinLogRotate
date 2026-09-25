@@ -1,7 +1,6 @@
 using System.ComponentModel;
 using System.Diagnostics;
 using System.Text;
-using WinLogRotate.Core;
 
 namespace WinLogRotate.Gui.Cli;
 

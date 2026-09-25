@@ -1,7 +1,6 @@
 using System.ComponentModel;
 using System.Diagnostics;
 using System.Runtime.Versioning;
-using System.Threading;
 using WinLogRotate.Core.Hooks;
 using WinLogRotate.Core.Notify;
 

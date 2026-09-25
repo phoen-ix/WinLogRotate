@@ -47,8 +47,4 @@ public static class ProductInfo
     /// <paramref name="current"/>, comparing three-part and four-part strings correctly.</summary>
     public static bool IsNewer(Version current, Version candidate) =>
         Normalize(candidate) > Normalize(current);
-
-    /// <summary>True when both versions name the same release, however many parts each carries.</summary>
-    public static bool SameVersion(Version a, Version b) =>
-        Normalize(a) == Normalize(b);
 }

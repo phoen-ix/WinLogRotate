@@ -11,8 +11,6 @@ public sealed record CompressionResult
     public required string Destination { get; init; }
     public required long BytesBefore { get; init; }
     public required long BytesAfter { get; init; }
-
-    public double Ratio => BytesBefore == 0 ? 0 : 1 - (BytesAfter / (double)BytesBefore);
 }
 
 /// <summary>
@@ -176,19 +174,4 @@ public static class Compressor
 
         return modified < earliest ? earliest : modified > latest ? latest : modified;
     }
-
-    /// <summary>
-    /// Maps a logrotate-style compression option onto a .NET level.
-    /// </summary>
-    /// <remarks>
-    /// .NET has no 1-9 scale, so the mapping is deliberately coarse and anything unrecognised
-    /// falls back to Optimal rather than being silently ignored.
-    /// </remarks>
-    public static CompressionLevel MapLevel(string? option) => option?.Trim() switch
-    {
-        "-1" or "--fast" or "fast" => CompressionLevel.Fastest,
-        "-9" or "--best" or "best" => CompressionLevel.SmallestSize,
-        "0" or "none" => CompressionLevel.NoCompression,
-        _ => CompressionLevel.Optimal,
-    };
 }

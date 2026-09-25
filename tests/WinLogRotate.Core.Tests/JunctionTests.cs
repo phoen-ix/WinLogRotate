@@ -345,7 +345,6 @@ public sealed class JunctionTests : IDisposable
 
     private static string? ShortNameOf(string path)
     {
-        var parent = System.IO.Path.GetDirectoryName(path)!;
         var info = new ProcessStartInfo("cmd.exe")
         {
             UseShellExecute = false,
