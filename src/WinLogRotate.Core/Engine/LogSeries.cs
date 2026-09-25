@@ -115,11 +115,7 @@ public static class LogSeries
     /// compression off, still owns the archives written the other way, and probing only the
     /// current spelling stranded them - never shifted, never counted, never deleted.
     /// </remarks>
-    private static readonly string[] Spellings =
-    [
-        string.Empty,
-        .. Enum.GetValues<CompressType>().Where(k => k != CompressType.None).Select(Compressor.Extension),
-    ];
+    private static readonly string[] Spellings = [string.Empty, .. Compressor.Extensions];
 
     /// <summary>
     /// The names this job would itself have written, probed one at a time.
@@ -229,16 +225,8 @@ public static class LogSeries
             return true;
         }
 
-        foreach (var kind in Enum.GetValues<CompressType>())
-        {
-            if (kind != CompressType.None
-                && string.Equals(name, expected + Compressor.Extension(kind), StringComparison.OrdinalIgnoreCase))
-            {
-                return true;
-            }
-        }
-
-        return false;
+        return Compressor.Extensions.Any(
+            extension => string.Equals(name, expected + extension, StringComparison.OrdinalIgnoreCase));
     }
 }
 

@@ -61,6 +61,15 @@ public static class Compressor
         _ => string.Empty,
     };
 
+    /// <summary>Every extension this product writes, whatever any one job's type is now.</summary>
+    /// <remarks>
+    /// One list for every place that has to find an archive again. A job that switched
+    /// <c>compresstype</c> still owns what it wrote the other way, so discovery asks for all of
+    /// them - and two lists of "all of them" is how one of the two misses a format.
+    /// </remarks>
+    public static IReadOnlyList<string> Extensions { get; } =
+        [.. Enum.GetValues<CompressType>().Where(k => k != CompressType.None).Select(Extension)];
+
     public static CompressionResult Compress(
         string source, CompressType type, CompressionLevel level = CompressionLevel.Optimal,
         int retryCount = 5, int retryIntervalMs = 100, Action<int, Exception>? onRetry = null)

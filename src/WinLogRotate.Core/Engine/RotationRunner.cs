@@ -1,4 +1,5 @@
 using WinLogRotate.Contracts;
+using WinLogRotate.Core.Compression;
 using WinLogRotate.Core.Configuration;
 using WinLogRotate.Core.Globbing;
 using WinLogRotate.Core.Hooks;
@@ -277,6 +278,15 @@ public sealed class RotationRunner(
 
                     var found = _sources.Files.Resolve(pattern);
 
+                    // What the pattern itself names, before a manage job's archives join it. The
+                    // ceiling below is about this number and nothing else.
+                    var named = found.Files.Count;
+
+                    if (job.Kind == JobKind.Manage)
+                    {
+                        found = WithArchives(pattern, found);
+                    }
+
                     // A link we would not follow is named, every time. This used to be a bare
                     // `continue` inside the walk, so a junctioned log directory was never rotated and
                     // nothing anywhere said so.
@@ -300,7 +310,11 @@ public sealed class RotationRunner(
                     // of 250 files were refused at the default of 1000 though none was close to
                     // it, and the message read "'iis-logs' matches 1,240 files" - naming a job
                     // where the operator needs to know which of five patterns to narrow.
-                    var count = guard.CheckMatchCount(pattern, found.Files.Count, job.GuardScope);
+                    //
+                    // And what the pattern names, not the archives a manage job made from it. The
+                    // ceiling catches a typo, and a job's own archives are not one - a rotate job's
+                    // have never counted either.
+                    var count = guard.CheckMatchCount(pattern, named, job.GuardScope);
                     if (!count.IsAllowed)
                     {
                         // The same flag the pattern refusal above sets, so "matched no files"
@@ -717,6 +731,43 @@ public sealed class RotationRunner(
             LastTruncatedTo = judged.ClearBaseline ? null : existing.LastTruncatedTo,
             TruncationChecks = judged.ClearBaseline ? 0 : existing.TruncationChecks + 1,
         });
+    }
+
+    /// <summary>
+    /// A manage job's pattern, together with the archives this job compressed from what it names.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// The pattern names what the application writes - <c>u_ex*.log</c> - and what this job made of
+    /// last night's file is <c>u_ex*.log.zip</c>, which that pattern does not match. Without this,
+    /// retention only ever counted the files nobody had compressed yet: every archive the job
+    /// produced was never counted, never aged and never deleted, and the directory grew by one a
+    /// night for ever. The README's IIS example, <c>scan</c>'s suggestion and the pattern the GUI
+    /// derives from a picked file all wrote exactly this job.
+    /// </para>
+    /// <para>
+    /// Generated spellings rather than a wider pattern, for <see cref="LogSeries"/>' reason: a
+    /// <c>u_ex*.log*</c> would also name <c>u_ex260101.log.bak</c>, and retention deletes what it
+    /// is handed. Every extension this product writes, as there, so a job that switched
+    /// <c>compresstype</c> still owns what it compressed the other way. A pattern that already
+    /// matches its archives - <c>app-*</c> - finds them twice here, and they are kept once: that is
+    /// one pattern reaching one file by two routes, not the overlap <c>LR2006</c> reports.
+    /// </para>
+    /// </remarks>
+    private EnumerationResult WithArchives(string pattern, EnumerationResult named)
+    {
+        var files = new List<MatchedFile>(named.Files);
+        var refusals = new List<GuardDecision>(named.Refusals);
+        var seen = new HashSet<string>(files.Select(f => WinPath.CanonicalKey(f.Path)), StringComparer.Ordinal);
+
+        foreach (var extension in Compressor.Extensions)
+        {
+            var archives = _sources.Files.Resolve(pattern + extension);
+            refusals.AddRange(archives.Refusals);
+            files.AddRange(archives.Files.Where(f => seen.Add(WinPath.CanonicalKey(f.Path))));
+        }
+
+        return named with { Files = files, Refusals = refusals };
     }
 
     /// <summary>

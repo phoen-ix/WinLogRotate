@@ -219,4 +219,129 @@ public sealed class RotationOutcomeTests : IDisposable
         state.Get(Live).ShouldNotBeNull().LastRotated.ShouldBe(Now);
         state.Paths.Keys.ShouldBe([WinPath.CanonicalKey(Live)], "only the live log has a clock");
     }
+
+    // ---- a manage job owns the archives it compressed ------------------------------------------
+
+    /// <summary>An IIS directory: one file per day, u_exYYMMDD.log, the last one still being written.</summary>
+    private static FakeFiles IisDays(int from, int to)
+    {
+        var files = new FakeFiles();
+
+        for (var day = from; day <= to; day++)
+        {
+            files.Add(IisDay(day), new DateTimeOffset(2026, 9, day, 23, 0, 0, TimeSpan.Zero), bytes: 1000);
+        }
+
+        return files;
+    }
+
+    private static string IisDay(int day) => $@"C:\iis\u_ex2609{day:00}.log";
+
+    private static EffectiveJob Manage(int rotate, int? maxAge = null) =>
+        Job(rotate, compress: true) with
+        {
+            Name = "iis",
+            Kind = JobKind.Manage,
+            Paths = [@"C:\iis\u_ex*.log"],
+            MaxAge = maxAge,
+        };
+
+    private static string[] Zips(FakeFiles files) =>
+        [.. files.All.Select(f => f.Path).Where(p => p.EndsWith(".zip", StringComparison.OrdinalIgnoreCase)).Order()];
+
+    /// <summary>
+    /// A manage job keeps <c>rotate</c> archives however many nights it runs.
+    /// </summary>
+    /// <remarks>
+    /// The job's pattern names what the application writes - <c>u_ex*.log</c> - and the archive it
+    /// compressed last night is <c>u_ex*.log.zip</c>, which that pattern does not match. So from the
+    /// second night on, retention was counting only the files nobody had compressed yet: every
+    /// archive the job made was never counted, never aged and never deleted, and the directory grew
+    /// by one archive a night for ever. The README's own IIS example, <c>scan</c>'s suggestion and
+    /// the GUI's picked-file pattern all produce exactly this job. One night could not show it,
+    /// which is all the installer smoke has ever run.
+    /// </remarks>
+    [Fact]
+    public void AManageJobKeepsRotateArchivesNightAfterNight()
+    {
+        var files = IisDays(1, 5);
+        var state = State();
+        var clock = new FakeTimeProvider(new DateTimeOffset(2026, 9, 6, 3, 0, 0, TimeSpan.Zero));
+
+        for (var night = 6; night <= 10; night++)
+        {
+            Run(Manage(rotate: 2), files, new FakeApplier(files), state, clock: clock)
+                .Failed.ShouldBe(0);
+
+            Zips(files).Length.ShouldBeLessThanOrEqualTo(2, $"night {night}: rotate = 2 keeps two archives");
+
+            files.Add(IisDay(night), clock.GetUtcNow().AddHours(20), bytes: 1000);
+            clock.Advance(TimeSpan.FromDays(1));
+        }
+
+        // The last run saw day 9 as the file being written: it stays, and the two before it are
+        // the archives rotate = 2 keeps.
+        Zips(files).ShouldBe([IisDay(7) + ".zip", IisDay(8) + ".zip"]);
+        files.Exists(IisDay(9)).ShouldBeTrue("the file the application is writing is never touched");
+    }
+
+    /// <summary>maxage reaches a compressed archive too, whichever format it was written in.</summary>
+    [Fact]
+    public void AManageJobAgesItsCompressedArchives()
+    {
+        var files = IisDays(9, 9);
+        files.Add(IisDay(1) + ".zip", new DateTimeOffset(2026, 9, 1, 23, 0, 0, TimeSpan.Zero));
+        files.Add(IisDay(2) + ".gz", new DateTimeOffset(2026, 9, 2, 23, 0, 0, TimeSpan.Zero));
+        files.Add(IisDay(8) + ".zip", new DateTimeOffset(2026, 9, 8, 23, 0, 0, TimeSpan.Zero));
+
+        Run(Manage(rotate: -1, maxAge: 5), files, new FakeApplier(files), State()).Failed.ShouldBe(0);
+
+        files.Exists(IisDay(1) + ".zip").ShouldBeFalse("older than maxage");
+        files.Exists(IisDay(2) + ".gz").ShouldBeFalse("a gzip archive from before a compresstype change is still this job's");
+        files.Exists(IisDay(8) + ".zip").ShouldBeTrue("inside maxage");
+        files.Exists(IisDay(9)).ShouldBeTrue();
+    }
+
+    /// <summary>
+    /// A pattern that already matches its archives is not reported as matching them twice.
+    /// </summary>
+    /// <remarks>
+    /// <c>app-*</c> names <c>app-01.log.zip</c> itself, and so does the compressed spelling the job
+    /// adds to it. That is one file found by two routes inside one pattern, not two patterns
+    /// overlapping, and <c>LR2006</c> says the latter.
+    /// </remarks>
+    [Fact]
+    public void APatternThatAlreadyMatchesItsArchivesIsNotAnOverlap()
+    {
+        var files = new FakeFiles()
+            .Add(@"C:\app\app-01.log.zip", new DateTimeOffset(2026, 9, 1, 0, 0, 0, TimeSpan.Zero))
+            .Add(@"C:\app\app-02.log", new DateTimeOffset(2026, 9, 2, 0, 0, 0, TimeSpan.Zero));
+
+        var report = Run(Manage(rotate: 5) with { Paths = [@"C:\app\app-*"] }, files, new FakeApplier(files), State());
+
+        report.Diagnostics.ShouldNotContain(d => d.Code == DiagnosticCode.MatchedMoreThanOnce);
+    }
+
+    /// <summary>
+    /// maxfiles still counts what the pattern names, not the archives the job made from it.
+    /// </summary>
+    /// <remarks>
+    /// The ceiling exists to catch a typo, and a job's own archives are not one - a rotate job's
+    /// archives have never counted against it either. Counting them would also have refused, on
+    /// the first run after this fix, every job whose directory had been filling up with them.
+    /// </remarks>
+    [Fact]
+    public void MaxfilesIgnoresAManageJobsOwnArchives()
+    {
+        var files = IisDays(8, 9);
+        for (var day = 1; day <= 5; day++)
+        {
+            files.Add(IisDay(day) + ".zip", new DateTimeOffset(2026, 9, day, 23, 0, 0, TimeSpan.Zero));
+        }
+
+        var report = Run(Manage(rotate: 10) with { MaxFiles = 2 }, files, new FakeApplier(files), State());
+
+        report.Diagnostics.ShouldNotContain(d => d.Code == DiagnosticCode.DangerousPathRefused);
+        report.Failed.ShouldBe(0);
+    }
 }
