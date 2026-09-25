@@ -2058,6 +2058,25 @@ public partial class ArchitectureTests
     [GeneratedRegex(@"^\|\s*`([a-z_]+)`\s*\|", RegexOptions.Compiled)]
     private static partial Regex DocumentedJobKey();
 
+    /// <summary>
+    /// The lines of docs/configuration.md's "Every [job] key" section, and no others.
+    /// </summary>
+    /// <remarks>
+    /// The page documents other tables in the same row shape - <c>[journal]</c> has an
+    /// <c>enabled</c>, a <c>compress</c> and a <c>maxsize</c> of its own - and read as job keys,
+    /// those rows are a second, wrong row for a job key. The section runs from its heading to the
+    /// next heading of the same level.
+    /// </remarks>
+    private static string[] JobKeyReference()
+    {
+        var lines = File.ReadAllLines(Path.Combine(RepoRoot.Find().FullName, "docs", "configuration.md"));
+        var start = Array.FindIndex(lines, l => l.StartsWith("## Every `[job]` key", StringComparison.Ordinal));
+        start.ShouldBeGreaterThanOrEqualTo(0, "the job-key section's heading");
+
+        var end = Array.FindIndex(lines, start + 1, l => l.StartsWith("## ", StringComparison.Ordinal));
+        return lines[start..(end < 0 ? lines.Length : end)];
+    }
+
     /// <summary>Key, Type and Default cells of a job-key row; a cell may carry an escaped pipe.</summary>
     [GeneratedRegex(@"^\|\s*`(?<key>[a-z_]+)`\s*\|(?<type>(?:\\\||[^|])*)\|(?<default>(?:\\\||[^|])*)\|", RegexOptions.Compiled)]
     private static partial Regex DocumentedJobKeyDefault();
@@ -2095,9 +2114,7 @@ public partial class ArchitectureTests
     [Fact]
     public void EveryJobKeyIsDocumentedInTheConfigurationReference()
     {
-        var doc = Path.Combine(RepoRoot.Find().FullName, "docs", "configuration.md");
-
-        var documented = File.ReadAllLines(doc)
+        var documented = JobKeyReference()
             .Select(line => DocumentedJobKey().Match(line))
             .Where(m => m.Success)
             .Select(m => m.Groups[1].Value)
@@ -2129,9 +2146,7 @@ public partial class ArchitectureTests
     [Fact]
     public void TheDocumentedDefaultOfEveryJobKeyIsTheSchemas()
     {
-        var doc = Path.Combine(RepoRoot.Find().FullName, "docs", "configuration.md");
-
-        var rows = File.ReadAllLines(doc)
+        var rows = JobKeyReference()
             .Select(line => DocumentedJobKeyDefault().Match(line))
             .Where(m => m.Success)
             .Select(m => (Key: m.Groups["key"].Value, Default: Normalise(m.Groups["default"].Value)))

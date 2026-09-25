@@ -12,7 +12,7 @@ There are three ways to get there, and they all do the same thing.
 
 Download the installer from the [latest release](../../../releases/latest) and run it. It finds
 the existing install, keeps its scope (all users or just you) and its run host (the scheduled
-task, or none), and upgrades in place. Silent: `WinLogRotate-Setup.exe /S`.
+task, or none), and upgrades in place. Silent: `WinLogRotate-Setup-<version>.exe /S`.
 
 ## From the prompt
 

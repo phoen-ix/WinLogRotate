@@ -12,8 +12,9 @@ Where those live depends on how it was installed — `C:\ProgramData\WinLogRotat
 per-machine install, `%APPDATA%\WinLogRotate` for a per-user one. `winlogrotate doctor`
 prints the paths in use.
 
-A key that is not a setting is reported and ignored, never silently dropped. If it is one
-character away from a real key you are told which one you probably meant.
+A key that is not a setting is reported and ignored, never silently dropped, and so is a table
+`config.toml` does not read. If it is one character away from a real key you are told which one
+you probably meant.
 
 ## The shortest job that works
 
@@ -46,7 +47,7 @@ write and what a run would make of it without writing anything.
 |---|---|---|---|
 | `name` | string | *required* | Identifies the job in the journal, in diagnostics and in notifications. Must be unique across all files. |
 | `paths` | list of strings | *required* | Glob patterns. `*` and `?` match within one segment, `**` matches across segments, `[abc]` matches a character set. Any of them may appear in a directory position, not only in the filename — `C:/inetpub/logs/LogFiles/W3SVC[0-9]/*.log` matches every numbered IIS site and nothing else. |
-| `kind` | `"rotate"` \| `"manage"` | `"rotate"` | `rotate` moves the live log aside itself. `manage` leaves rotation to the application and only compresses and retains what it left behind. |
+| `kind` | `"rotate"` \| `"manage"` | `"rotate"` | `rotate` moves the live log aside itself. `manage` leaves rotation to the application and only compresses and retains what it left behind — including what it compressed itself: a pattern of `u_ex*.log` also finds `u_ex*.log.zip` and `.gz`, and `rotate` and `maxage` count them. |
 | `enabled` | bool | `true` | A disabled job is not considered at all. |
 | `allowdangerous` | list of strings | *(empty)* | Directories this job may work in despite the guard refusing them. See **Dangerous paths** below. |
 
@@ -95,8 +96,8 @@ calendar; the rotation clocks it inherits are instants and need no resetting.
 |---|---|---|---|
 | `rotate` | int | `7` | How many old generations to keep, exactly — dated or numbered. `0` discards immediately; `-1` keeps everything and prunes by `maxage` alone. |
 | `start` | int | `1` | The number the first archive gets, so `app.log.1`. |
-| `maxage` | days | *(none)* | Delete archives older than this, whatever `rotate` says. |
-| `minage` | days | *(none)* | Refuse to rotate a log younger than this. |
+| `maxage` | days | *(none)* | Delete archives older than this, whatever `rotate` says. Zero or more: a negative age would delete everything, and is refused. To keep archives whatever their age, leave it out. |
+| `minage` | days | *(none)* | Refuse to rotate a log younger than this. Zero or more. |
 | `minsize` | size | *(none)* | Refuse to rotate a log smaller than this, even when it is due. |
 | `maxsize` | size | *(none)* | Force an early rotation once the log exceeds this. |
 | `maxfiles` | int | `1000` | Refuse a pattern matching more files than this. A pattern matching 40,000 files is a typo far more often than a plan. |
@@ -197,11 +198,13 @@ location is allowed.
 
 ## When a key is wrong
 
-A misspelling is a warning, not an error, and names the line and column. One job's mistake
-never stops the others: a job that fails validation is skipped and named, the rest of the
-machine rotates, and the run exits 1. Only a fault with no single job to blame — an
-unparseable `config.toml`, a broken `[notify]` table, two jobs with the same name — stops
-everything, and that exits 2.
+A misspelling is a warning, not an error, and names the line and column — a misspelled key, and
+a misspelled table in `config.toml` too. A value that cannot be used is an error: a word where a
+number belongs, a number where a name belongs (`compresstype = "3"`), a negative size or age. One
+job's mistake never stops the others: a job with such a value, or one that fails validation, is
+skipped and named, the rest of the machine rotates, and the run exits 1. Only a fault with no
+single job to blame — an unparseable `config.toml`, a broken `[notify]` table, a job file with no
+paths, two jobs with the same name — stops everything, and that exits 2.
 
 `winlogrotate config check` reports all of it without rotating anything.
 
@@ -240,26 +243,54 @@ Repeat `--paths` for more than one pattern. Nothing is split on a separator, bec
 path may contain any of them.
 
 The GUI's Jobs page does the same thing through a form and sends exactly the keys you changed.
-**Basics** asks what a new job needs, in plain words: which files (Browse picks a log and offers
-the wildcard that names its series, and a line underneath says how many files that matches); how
-the log is taken away from the program — let WinLogRotate check what the program allows
+The form is a menu of sections — **Files**, **How**, **When**, **Keep**, **Old copies**,
+**Before & after** and **If things go wrong** — and every key on this page is on exactly one of
+them. Each section asks its plain questions first: which files (Browse picks a log and offers the
+wildcard that names its series, and a line underneath says how many files that matches); how the
+log is taken away from the program — let WinLogRotate check what the program allows
 (`lockstrategy = "auto"`, the editor's default for a new job), the program keeps the log open and
-never starts a new file (`copytruncate`), the program closes or reopens its log (`rename`), or
-the program already writes new files itself and only wants tidying (`kind = "manage"`); how
-often and how much to keep; whether old copies are numbered or dated, how they are compressed,
-and where they go — and restates the answer as one sentence. "What would happen…" runs a dry
-run of the saved job, as if it were due tonight, and lists every move it would make. **Advanced**
-is every key on this page as a typed control, captioned in plain words with the key name beside
-it, its default shown, a label saying whether the value is *set here* or *inherited*, and one
-line saying what it does; a value the CLI would refuse is said beside the box before Check is
-pressed. A field shown as inherited stays inherited unless you type in it. Check validates
-without writing and without asking for administrator rights; Save asks once.
+never starts a new file (`copytruncate`), the program closes or reopens its log (`rename`), or the
+program already writes new files itself and only wants tidying (`kind = "manage"`); how often and
+how much to keep; whether old copies are numbered or dated, how they are compressed, and where
+they go. One sentence under the form restates the answers.
+
+Every other key sits under **More settings** in its section, as a typed control captioned in plain
+words with the key name beside it, its default shown, a label saying whether the value is *set
+here* or *inherited*, and one line saying what it does; a value the CLI would refuse is said beside
+the box before Check is pressed. A key the file carries that this build does not read gets a
+section of its own, **Other keys**, where it can be removed. A field shown as inherited stays
+inherited unless you type in it. "What would happen…" runs a dry run of the saved job, as if it
+were due tonight, and lists every move it would make. Check validates without writing and without
+asking for administrator rights; Save asks once.
 
 ## Other tables
 
 `[defaults]` takes any key from this page except `name`, `paths`, `kind`, `enabled` and
-`allowdangerous`, and applies it beneath every job. `[notify]` and `[journal]` are documented
-in [notifications](notifications.md).
+`allowdangerous`, and applies it beneath every job. `[notify]` is documented in
+[notifications](notifications.md).
+
+## `[journal]`: the record of what was done
+
+```toml
+[journal]
+enabled  = true
+retain   = 30        # days
+compress = "zip"     # zip | gzip | none
+maxsize  = "50M"
+notify   = false
+```
+
+| Key | Type | Default | What it does |
+|---|---|---|---|
+| `enabled` | bool | `true` | Write the journal at all. Off, `winlogrotate journal` and the History page have nothing to show. |
+| `retain` | days | `30` | How many days of journal files to keep. `-1` keeps them all. |
+| `compress` | `"zip"` \| `"gzip"` \| `"none"` | `"zip"` | How older journal files are compressed. |
+| `maxsize` | size | `"50M"` | Start a new file for the day, at the next run, once today's has reached this. |
+| `notify` | bool | `false` | Whether a failure to tidy the journal is reported to `[notify]`'s targets. It is always on stdout and in the Event Log either way. |
+
+The journal looks after itself through the same manage-mode code that tidies IIS logs, and today's
+file is never touched while it is being written. See the README for why it records two lines per
+operation and reports one.
 
 ## `[host]`: when the scheduled task fires
 

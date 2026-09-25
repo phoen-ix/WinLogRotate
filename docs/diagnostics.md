@@ -186,7 +186,7 @@ event ID and in the message text.
 Get-WinEvent -FilterHashtable @{ LogName = 'Application'; ProviderName = 'WinLogRotate' }
 
 # Just the security band
-Get-WinEvent -FilterHashtable @{ LogName='Application'; ProviderName='WinLogRotate'; Id=190..193 }
+Get-WinEvent -FilterHashtable @{ LogName='Application'; ProviderName='WinLogRotate'; Id=190..198 }
 
 # Did anything fail last night? Level 2 is Error, which is also how Critical is written.
 Get-WinEvent -FilterHashtable @{

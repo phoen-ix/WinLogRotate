@@ -79,25 +79,25 @@ server. Only the GUI needs the .NET runtime, and only in the `-min` builds.
 
 | Installer | Size | Needs anything installed? |
 | --- | ---: | --- |
-| [`WinLogRotate-Setup-min.exe`](../../releases/latest) | 3.9 MB | Only for the GUI — the [.NET 10 Desktop Runtime](https://dotnet.microsoft.com/download/dotnet/10.0), fetched for you if missing |
-| [`WinLogRotate-Setup-full.exe`](../../releases/latest) | 44.4 MB | **No** — everything is inside |
-| [`WinLogRotate-Setup.exe`](../../releases/latest) | 44.4 MB | Asks which of the two to install |
+| [`WinLogRotate-Setup-<version>-min.exe`](../../releases/latest) | 4.4 MB | Only for the GUI — the [.NET 10 Desktop Runtime](https://dotnet.microsoft.com/download/dotnet/10.0), fetched for you if missing |
+| [`WinLogRotate-Setup-<version>-full.exe`](../../releases/latest) | 45.0 MB | **No** — everything is inside |
+| [`WinLogRotate-Setup-<version>.exe`](../../releases/latest) | 45.0 MB | Asks which of the two to install |
 
 | Portable | Size | Needs anything installed? |
 | --- | ---: | --- |
-| [`WinLogRotate-min.zip`](../../releases/latest) | 5.1 MB | Only for the GUI |
-| [`WinLogRotate.zip`](../../releases/latest) | 46.6 MB | **No** |
+| [`WinLogRotate-<version>-min.zip`](../../releases/latest) | 5.8 MB | Only for the GUI |
+| [`WinLogRotate-<version>.zip`](../../releases/latest) | 47.3 MB | **No** |
 
-Inside a portable zip: `winlogrotate.exe` (11.3 MB, native, zero dependencies) and
-`winlogrotate-gui.exe` (1.0 MB). `SHA256SUMS.txt` covers every download.
+Inside the `-min` zip: `winlogrotate.exe` (12.8 MB, native, zero dependencies) and
+`winlogrotate-gui.exe` (1.5 MB). `SHA256SUMS.txt` covers every download.
 
 Updating later is `winlogrotate update apply`, or **Settings → Updates** in the console: the
 newer installer is downloaded, checked against the release's `SHA256SUMS.txt`, and run over the
 old one; it waits for any rotation in progress and keeps your configuration. Checking is manual
 unless you ask for once a day. See [updating](docs/updating.md).
 
-Figures are from v0.3.0. They were stale for five releases because nothing recorded the real
-number; CI now writes the measured binary size to every run's summary.
+Figures are from v0.21.0's release assets. Until then they were v0.3.0's, because nothing
+recorded the real number; CI now writes the measured binary size to every run's summary.
 
 Installing per-machine puts config in `C:\ProgramData\WinLogRotate\`, registers a scheduled
 task that runs as SYSTEM, and **locks that directory down to SYSTEM and Administrators**. That
@@ -107,7 +107,7 @@ world-writable config directory would let any local user run a command as SYSTEM
 Silent install, for deploying to customer sites:
 
 ```
-WinLogRotate-Setup.exe /S /AllUsers /HOST=task /CONFIG=\\srv\deploy\jobs
+WinLogRotate-Setup-<version>.exe /S /AllUsers /HOST=task /CONFIG=\\srv\deploy\jobs
 ```
 
 Every switch the installer understands:
@@ -121,6 +121,7 @@ Every switch the installer understands:
 | `/NOPATH` | Leave PATH alone |
 | `/NORUNTIME` | Do not offer to install the .NET Desktop Runtime the GUI needs; the CLI works without it |
 | `/FORCEIDLE` | After two minutes of waiting for a rotation in progress, go ahead anyway. Off by default because the process being replaced may be mid-file on a multi-gigabyte log |
+| `/RESTART` | Start the console again once the files are in place, as the desktop user rather than elevated. What an in-app update passes |
 | `/D=<dir>` | Install directory (the standard NSIS switch; must be last) |
 | `uninstall.exe /S /PURGEDATA` | Remove the configuration, state and history too. Without it a silent uninstall keeps them — which is what an in-place upgrade depends on |
 
@@ -339,7 +340,7 @@ deliberately differs, and what cannot exist on Windows.
 
 ## Status, honestly
 
-**v0.10.x.** The installer and scheduler are verified end to end on Windows. Rotation itself ran
+**v0.21.x.** The installer and scheduler are verified end to end on Windows. Rotation itself ran
 for the first time in 0.4.0 — before that the engine skipped every `kind = "rotate"` job silently,
 which is to say the headline feature had never executed at all. It is verified only against files
 nothing holds open. The GUI has still never rendered a window; what it does with the CLI's
@@ -356,6 +357,19 @@ with; `maxage` deleted yesterday's archive and reported the month-old one it had
 archives above the retention count were probed for at up to a thousand existence checks per log
 and then never touched; and `rotate = n` kept `n + 1` under `dateext`. A plan is now judged by the
 directory it leaves behind, and one is carried out on real files on every Windows build.
+
+**And manage mode never pruned its own archives until after 0.21.0.** A manage job's pattern names
+what the application writes — `u_ex*.log` — and what the job compressed last night is
+`u_ex*.log.zip`, which that pattern does not match. From the second night on, `rotate` and `maxage`
+counted only the files not yet compressed, so every archive the job made was kept for ever; the IIS
+example above was exactly that job, and the installer smoke only ever ran it for one night. A
+manage job now counts the archives it compressed, so **the first run after upgrading prunes the ones
+that piled up** to `rotate` and `maxage`. `winlogrotate run --dry-run` lists them first.
+
+The same audit found values that `config check` accepted and that destroyed data: `maxage = -1`
+deleted every archive, and a number where a name belongs — `compresstype = "3"` — compressed a log
+over itself and deleted it. Those are refused now, along with negative sizes; the job that holds
+one is skipped and named until it is fixed, and the rest of the machine rotates.
 
 ### What has actually run on Windows
 
@@ -445,7 +459,7 @@ from elevation rather than from the install.
 
 ### What is thoroughly tested, everywhere
 
-1,810 tests, and the platform-neutral half is where the subtle bugs live:
+2,179 tests, and the platform-neutral half is where the subtle bugs live:
 
 - logrotate's scheduling rules, including that `--force` does **not** override `notifempty`,
   `minsize` or `minage` — one test per gate
@@ -481,8 +495,9 @@ dotnet test  WinLogRotate.slnx -c Release
 `global.json` pins the SDK band and opts into the Microsoft.Testing.Platform runner, which
 xunit.v3 requires on .NET 10.
 
-Everything except the WinForms project builds and tests on Linux — deliberately, and it's how
-the engine's portable half stays honest.
+Everything builds on Linux, the WinForms project included, and everything but the Windows suite
+runs there — deliberately, and it's how the engine's portable half stays honest. The GUI's window
+and `WinLogRotate.Windows.Tests` need Windows.
 
 ---
 

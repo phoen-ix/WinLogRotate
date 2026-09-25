@@ -91,9 +91,9 @@ in a config file requires, which in practice means a per-machine install.
 | Directive | Why, and what to use instead |
 |---|---|
 | `su user group` | Windows has no `setuid`. `LogonUser` needs a password; the service-logon path needs `SE_TCB_NAME` and yields a token that cannot open files. Parsed, warned about, ignored. **Instead:** run the whole tool under the identity you want, via the scheduled task's principal or a gMSA. |
-| `create mode owner group` | There are no mode bits. A POSIX mode is approximated as a DACL and marked protected, which is honest but lossy. **Instead:** set the ACL on the log directory once; a new log inherits it. |
+| `create mode owner group` | There are no mode bits, and none are approximated: `import` keeps the directive as a comment with a warning, and a recreated log inherits its directory's ACL. **Instead:** set the ACL on the log directory once; a new log inherits it. |
 | `shred` | Not implemented; no `sdelete` dependency is taken. |
-| `compresscmd` / `uncompresscmd` | Windows ships no `gzip.exe`. Compression is in-process. A config naming `/bin/gzip` is translated with a warning. |
+| `compresscmd` / `uncompresscmd` | Windows ships no `gzip.exe`. Compression is in-process. `import` drops these, and `compressoptions`, with a warning; `compresstype` chooses zip or gzip. |
 
 ## Things Windows forces on us that logrotate never needed
 
