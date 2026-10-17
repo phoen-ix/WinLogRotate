@@ -28,7 +28,7 @@
     <!-- 2.0 went GA in Nov 2025 after six years of beta and is AOT-clean; it is what the
          `dotnet` CLI itself ships on. Note the beta5+ API is a substantial rewrite, so any
          tutorial written before 2025 is wrong about it. -->
-    <PackageReference Include="System.CommandLine" Version="2.0.12" />
+    <PackageReference Include="System.CommandLine" Version="2.0.13" />
   </ItemGroup>
 
   <ItemGroup>
