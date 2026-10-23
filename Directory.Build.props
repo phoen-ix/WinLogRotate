@@ -9,7 +9,7 @@
     <TreatWarningsAsErrors>true</TreatWarningsAsErrors>
     <EnforceCodeStyleInBuild>true</EnforceCodeStyleInBuild>
 
-    <!-- Placeholder only: CI injects the real version via -p:Version (release.yml).
+    <!-- Placeholder only: CI injects the real version via -p:Version (ci.yml, release job).
          Local builds show an obviously-dev v0.0.0 instead of a stale-looking number.
          The app reads it back with Assembly.GetName().Version. -->
     <Version>0.0.0-dev</Version>

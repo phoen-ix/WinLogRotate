@@ -459,7 +459,7 @@ from elevation rather than from the install.
 
 ### What is thoroughly tested, everywhere
 
-2,179 tests, and the platform-neutral half is where the subtle bugs live:
+The platform-neutral half of the suite is where the subtle bugs live:
 
 - logrotate's scheduling rules, including that `--force` does **not** override `notifempty`,
   `minsize` or `minage` — one test per gate
