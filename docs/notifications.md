@@ -351,6 +351,8 @@ against a rate-limited endpoint, is how a misconfiguration becomes a lockout.
 The **Notifications** page shows what is configured, sends a test, clears a suppressed channel,
 and stores a credential.
 
+<img src="screenshots/notifications-providers.png" alt="The Notifications page: two targets above, and below them an email provider via smtp.contoso.example and a webhook provider, each using a stored secret" width="800">
+
 That last one is the only thing the GUI does that the command line cannot do more easily, and it
 takes a detour to do it. Storing a secret needs administrator rights, and elevating a child
 process on Windows requires `runas`, which makes redirecting that child's standard input
@@ -364,8 +366,11 @@ only by you and by administrators, and the value is written only after the helpe
 identity has been checked. **If any of that fails, nothing is stored** and the page gives you the
 `notify set-secret` command to run yourself. There is deliberately no second-best channel.
 
-One caveat worth knowing: the GUI is the least-tested part of this product, and its window has
-never been rendered by CI. The command line does everything it does.
+<img src="screenshots/notifications-credential.png" alt="The credential dialog for email.ops: a value and a repeat field, both filled and masked, with Store and Cancel" width="420">
+
+One caveat worth knowing: the GUI is the least-tested part of this product. CI's docs tour draws
+this page and the credential dialog on every build, but never presses Store, so no credential has
+gone down the pipe from the window there. The command line does everything it does.
 
 ## Checking it works
 

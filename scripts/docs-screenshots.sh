@@ -5,7 +5,8 @@
 #   scripts/docs-screenshots.sh [outdir]      # default: docs/screenshots
 #
 # Windows only (Git Bash), with the .NET 10 SDK, from an elevated shell: the console is WinForms,
-# and the tour builds its demo machine under C:\WinLogRotate-demo, removing it again afterwards.
+# and the tour builds its demo machine under C:\WinLogRotate-demo, removing it again once every shot
+# has passed (a failed run leaves it for inspection; the next run wipes and rebuilds it).
 # From anywhere else, run the docs-screenshots workflow and download its artifact:
 #   gh workflow run docs-screenshots.yml
 #

@@ -52,6 +52,8 @@ updates, that is one line of configuration management calling this verb.
 
 Settings, at the top: **Updates**.
 
+<img src="screenshots/settings-overview.png" alt="The Settings page: the Updates choice set to Only when I ask, Check now, never checked yet, and the doctor report below" width="800">
+
 - **Only when I ask** is the default. Nothing reaches the internet unless you press Check now.
 - **Check once a day when this window opens** runs the same check, at most once a day, when the
   console starts. It only checks. A newer release shows as a line across the top of the window;

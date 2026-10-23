@@ -77,10 +77,10 @@ credential they use. Send test proves a channel works (`winlogrotate notify test
 
 ## Set credential
 
-Stores the selected provider's password or token in the encrypted store; the value goes to the
-elevated CLI over a private pipe, never on a command line.
+Stores the selected provider's password or token in the encrypted store — here the SMTP password
+of `email.ops`. The value goes to the elevated CLI over a private pipe, never on a command line.
 
-<img src="notifications-credential.png" alt="The credential dialog: a value field and a repeat field, both masked, with Store and Cancel" width="420">
+<img src="notifications-credential.png" alt="The credential dialog for email.ops: a value and a repeat field, both filled and masked, with Store and Cancel" width="420">
 
 ## Settings
 

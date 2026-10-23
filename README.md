@@ -517,7 +517,8 @@ because it cannot start without the Windows Desktop runtime) need Windows.
 
 `docs/screenshots/` is made by a test, not by hand: `tests/WinLogRotate.Gui.Tests` builds a
 fictional machine under `C:\WinLogRotate-demo`, opens the real console on it, asserts that each
-page and dialog shows what its picture is meant to, saves it, and deletes the machine again. On
+page and dialog shows what its picture is meant to, and saves it. The machine is deleted once every
+shot has passed; a failed run leaves it for inspection, and the next run wipes and rebuilds it. On
 Windows, from an elevated Git Bash:
 
 ```
