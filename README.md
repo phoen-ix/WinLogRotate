@@ -9,6 +9,8 @@ container, because a config a GUI edits has to survive being rewritten.
 > **Not related to LogRotateWin.** This is a new MIT-licensed project on .NET 10. The 2013
 > SourceForge *LogRotateWin* and its forks are GPLv3 and unmaintained.
 
+<img src="docs/screenshots/jobs-list.png" alt="The console's Jobs page: three jobs - an IIS site in manage mode, a disabled importer and a shop API - with their state, kind, paths and policy" width="800">
+
 ---
 
 ## Why another one
@@ -154,6 +156,14 @@ is only given a clock.
 The form is a menu of sections — Files, How, When, Keep, Old copies, Before & after, If things
 go wrong — and each shows its plain choices first and every other setting under **More
 settings**, captioned in plain words with its default and where its value comes from.
+
+<img src="docs/screenshots/jobs-editor.png" alt="The job editor on its Files section: the name, the file pattern with a live match count, and the sentence restating what the job will do" width="800">
+
+<img src="docs/screenshots/run-dry-run.png" alt="The Run page after a dry run: every deletion, compression and rename that Rotate now would make, and nothing changed" width="800">
+
+<img src="docs/screenshots/history-journal.png" alt="The History page: three nights of the journal, with the one compression that failed because IIS still held the file" width="800">
+
+Every page and dialog, with what each is for: [screenshots](docs/screenshots/README.md).
 
 `--dry-run` is the same code path as a real run, stopped one step earlier — not a separate
 description that can drift from what the executor does. `job set --dry-run` works the same way:
@@ -343,9 +353,10 @@ deliberately differs, and what cannot exist on Windows.
 **v0.21.x.** The installer and scheduler are verified end to end on Windows. Rotation itself ran
 for the first time in 0.4.0 — before that the engine skipped every `kind = "rotate"` job silently,
 which is to say the headline feature had never executed at all. It is verified only against files
-nothing holds open. The GUI has still never rendered a window; what it does with the CLI's
-output — following the stream, wording an exit code, reading a failure out of an envelope — now
-lives in a plain library and is covered, which is the part that was silently wrong.
+nothing holds open. The GUI's window is drawn on every CI build now, by the docs tour that makes
+the screenshots, but nothing has been saved through it there; what it does with the CLI's
+output — following the stream, wording an exit code, reading a failure out of an envelope — lives
+in a plain library and is covered, which is the part that was silently wrong.
 
 **And the planner was wrong in five ways until 0.11.0.** No test anywhere had ever *executed* a
 rotate plan — the executor refuses to run off Windows, and every planner test stopped at the list
@@ -423,10 +434,12 @@ from elevation rather than from the install.
   `maxage`, `dateext` or a multi-generation chain; those meet real files only in the Windows unit
   suite, and a directory model everywhere else. Milestone 23's five planner defects all lived in
   that gap.
-- **The GUI has never rendered.** No window, no theme, no dialog. The runner is Server and every
-  install is silent, so the installer's own wizard pages have never been drawn either. That now
-  includes the Notifications page and the credential dialog; the pipe *behind* that dialog is
-  covered on the Windows leg, but nothing has ever clicked the button that uses it.
+- **The GUI is drawn, not used.** Every CI build opens the console on a seeded demo machine and
+  draws each page, the job editor and the confirmation, configuration-check and credential
+  dialogs, asserting what each shows (`tests/WinLogRotate.Gui.Tests`). Every dialog is then
+  cancelled: nothing is saved, removed or rotated through the window, no credential goes down the
+  pipe behind its dialog, and nothing is drawn in the dark theme. Every install is silent, so the
+  installer's own wizard pages have never been drawn either.
 - **Nothing unelevated.** The runner is an administrator throughout, so the read-only banner, the
   "needs administrator" refusals and the UAC child-process elevation are untested.
 - **No writer that genuinely misbehaves.** The NUL-fill is reproduced by a handle that caches its
@@ -496,8 +509,24 @@ dotnet test  WinLogRotate.slnx -c Release
 xunit.v3 requires on .NET 10.
 
 Everything builds on Linux, the WinForms project included, and everything but the Windows suite
-runs there — deliberately, and it's how the engine's portable half stays honest. The GUI's window
-and `WinLogRotate.Windows.Tests` need Windows.
+runs there — deliberately, and it's how the engine's portable half stays honest. The GUI's window,
+`WinLogRotate.Windows.Tests` and the docs tour (`WinLogRotate.Gui.Tests`, kept out of the solution
+because it cannot start without the Windows Desktop runtime) need Windows.
+
+## Screenshots
+
+`docs/screenshots/` is made by a test, not by hand: `tests/WinLogRotate.Gui.Tests` builds a
+fictional machine under `C:\WinLogRotate-demo`, opens the real console on it, asserts that each
+page and dialog shows what its picture is meant to, saves it, and deletes the machine again. On
+Windows, from an elevated Git Bash:
+
+```
+bash scripts/docs-screenshots.sh            # writes docs/screenshots/*.png
+```
+
+Anywhere else, run the **Docs screenshots** workflow (`gh workflow run docs-screenshots.yml`) and
+unzip its `docs-screenshots` artifact into `docs/screenshots/`. Every CI build runs the same tour as
+a render check, into a temporary directory.
 
 ---
 

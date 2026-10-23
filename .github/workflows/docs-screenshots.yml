@@ -1,0 +1,46 @@
+name: Docs screenshots
+
+# Regenerates the README screenshots (docs/screenshots/*.png): opens the real console on a seeded
+# demo machine (tests/WinLogRotate.Gui.Tests) and saves every page and dialog the docs show. The
+# PNGs come back as the `docs-screenshots` artifact - this workflow never commits. Unzip the
+# artifact into docs/screenshots/, look at the diff, and commit it yourself (README "Screenshots").
+#
+# Manual only: screenshots are regenerated on purpose, when a page worth showing has changed, not
+# on every push. The same tour runs as a render check in ci.yml's build job, into the runner's
+# temp directory, and that copy is never the one to commit.
+on:
+  workflow_dispatch: {}
+
+permissions:
+  contents: read
+
+concurrency:
+  group: docs-screenshots
+  cancel-in-progress: true
+
+jobs:
+  screenshots:
+    # The image ci.yml pins, so the fonts and controls drawn here are the ones its render check
+    # draws.
+    runs-on: windows-2025
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          # The tags, for the version the console shows.
+          fetch-depth: 0
+
+      - uses: actions/setup-dotnet@a98b56852c35b8e3190ac28c8c2271da59106c68 # v6.0.0
+        with:
+          global-json-file: global.json
+
+      - name: Run the docs tour
+        shell: bash
+        run: bash scripts/docs-screenshots.sh "$RUNNER_TEMP/screenshots"
+
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        if: always()
+        with:
+          name: docs-screenshots
+          path: ${{ runner.temp }}/screenshots/
+          retention-days: 14

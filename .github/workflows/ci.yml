@@ -90,6 +90,15 @@ jobs:
       - name: Format check
         run: dotnet format WinLogRotate.slnx --verify-no-changes --severity warn
 
+      # The one place the console's window is opened and drawn: the docs tour
+      # (tests/WinLogRotate.Gui.Tests) seeds a demo machine, walks every page and dialog the README
+      # shows, and asserts each before saving it. Here the PNGs go to the runner's temp directory
+      # and are thrown away; docs-screenshots.yml is the workflow whose PNGs get committed. The
+      # project is not in the slnx because it cannot start on Linux, so it is built here.
+      - name: Render the console (docs tour)
+        shell: bash
+        run: bash scripts/docs-screenshots.sh "$RUNNER_TEMP/screenshots"
+
   # Everything except the WinForms project must build and its tests must pass off-Windows.
   # This is not portability for its own sake: it is the standing proof that the engine's
   # platform-neutral half (schedule math, glob matching, retention arithmetic, TOML
