@@ -1,5 +1,6 @@
 using System.Diagnostics;
 using System.Drawing.Imaging;
+using System.Globalization;
 using System.Reflection;
 using System.Runtime.ExceptionServices;
 
@@ -77,6 +78,14 @@ public sealed class DocsTour
 
     private void Tour()
     {
+        // The committed PNGs are en-US whatever the machine: a run on a German one must not put
+        // 172,4 KB or 15.06.2026 into English docs. DocsSeed handles the time zone.
+        var english = CultureInfo.GetCultureInfo("en-US");
+        CultureInfo.DefaultThreadCurrentCulture = english;
+        CultureInfo.DefaultThreadCurrentUICulture = english;
+        CultureInfo.CurrentCulture = english;
+        CultureInfo.CurrentUICulture = english;
+
         Application.EnableVisualStyles();
         Application.SetCompatibleTextRenderingDefault(false);
         Application.SetHighDpiMode(HighDpiMode.PerMonitorV2);
@@ -180,6 +189,7 @@ public sealed class DocsTour
             Shoot(form, "history-journal");
 
             Navigate(form, "Scheduling");
+            Wait(() => All(form).OfType<Label>().Any(l => l.Visible && l.Text.StartsWith("Currently:", StringComparison.Ordinal)), "the run host");
             Shoot(form, "scheduling-task");
 
             Navigate(form, "Notifications");
@@ -194,7 +204,15 @@ public sealed class DocsTour
 
             Dialog(() => Button(form, "Set credential...").PerformClick(), prompt =>
             {
-                Assert.StartsWith("Credential for", prompt.Text, StringComparison.Ordinal);
+                Assert.Equal("Credential for email.ops", prompt.Text);
+
+                // Typed so the picture shows the masking; the dialog is cancelled, so nothing is stored.
+                foreach (var box in All(prompt).OfType<TextBox>())
+                {
+                    box.Text = "not-a-real-secret";
+                }
+
+                Settle();
                 Shoot(prompt, "notifications-credential");
             });
 
@@ -216,8 +234,10 @@ public sealed class DocsTour
                 Shoot(editor, "jobs-editor");
 
                 var menu = All(editor).OfType<ListBox>().First();
-                menu.SelectedIndex = menu.Items.Cast<object>().ToList().FindIndex(i => $"{i}".StartsWith("Keep", StringComparison.Ordinal));
-                Settle();
+                var keep = menu.Items.Cast<object>().ToList().FindIndex(i => $"{i}".StartsWith(JobEditorModel.Menu(JobPageId.Keep), StringComparison.Ordinal));
+                Assert.True(keep >= 0, "The editor has no Keep section.");
+                menu.SelectedIndex = keep;
+                Wait(() => All(editor).OfType<Label>().Any(l => l.Visible && l.Text == JobEditorModel.Title(JobPageId.Keep)), "the Keep section");
                 Shoot(editor, "jobs-editor-keep");
             });
         }

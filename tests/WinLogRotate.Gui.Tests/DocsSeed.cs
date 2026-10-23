@@ -237,8 +237,11 @@ internal static class DocsSeed
 
         for (var night = 13; night <= 15; night++)
         {
-            var at = new DateTimeOffset(2026, 6, night, 2, 30, 0, TimeSpan.Zero);
-            using var writer = JournalWriter.Open(journal, new FakeTimeProvider(at), $"01JXDEMORUN0000000000000{night}");
+            // 02:30 on this machine's clock, as [host] time says, so History reads the same in
+            // every time zone.
+            var local = new DateTime(2026, 6, night, 2, 30, 0);
+            var at = new DateTimeOffset(local, TimeZoneInfo.Local.GetUtcOffset(local));
+            using var writer = JournalWriter.Open(journal, new FakeTimeProvider(at.ToUniversalTime()), $"01JXDEMORUN0000000000000{night}");
             var second = 0;
 
             void Write(string operation, string? job, string? src = null, string? dst = null,
