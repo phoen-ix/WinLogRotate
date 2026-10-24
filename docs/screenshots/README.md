@@ -70,10 +70,11 @@ machine has no task registered yet, which the page says in so many words.
 
 ## Notifications
 
-Where failures are reported: targets above, providers below with where they send and which stored
-credential they use. Send test proves a channel works (`winlogrotate notify test`).
+Where failures are reported: when a job is reported and after how long a continuing failure is
+repeated, then targets and providers with where they send and which stored credential they use.
+Send test proves a channel works (`winlogrotate notify test`).
 
-<img src="notifications-providers.png" alt="The Notifications page: reporting is on, with an email provider via smtp.contoso.example and a webhook provider, each using a stored secret" width="800">
+<img src="notifications-providers.png" alt="The Notifications page: reporting is on when a job's outcome changes, with a reminder after 7 days, and an email provider via smtp.contoso.example and a webhook provider, each using a stored secret" width="800">
 
 ## Set credential
 
