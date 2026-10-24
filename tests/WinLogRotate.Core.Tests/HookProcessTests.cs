@@ -135,6 +135,13 @@ public sealed class HookProcessTests : IDisposable
     /// taken effect, so one forked in that instant is never listed, outlives its parent, and the
     /// test failed for a reason that is not the one it asserts.
     /// </para>
+    /// <para>
+    /// On Windows the tree is two batch files, because no quote survives the trip inline:
+    /// ArgumentList escapes each <c>"</c> as <c>\"</c>, which cmd does not read as an escape. The
+    /// inline script this replaced redirected into a mangled path, so its grandchild never wrote
+    /// anything, and the Windows leg passed without a tree to kill until the started marker
+    /// above asked for one.
+    /// </para>
     /// </remarks>
     [Fact]
     public void AndItsChildrenAre()
@@ -143,7 +150,7 @@ public sealed class HookProcessTests : IDisposable
         var witness = Path.Combine(_dir.FullName, "grandchild-survived.txt");
 
         var script = OperatingSystem.IsWindows()
-            ? $"start /b cmd /c \"echo started > \"\"{started}\"\" & ping -n 6 127.0.0.1 >nul & echo alive > \"\"{witness}\"\"\" & ping -n 20 127.0.0.1 >nul"
+            ? WindowsTree(started, witness)
             : $"sh -c 'echo started > \"{started}\"; sleep 5; echo alive > \"{witness}\"' & sleep 20";
 
         Host.Run(Hook(script), TimeSpan.FromSeconds(3)).Result.ShouldBe(HookResult.TimedOut);
@@ -154,6 +161,27 @@ public sealed class HookProcessTests : IDisposable
         Thread.Sleep(TimeSpan.FromSeconds(6));
 
         File.Exists(witness).ShouldBeFalse("the whole process tree must have been killed");
+    }
+
+    /// <summary>Writes the hook and its grandchild as batch files, and returns the hook's path.</summary>
+    private string WindowsTree(string started, string witness)
+    {
+        var grandchild = Path.Combine(_dir.FullName, "grandchild.cmd");
+        File.WriteAllLines(grandchild,
+        [
+            $"@echo started> \"{started}\"",
+            "@ping -n 6 127.0.0.1 >nul",
+            $"@echo alive> \"{witness}\"",
+        ]);
+
+        var hook = Path.Combine(_dir.FullName, "hook.cmd");
+        File.WriteAllLines(hook,
+        [
+            $"@start /b \"\" cmd /c \"{grandchild}\"",
+            "@ping -n 20 127.0.0.1 >nul",
+        ]);
+
+        return hook;
     }
 
     // ---- exit codes --------------------------------------------------------------------------
