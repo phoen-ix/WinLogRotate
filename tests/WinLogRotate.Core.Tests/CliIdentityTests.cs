@@ -17,6 +17,7 @@ namespace WinLogRotate.Core.Tests;
 /// code, written to make <c>--version --json</c> produce an envelope for a reader that did not
 /// exist - and a grep for "Schema" across both GUI projects returned nothing at all.
 /// </remarks>
+[Collection(RotationGateCollection.Name)]
 public sealed class CliIdentityTests : IDisposable
 {
     private readonly DirectoryInfo _dir = Directory.CreateTempSubdirectory("winlogrotate-identity-");

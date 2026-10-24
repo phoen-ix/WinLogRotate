@@ -3016,4 +3016,29 @@ public partial class ArchitectureTests
         sinkCode.ShouldNotContain("EventLogWriter.WriteDigest", Case.Sensitive,
             "mirrored diagnostics would go on the allowance that deliberately has no ceiling");
     }
+
+    /// <summary>
+    /// A test class that swaps the process's console runs in <see cref="RotationGateCollection"/>.
+    /// </summary>
+    /// <remarks>
+    /// Two classes doing it side by side steal each other's output, which failed
+    /// <c>EnvelopeDetailsTests</c> only on a loaded machine. See the collection's remarks.
+    /// </remarks>
+    [Fact]
+    public void EveryClassThatSwapsTheConsoleRunsInThisCollection()
+    {
+        var tests = Path.Combine(RepoRoot.Find().FullName, "tests", "WinLogRotate.Core.Tests");
+
+        var offenders = Directory
+            .EnumerateFiles(tests, "*.cs", SearchOption.TopDirectoryOnly)
+            .Where(f => Path.GetFileName(f) != "ArchitectureTests.cs") // the needles below
+            .Select(f => (File: Path.GetFileName(f), Text: File.ReadAllText(f)))
+            .Where(x => x.Text.Contains("Console.SetOut(", StringComparison.Ordinal)
+                     || x.Text.Contains("Console.SetError(", StringComparison.Ordinal))
+            .Where(x => !x.Text.Contains("[Collection(RotationGateCollection.Name)]", StringComparison.Ordinal))
+            .Select(x => x.File)
+            .ToArray();
+
+        offenders.ShouldBeEmpty("Console.Out is one writer per process; see RotationGateCollection");
+    }
 }

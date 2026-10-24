@@ -23,6 +23,7 @@ namespace WinLogRotate.Core.Tests;
 /// short-circuits here and produces no envelope.
 /// </para>
 /// </remarks>
+[Collection(RotationGateCollection.Name)]
 public sealed class ParseErrorEnvelopeTests : IDisposable
 {
     private readonly DirectoryInfo _dir = Directory.CreateTempSubdirectory("winlogrotate-parse-");

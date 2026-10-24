@@ -3,7 +3,7 @@ using Xunit;
 namespace WinLogRotate.Core.Tests;
 
 /// <summary>
-/// The suites that drive the <c>run</c> verb in this process, run one at a time.
+/// The suites that drive the <c>run</c> verb in this process, or swap its console, run one at a time.
 /// </summary>
 /// <remarks>
 /// <para>
@@ -20,6 +20,13 @@ namespace WinLogRotate.Core.Tests;
 /// say; and it would make <c>JsonStreamTests</c>' assertion that "the GUI's own command line
 /// must parse" false, since the GUI passes no such flag. The point of those tests is that they
 /// run the real thing with the real arguments.
+/// </para>
+/// <para>
+/// The console is the same kind of thing: one writer per process. A class that swaps
+/// <c>Console.Out</c> while another has it swapped takes the other's output, or hands its own to
+/// whichever writer it saved - so <c>EnvelopeDetailsTests</c> read an empty stdout, under load and
+/// only then, while <c>ParseErrorEnvelopeTests</c> or <c>CliIdentityTests</c> ran beside it.
+/// <c>ArchitectureTests.EveryClassThatSwapsTheConsoleRunsInThisCollection</c> keeps it that way.
 /// </para>
 /// </remarks>
 [CollectionDefinition(Name)]
