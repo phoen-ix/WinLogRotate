@@ -1,4 +1,3 @@
-using System.Text;
 using System.Text.Json;
 using WinLogRotate.Core.Secrets;
 using WinLogRotate.Gui.Cli;
@@ -132,23 +131,7 @@ public sealed class NotificationsPage : UserControl
             using var document = JsonDocument.Parse(result.StdOut);
             var payload = document.RootElement.GetProperty("result");
 
-            var on = payload.GetProperty("on").GetString();
-            var would = payload.GetProperty("wouldSend").GetBoolean();
-
-            var summary = new StringBuilder();
-            summary.Append(would ? "Reporting is on" : "Nothing would be sent");
-            // Lowercased here, not on the wire. "on" is an enum name in the envelope - the
-            // contract's job is to be unambiguous, this sentence's job is to read like English.
-            summary.Append(", ").Append(on?.ToLowerInvariant()).Append('.').AppendLine();
-            summary.Append("Threshold ").Append(payload.GetProperty("threshold").GetString())
-                   .Append(" and above, reminder after ").Append(payload.GetProperty("remindAfter").GetString())
-                   .Append('.').AppendLine();
-            summary.Append("Proxy: ").Append(payload.GetProperty("proxy").GetString()).AppendLine();
-            summary.Append(payload.TryGetProperty("certificatePin", out var pin) && pin.ValueKind == JsonValueKind.String
-                ? $"TLS pinned to {pin.GetString()}"
-                : "TLS: the machine's certificate store decides");
-
-            _summary.Text = summary.ToString();
+            _summary.Text = NotifyShowView.Summary(payload);
 
             foreach (var target in payload.GetProperty("targets").EnumerateArray())
             {
@@ -187,7 +170,8 @@ public sealed class NotificationsPage : UserControl
                 ? "Nothing is configured, so a failed rotation would tell nobody."
                 : "Nothing here proves a target works. Use Send test.";
         }
-        catch (Exception e) when (e is JsonException or KeyNotFoundException or InvalidOperationException)
+        catch (Exception e) when (e is JsonException or KeyNotFoundException or InvalidOperationException
+                                       or ArgumentException or FormatException)
         {
             // Said out loud. Swallowing it leaves an empty grid, which reads as "nothing is
             // configured" - the opposite of the truth, and the one wrong answer this page can give
