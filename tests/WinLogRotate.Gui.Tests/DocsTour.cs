@@ -195,6 +195,7 @@ public sealed class DocsTour
             Navigate(form, "Notifications");
             var providers = Grid(form);
             Wait(() => providers.Rows.Count > 0, "the providers");
+            Wait(() => All(form).OfType<Label>().Any(l => l.Text.Contains("reported again after 7 days", StringComparison.Ordinal)), "the summary in words");
             Shoot(form, "notifications-providers");
 
             // A provider row, not a target row: only those carry a credential.
