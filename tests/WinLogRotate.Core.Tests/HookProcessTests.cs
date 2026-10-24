@@ -128,17 +128,27 @@ public sealed class HookProcessTests : IDisposable
     /// that launches a helper and returns would otherwise leave the helper running - holding the
     /// pipe this side has stopped reading, and outliving the rotation it belonged to. Asserted by
     /// what the grandchild would have written, because a pid is gone by the time it is checked.
+    /// <para>
+    /// The hook gets three seconds to build its tree, and the grandchild says it is running. With
+    /// one second, on a loaded machine, the kill could land while the shell was still starting
+    /// the grandchild: Kill(entireProcessTree) lists the children before the stop it sends has
+    /// taken effect, so one forked in that instant is never listed, outlives its parent, and the
+    /// test failed for a reason that is not the one it asserts.
+    /// </para>
     /// </remarks>
     [Fact]
     public void AndItsChildrenAre()
     {
+        var started = Path.Combine(_dir.FullName, "grandchild-started.txt");
         var witness = Path.Combine(_dir.FullName, "grandchild-survived.txt");
 
         var script = OperatingSystem.IsWindows()
-            ? $"start /b cmd /c \"ping -n 4 127.0.0.1 >nul & echo alive > \"\"{witness}\"\"\" & ping -n 20 127.0.0.1 >nul"
-            : $"sh -c 'sleep 3; echo alive > \"{witness}\"' & sleep 20";
+            ? $"start /b cmd /c \"echo started > \"\"{started}\"\" & ping -n 6 127.0.0.1 >nul & echo alive > \"\"{witness}\"\"\" & ping -n 20 127.0.0.1 >nul"
+            : $"sh -c 'echo started > \"{started}\"; sleep 5; echo alive > \"{witness}\"' & sleep 20";
 
-        Host.Run(Hook(script), TimeSpan.FromSeconds(1)).Result.ShouldBe(HookResult.TimedOut);
+        Host.Run(Hook(script), TimeSpan.FromSeconds(3)).Result.ShouldBe(HookResult.TimedOut);
+
+        File.Exists(started).ShouldBeTrue("the grandchild must be running when the hook is killed, or this proves nothing");
 
         // Long enough that a surviving grandchild would have written by now.
         Thread.Sleep(TimeSpan.FromSeconds(6));
