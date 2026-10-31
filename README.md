@@ -439,7 +439,11 @@ from elevation rather than from the install.
   dialogs, asserting what each shows (`tests/WinLogRotate.Gui.Tests`). Every dialog is then
   cancelled: nothing is saved, removed or rotated through the window, no credential goes down the
   pipe behind its dialog, and nothing is drawn in the dark theme. Every install is silent, so the
-  installer's own wizard pages have never been drawn either.
+  installer's own wizard pages have never been drawn either. End-to-end journeys that do all of
+  that — save, toggle and remove a job, Rotate now, store a credential down the pipe, Send test to
+  a local webhook, Repair permissions, switch the scheduled task — are written
+  (`scripts/e2e.sh`, ci.yml's `e2e` job, map in `tests/WinLogRotate.Gui.Tests/COVERAGE.md`) but had
+  not yet run on Windows when this was written.
 - **Nothing unelevated.** The runner is an administrator throughout, so the read-only banner, the
   "needs administrator" refusals and the UAC child-process elevation are untested.
 - **No writer that genuinely misbehaves.** The NUL-fill is reproduced by a handle that caches its
@@ -528,6 +532,21 @@ bash scripts/docs-screenshots.sh            # writes docs/screenshots/*.png
 Anywhere else, run the **Docs screenshots** workflow (`gh workflow run docs-screenshots.yml`) and
 unzip its `docs-screenshots` artifact into `docs/screenshots/`. Every CI build runs the same tour as
 a render check, into a temporary directory.
+
+## E2E
+
+The same harness drives the console end to end: `tests/WinLogRotate.Gui.Tests/E2E` opens the real
+window and runs the real `winlogrotate.exe`, each journey in a sandbox of its own under
+`C:\WinLogRotate-e2e`, and checks the files they leave. `tests/WinLogRotate.Gui.Tests/COVERAGE.md`
+maps every page, dialog and verb to its journey, or says why it has none. On Windows, from an
+elevated Git Bash:
+
+```
+bash scripts/e2e.sh                          # WINLOGROTATE_E2E_MACHINE=1 also registers a scheduled task
+```
+
+Elsewhere the script refuses; ci.yml's `e2e` job runs it on every push and pull request, and a
+release waits for it.
 
 ---
 
