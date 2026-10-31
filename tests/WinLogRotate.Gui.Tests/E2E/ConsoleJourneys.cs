@@ -3,8 +3,11 @@ using System.Net.Sockets;
 using System.Text;
 using System.Text.RegularExpressions;
 
+using Microsoft.Win32;
+
 using WinLogRotate.Gui.Cli;
 using WinLogRotate.Gui.Pages;
+using WinLogRotate.Gui.Ui;
 
 using Xunit;
 
@@ -17,8 +20,6 @@ namespace WinLogRotate.Gui.Tests.E2E;
 [Collection(ConsoleCollection.Name)]
 public sealed class ConsoleJourneys
 {
-    public ConsoleJourneys() => Sandbox.Require();
-
     public static TheoryData<string> PageNames => ["Jobs", "Run", "History", "Scheduling", "Notifications", "Settings"];
 
     /// <summary>What each page shows once it has loaded, on a configuration with one job and one channel.</summary>
@@ -55,6 +56,7 @@ public sealed class ConsoleJourneys
     [MemberData(nameof(PageNames))]
     public void EveryPageLoads(string page)
     {
+        Sandbox.Require();
         using var box = Populated("sweep", string.Format(System.Globalization.CultureInfo.InvariantCulture, Webhook, 9));
 
         ConsoleDriver.Run(d =>
@@ -70,6 +72,7 @@ public sealed class ConsoleJourneys
     [Fact]
     public void EveryPageLoadsOnAnEmptyConfiguration()
     {
+        Sandbox.Require();
         using var box = new Sandbox("empty");
 
         ConsoleDriver.Run(d =>
@@ -93,6 +96,7 @@ public sealed class ConsoleJourneys
     [Fact]
     public void ADryRunChangesNothingAndRotateNowAsksThenRotatesIntoTheHistory()
     {
+        Sandbox.Require();
         using var box = Populated("run");
 
         ConsoleDriver.Run(d =>
@@ -131,6 +135,7 @@ public sealed class ConsoleJourneys
     [Fact]
     public void SendTestDeliversToTheWebhookAndNamesAChannelThatFailed()
     {
+        Sandbox.Require();
         using var sink = new TcpListener(IPAddress.Loopback, 0);
         sink.Start();
         var port = ((IPEndPoint)sink.LocalEndpoint).Port;
@@ -164,6 +169,10 @@ public sealed class ConsoleJourneys
                 Button(confirm, "Yes").PerformClick();
             });
             d.Wait(() => Says(form, "Suppressed channels cleared."), "the reset");
+
+            Grid(form).Rows.Clear();
+            d.Click(Button(form, "Refresh"));
+            d.Wait(() => Grid(form).Rows.Count > 0, "the refreshed channels");
         });
     }
 
@@ -181,6 +190,7 @@ public sealed class ConsoleJourneys
     [Fact]
     public void ACredentialIsStoredThroughThePromptAndAMismatchIsRefused()
     {
+        Sandbox.Require();
         using var box = Populated("secret", """
 
             [notify]
@@ -209,6 +219,22 @@ public sealed class ConsoleJourneys
             providers.CurrentCell = provider.Cells[0];
             provider.Selected = true;
 
+            // Cancel stores nothing and says nothing.
+            d.Dialog(() => Button(form, "Set credential...").PerformClick(), prompt =>
+            {
+                Assert.Equal("Credential for email.ops", prompt.Text);
+                Button(prompt, "Cancel").PerformClick();
+            });
+
+            // Nothing typed: refused once the prompt closes.
+            d.Dialog(() => Button(form, "Set credential...").PerformClick(),
+                prompt => Button(prompt, "Store").PerformClick(),
+                refusal =>
+                {
+                    Assert.Equal("Credential", refusal.Text);
+                    Assert.Equal("An empty value is not stored.", Message(refusal));
+                });
+
             // Two different entries: refused once the prompt closes, and nothing is stored.
             d.Dialog(() => Button(form, "Set credential...").PerformClick(),
                 prompt =>
@@ -225,6 +251,7 @@ public sealed class ConsoleJourneys
                     Assert.Equal("Credential", refusal.Text);
                     Assert.Equal("The two entries did not match.", Message(refusal));
                 });
+            Assert.Contains("password = \"@secret:e2e-mail\"", File.ReadAllText(box.ConfigFile), StringComparison.Ordinal);
 
             d.Dialog(() => Button(form, "Set credential...").PerformClick(),
                 prompt =>
@@ -252,6 +279,7 @@ public sealed class ConsoleJourneys
     [Fact]
     public void SetCredentialWithoutAProviderSaysToPickOne()
     {
+        Sandbox.Require();
         using var box = Populated("nocred");
 
         ConsoleDriver.Run(d =>
@@ -271,6 +299,7 @@ public sealed class ConsoleJourneys
     [Fact]
     public void RepairPermissionsSecuresTheConfigurationDirectory()
     {
+        Sandbox.Require();
         using var box = Populated("repair");
 
         ConsoleDriver.Run(d =>
@@ -295,10 +324,46 @@ public sealed class ConsoleJourneys
         Assert.True(doctor.Result.GetProperty("hooksAllowed").GetBoolean(), doctor.ToString());
     }
 
+    /// <summary>Switches the user's app theme to dark, so only where CI says the machine is the test's.</summary>
+    [Fact]
+    public void TheWindowOpensDarkWhenWindowsAppsAreDark()
+    {
+        Sandbox.Require();
+        Assert.SkipUnless(Sandbox.MachineMayChange, "Switches the user's app theme: set WINLOGROTATE_E2E_MACHINE=1 on a throwaway machine.");
+        using var box = Populated("dark");
+
+        using var personalize = Registry.CurrentUser.CreateSubKey(@"Software\Microsoft\Windows\CurrentVersion\Themes\Personalize");
+        var before = personalize.GetValue("AppsUseLightTheme");
+        personalize.SetValue("AppsUseLightTheme", 0, RegistryValueKind.DWord);
+
+        try
+        {
+            ConsoleDriver.Run(d =>
+            {
+                using var form = d.Open(box.Config);
+                d.Wait(Loaded(form, "Jobs"), "the Jobs page");
+                Assert.True(Theme.IsDark, "The window opened light under a dark app theme.");
+                Assert.Equal(ThemeColors.Dark.Window, form.BackColor);
+            });
+        }
+        finally
+        {
+            if (before is null)
+            {
+                personalize.DeleteValue("AppsUseLightTheme", throwOnMissingValue: false);
+            }
+            else
+            {
+                personalize.SetValue("AppsUseLightTheme", before, RegistryValueKind.DWord);
+            }
+        }
+    }
+
     /// <summary>Changes what runs rotations on this machine, so only where CI says the machine is the test's.</summary>
     [Fact]
     public void SchedulingRegistersTheTaskAndSwitchesBackToNothing()
     {
+        Sandbox.Require();
         Assert.SkipUnless(Sandbox.MachineMayChange, "Registers a scheduled task: set WINLOGROTATE_E2E_MACHINE=1 on a throwaway machine.");
         using var box = Populated("schedule");
 

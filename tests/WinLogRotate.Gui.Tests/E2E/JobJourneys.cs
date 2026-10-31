@@ -12,13 +12,12 @@ namespace WinLogRotate.Gui.Tests.E2E;
 [Collection(ConsoleCollection.Name)]
 public sealed class JobJourneys
 {
-    public JobJourneys() => Sandbox.Require();
-
     private static string[] JobFiles(Sandbox box) => Directory.GetFiles(Path.Combine(box.Config, "conf.d"), "*.toml");
 
     [Fact]
     public void TheFirstJobIsAddedFromTheEmptyStateAndWritesItsFile()
     {
+        Sandbox.Require();
         using var box = new Sandbox("add");
         box.Log();
 
@@ -61,6 +60,7 @@ public sealed class JobJourneys
     [Fact]
     public void EditingAJobChangesOnlyTheLineThatChanged()
     {
+        Sandbox.Require();
         using var box = new Sandbox("edit");
         box.Log();
         var file = box.Job("app.toml", "App");
@@ -71,6 +71,13 @@ public sealed class JobJourneys
             using var form = d.Open(box.Config);
             var jobs = Grid(form);
             d.Wait(() => Row(jobs, "App") is not null, "the job");
+
+            // The row says what the job is, where it looks, and what it keeps.
+            var row = Row(jobs, "App")!;
+            Assert.Equal("on", row.Cells["state"].Value);
+            Assert.Equal("rotate", row.Cells["kind"].Value);
+            Assert.Equal(box.Glob(), row.Cells["paths"].Value);
+            Assert.Equal("daily, keep 3", row.Cells["policy"].Value);
 
             // A double-click opens the row under the pointer.
             d.Dialog(() => Raise(jobs, "OnCellDoubleClick", new DataGridViewCellEventArgs(0, Row(jobs, "App")!.Index)), dialog =>
@@ -100,6 +107,7 @@ public sealed class JobJourneys
     [Fact]
     public void TheEditorChecksAndPreviewsWithoutWritingAndCancelKeepsTheFile()
     {
+        Sandbox.Require();
         using var box = new Sandbox("check");
         box.Log();
         var file = box.Job("app.toml", "App");
@@ -127,7 +135,7 @@ public sealed class JobJourneys
                 Field<TextBox>(editor, "_rotate").Text = "9";
                 var status = Field<Label>(editor, "_status");
                 d.Click(Field<Button>(editor, "_check"));
-                d.Wait(() => status.Text.Length > 0, "the check's verdict");
+                d.Wait(() => status.Text == "App would be accepted: 1 change. Nothing has been written.", "the check's verdict");
                 Assert.Equal(before, File.ReadAllText(file));
 
                 // An impossible value is refused by the verb, with its reasons.
@@ -149,6 +157,7 @@ public sealed class JobJourneys
     [Fact]
     public void AJobIsSwitchedOffAndOnAgain()
     {
+        Sandbox.Require();
         using var box = new Sandbox("toggle");
         box.Log();
         var file = box.Job("app.toml", "App");
@@ -180,6 +189,7 @@ public sealed class JobJourneys
     [Fact]
     public void RemovingAJobAsksFirstThenDeletesItsFile()
     {
+        Sandbox.Require();
         using var box = new Sandbox("remove");
         var file = box.Job("app.toml", "App");
 
@@ -209,6 +219,7 @@ public sealed class JobJourneys
     [Fact]
     public void CheckConfigurationSaysCleanOrNamesTheProblems()
     {
+        Sandbox.Require();
         using var box = new Sandbox("checkcfg");
         box.Log();
         box.Job("app.toml", "App");

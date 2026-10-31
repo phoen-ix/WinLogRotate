@@ -18,13 +18,12 @@ namespace WinLogRotate.Gui.Tests.E2E;
 [Collection(ConsoleCollection.Name)]
 public sealed class CliJourneys
 {
-    public CliJourneys() => Sandbox.Require();
-
     private static void Ok(CliRun run) => Assert.True(run.ExitCode == 0, run.ToString());
 
     [Fact]
     public void TheVersionHelpAndAParseErrorAnswerAsDocumented()
     {
+        Sandbox.Require();
         var version = Sandbox.Run("--version");
         Ok(version);
         Assert.Matches(@"\d+\.\d+\.\d+", version.StdOut);
@@ -39,6 +38,7 @@ public sealed class CliJourneys
     [Fact]
     public void AJobIsAddedChangedSwitchedOffShownAndRemovedByTheVerbs()
     {
+        Sandbox.Require();
         using var box = new Sandbox("cli-job");
         box.Log();
 
@@ -78,6 +78,7 @@ public sealed class CliJourneys
     [Fact]
     public void ConfigCheckExitCodesTellABrokenJobFromABrokenConfiguration()
     {
+        Sandbox.Require();
         using var box = new Sandbox("cli-check");
         box.Job("app.toml", "App");
         box.Job("broken.toml", "Broken", "daily = true\nmaxage = -1\ncompresss = true\n");
@@ -95,6 +96,7 @@ public sealed class CliJourneys
     [Fact]
     public void ADryRunChangesNothingARunRotatesAndTheJournalRecordsIt()
     {
+        Sandbox.Require();
         using var box = new Sandbox("cli-run");
         box.Log();
         box.Job("app.toml", "App");
@@ -130,6 +132,7 @@ public sealed class CliJourneys
     [Fact]
     public void GlobAndProbeAnswerForRealFiles()
     {
+        Sandbox.Require();
         using var box = new Sandbox("cli-glob");
         var log = box.Log();
         box.Log("other.log");
@@ -144,6 +147,7 @@ public sealed class CliJourneys
     [Fact]
     public async Task NotifyVerbsShowTestAndReset()
     {
+        Sandbox.Require();
         var cancel = TestContext.Current.CancellationToken;
         using var sink = new TcpListener(IPAddress.Loopback, 0);
         sink.Start();
@@ -174,6 +178,7 @@ public sealed class CliJourneys
     [Fact]
     public void SecretsAreSetListedTestedImportedAndRemoved()
     {
+        Sandbox.Require();
         using var box = new Sandbox("cli-secret");
         var value = Path.Combine(box.Root, "value.txt");
         File.WriteAllText(value, "not-a-real-secret");
@@ -200,6 +205,7 @@ public sealed class CliJourneys
     [Fact]
     public void ImportConvertsALogrotateConfigurationIntoJobFiles()
     {
+        Sandbox.Require();
         using var box = new Sandbox("cli-import");
         var source = Path.Combine(box.Root, "logrotate.conf");
         File.WriteAllText(source, "/var/log/app/*.log {\n  daily\n  rotate 5\n  compress\n  missingok\n}\n");
@@ -213,6 +219,7 @@ public sealed class CliJourneys
     [Fact]
     public void DoctorHostStatusAndTheTaskXmlDescribeTheMachine()
     {
+        Sandbox.Require();
         using var box = new Sandbox("cli-doctor");
         box.Job("app.toml", "App");
 
