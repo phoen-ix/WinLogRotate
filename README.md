@@ -434,16 +434,14 @@ from elevation rather than from the install.
   `maxage`, `dateext` or a multi-generation chain; those meet real files only in the Windows unit
   suite, and a directory model everywhere else. Milestone 23's five planner defects all lived in
   that gap.
-- **The GUI is drawn, not used.** Every CI build opens the console on a seeded demo machine and
-  draws each page, the job editor and the confirmation, configuration-check and credential
-  dialogs, asserting what each shows (`tests/WinLogRotate.Gui.Tests`). Every dialog is then
-  cancelled: nothing is saved, removed or rotated through the window, no credential goes down the
-  pipe behind its dialog, and nothing is drawn in the dark theme. Every install is silent, so the
-  installer's own wizard pages have never been drawn either. End-to-end journeys that do all of
-  that — save, toggle and remove a job, Rotate now, store a credential down the pipe, Send test to
-  a local webhook, Repair permissions, switch the scheduled task — are written
-  (`scripts/e2e.sh`, ci.yml's `e2e` job, map in `tests/WinLogRotate.Gui.Tests/COVERAGE.md`) but had
-  not yet run on Windows when this was written.
+- **The GUI is used only from a build, by an administrator, against a local sink.** ci.yml's
+  `e2e` job drives the console end to end (`tests/WinLogRotate.Gui.Tests/E2E`): it saves, toggles
+  and removes jobs, runs Rotate now, stores a credential down the pipe, sends a test to a local
+  webhook, repairs permissions, switches the scheduled task and opens in the dark theme, and checks
+  the files each leaves. It does so on the JIT build beside the tests, not on an install, and never
+  through a UAC prompt, an OS file dialog, Explorer, a real mail server or the live update feed;
+  `tests/WinLogRotate.Gui.Tests/COVERAGE.md` lists what is left and why. Every install is silent,
+  so the installer's own wizard pages have never been drawn either.
 - **Nothing unelevated.** The runner is an administrator throughout, so the read-only banner, the
   "needs administrator" refusals and the UAC child-process elevation are untested.
 - **No writer that genuinely misbehaves.** The NUL-fill is reproduced by a handle that caches its
@@ -542,11 +540,11 @@ maps every page, dialog and verb to its journey, or says why it has none. On Win
 elevated Git Bash:
 
 ```
-bash scripts/e2e.sh                          # WINLOGROTATE_E2E_MACHINE=1 also registers a scheduled task
+bash scripts/e2e.sh                          # WINLOGROTATE_E2E_MACHINE=1 also registers a scheduled task and flips the app theme
 ```
 
-Elsewhere the script refuses; ci.yml's `e2e` job runs it on every push and pull request, and a
-release waits for it.
+Elsewhere the script refuses; ci.yml's `e2e` job runs it on every push to `main` and every pull
+request, and a release waits for it.
 
 ---
 

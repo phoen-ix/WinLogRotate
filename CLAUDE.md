@@ -56,8 +56,8 @@ fleet check WinLogRotate --no-ci                         # through ~/repos/.flee
 - The docs tour builds a demo machine under `C:\WinLogRotate-demo` and deletes it only if it
   carries its own marker file. Screenshots are fictional (`*.example`); regenerate, don't hand-edit.
 - The E2E journeys run only with `WINLOGROTATE_E2E=1` (scripts/e2e.sh), each in a marker-guarded
-  sandbox under `C:\WinLogRotate-e2e`; the ones that change the machine (a scheduled task) also
-  need `WINLOGROTATE_E2E_MACHINE=1`, which only CI sets. Every console test joins
+  sandbox under `C:\WinLogRotate-e2e`; the ones that change the machine (a scheduled task, the
+  user's app theme) also need `WINLOGROTATE_E2E_MACHINE=1`, which only CI sets. Every console test joins
   `ConsoleCollection` (one window at a time).
 - No services or ports: nothing here binds a port or runs Docker (the webhook sink in the
   journeys listens on an ephemeral loopback port for one request).

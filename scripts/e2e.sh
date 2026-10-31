@@ -7,9 +7,9 @@
 #
 # Windows only (Git Bash), with the .NET 10 SDK, from an elevated shell: every journey works in a
 # sandbox of its own under C:\WinLogRotate-e2e, deleted when it ends. WINLOGROTATE_E2E_MACHINE=1
-# also runs the journeys that change the machine itself (a scheduled task) - CI sets it; leave it
-# unset on a machine you care about. From anywhere else this refuses with exit 2: ci.yml's e2e job
-# runs it.
+# also runs the journeys that change the machine itself (a scheduled task, the app theme) - CI
+# sets it; leave it unset on a machine you care about. From anywhere else this refuses with exit 2:
+# ci.yml's e2e job runs it.
 #
 # ARTIFACTS: where the test results go (default: a temp dir). No services, no ports.
 set -euo pipefail
