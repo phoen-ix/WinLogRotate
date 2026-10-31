@@ -238,6 +238,15 @@ public static class ConfDirGuard
             new DirectoryInfo(directory).SetAccessControl(security);
         }
 
+        // config.toml with them: the guard judges it beside the job files, and a hook in its
+        // [defaults] reaches every job. Left out, a config.toml its writer still owned was
+        // reported, the window said "Repair permissions to fix it", and the repair failed on the
+        // very file it had been sent for.
+        if (File.Exists(paths.ConfigFile))
+        {
+            Reset(paths.ConfigFile);
+        }
+
         foreach (var file in JobFiles.In(paths.ConfigDirectory))
         {
             Reset(file);

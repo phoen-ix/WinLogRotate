@@ -332,6 +332,46 @@ public sealed class ConfDirHardeningTests : IDisposable
     }
 
     /// <summary>
+    /// Repairing the permissions repairs config.toml too, which the guard judges beside the job
+    /// files.
+    /// </summary>
+    /// <remarks>
+    /// The repair reset every file in conf.d and stopped there. A config.toml with an entry or an
+    /// owner of its own was reported by <c>doctor</c>, the console said "Repair permissions to fix
+    /// it", and the repair then failed on that same file. Found by the end-to-end journey
+    /// <c>RepairPermissionsSecuresTheConfigurationDirectory</c>, whose sandbox config.toml is
+    /// owned by the account that wrote it. A DACL edit here, for the reason given above.
+    /// </remarks>
+    [Fact]
+    public void RepairResetsConfigTomlLikeAJobFile()
+    {
+        WindowsOnly.Require();
+
+        var paths = new InstallPaths { Scope = InstallScope.Portable, Root = _root.FullName };
+        Directory.CreateDirectory(paths.ConfigDirectory);
+        File.WriteAllText(paths.ConfigFile, "schema = 1\n");
+
+        var loosened = new FileInfo(paths.ConfigFile).GetAccessControl();
+        loosened.SetAccessRuleProtection(isProtected: true, preserveInheritance: true);
+        loosened.AddAccessRule(new FileSystemAccessRule(
+            new SecurityIdentifier(Sddl.WellKnown.Everyone),
+            FileSystemRights.FullControl,
+            AccessControlType.Allow));
+        new FileInfo(paths.ConfigFile).SetAccessControl(loosened);
+
+        ConfDirGuard.Apply(paths);
+
+        var after = new FileInfo(paths.ConfigFile).GetAccessControl(
+            AccessControlSections.Access | AccessControlSections.Owner);
+
+        after.GetAccessRules(includeExplicit: true, includeInherited: false, typeof(SecurityIdentifier))
+            .Count.ShouldBe(0, "every explicit entry is discarded, Everyone's included");
+
+        after.GetOwner(typeof(SecurityIdentifier)).ShouldNotBeNull()
+            .Value.ShouldBe(Sddl.WellKnown.Administrators);
+    }
+
+    /// <summary>
     /// A job file Everyone can write is found inside a hardened conf.d.
     /// </summary>
     /// <remarks>
