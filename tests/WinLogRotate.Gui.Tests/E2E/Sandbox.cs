@@ -2,6 +2,8 @@ using System.Diagnostics;
 using System.Text;
 using System.Text.Json;
 
+using WinLogRotate.Hosting.Security;
+
 using Xunit;
 
 namespace WinLogRotate.Gui.Tests.E2E;
@@ -49,6 +51,22 @@ internal sealed class Sandbox : IDisposable
 
     /// <summary>Opt-in for the journeys that change the machine, not just their sandbox: CI sets it.</summary>
     public static bool MachineMayChange => Environment.GetEnvironmentVariable("WINLOGROTATE_E2E_MACHINE") == "1";
+
+    /// <summary>
+    /// Leaves the configuration as the installer leaves a per-machine one: its files owned by
+    /// Administrators, the directory locked to SYSTEM and Administrators. Without it the Settings
+    /// page rightly warns that hooks are off, which is a journey of its own.
+    /// </summary>
+    public void Harden()
+    {
+        foreach (var file in Directory.EnumerateFiles(Config, "*.toml", SearchOption.AllDirectories))
+        {
+            ConfigFileOwner.Claim(file);
+        }
+
+        var repair = Cli("host", "repair", "--acl", "--json");
+        Assert.True(repair.ExitCode == 0, repair.ToString());
+    }
 
     /// <summary>The glob a job uses for the logs in <paramref name="dir"/>, in the forward-slash form the docs use.</summary>
     public string Glob(string dir = "app", string pattern = "*.log") => Path.Combine(Logs, dir, pattern).Replace('\\', '/');

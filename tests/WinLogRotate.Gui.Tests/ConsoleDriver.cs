@@ -64,7 +64,7 @@ internal sealed class ConsoleDriver
         var allowed = limit ?? TimeSpan.FromMinutes(3);
         Assert.True(thread.Join(allowed), $"The console script did not finish in {allowed.TotalMinutes} minutes.");
         failure?.Throw();
-        Assert.Empty(driver._unexpected);
+        Assert.True(driver._unexpected.Count == 0, string.Join(Environment.NewLine + Environment.NewLine, driver._unexpected));
     }
 
     private void Drive(Action<ConsoleDriver> script)
@@ -125,7 +125,7 @@ internal sealed class ConsoleDriver
         {
             if (_scripts.TryDequeue(out var script))
             {
-                Log?.WriteLine($"dialog '{dialog.Text}'");
+                Log?.WriteLine($"dialog '{dialog.Text}': {string.Join(" | ", All(dialog).OfType<Label>().Select(l => l.Text))}");
                 script(dialog);
             }
             else if (_unexpected.Count < 20)

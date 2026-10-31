@@ -58,6 +58,7 @@ public sealed class ConsoleJourneys
     {
         Sandbox.Require();
         using var box = Populated("sweep", string.Format(System.Globalization.CultureInfo.InvariantCulture, Webhook, 9));
+        box.Harden();
 
         ConsoleDriver.Run(d =>
         {
@@ -74,6 +75,7 @@ public sealed class ConsoleJourneys
     {
         Sandbox.Require();
         using var box = new Sandbox("empty");
+        box.Harden();
 
         ConsoleDriver.Run(d =>
         {
@@ -305,7 +307,14 @@ public sealed class ConsoleJourneys
         ConsoleDriver.Run(d =>
         {
             using var form = d.Open(box.Config);
-            d.Navigate(form, "Settings");
+
+            // Left as the test wrote it, the directory is writable by more than Administrators:
+            // the page says so as it opens, and why hooks are off.
+            d.Dialog(() => d.Navigate(form, "Settings"), warning =>
+            {
+                Assert.Equal("Permissions", warning.Text);
+                Assert.StartsWith("The configuration directory can be written by an account that is not an administrator", Message(warning), StringComparison.Ordinal);
+            });
             d.Wait(Loaded(form, "Settings"), "the doctor report");
 
             d.Dialog(() => Button(form, "Repair permissions").PerformClick(), result =>

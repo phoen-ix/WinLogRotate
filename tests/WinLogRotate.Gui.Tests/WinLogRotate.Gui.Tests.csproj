@@ -25,4 +25,13 @@
     <ProjectReference Include="../../src/WinLogRotate.Cli/WinLogRotate.Cli.csproj" />
   </ItemGroup>
 
+  <!-- That winlogrotate.exe is the JIT build and runs on Microsoft.NETCore.App alone, but this
+       project's WindowsDesktop framework already carries ProtectedData, so the SDK leaves out the
+       package copy the CLI needs for DPAPI (secret set, notify set-secret): exit 4, "Could not
+       load file or assembly". The installed CLI is NativeAOT and has no such file to miss. -->
+  <Target Name="CopyCliProtectedData" AfterTargets="Build">
+    <Copy SourceFiles="../../src/WinLogRotate.Cli/bin/$(Configuration)/net10.0/System.Security.Cryptography.ProtectedData.dll"
+          DestinationFolder="$(OutDir)" SkipUnchangedFiles="true" />
+  </Target>
+
 </Project>

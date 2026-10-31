@@ -235,10 +235,13 @@ public sealed class JobJourneys
                 Assert.Equal("No problems found.", Message(check));
             });
 
-            // Broken behind the window's back, then Refresh: the list and the check both see it.
+            // Two jobs written behind the window's back, one of them broken, then Refresh: the
+            // list shows the one that loads, and the check names the one that does not.
+            box.Log(dir: "second");
+            box.Job("second.toml", "Second", dir: "second");
             box.Job("broken.toml", "Broken", "daily = true\nmaxage = -1\ncompresss = true\n");
             d.Click(Button(form, JobsToolbar.Refresh.Text));
-            d.Wait(() => Grid(form).Rows.Count == 2 || Says(form, "Broken"), "the refreshed list");
+            d.Wait(() => Row(Grid(form), "Second") is not null, "the refreshed list");
 
             d.Dialog(() => Button(form, JobsToolbar.Check.Text).PerformClick(), check =>
             {
@@ -249,6 +252,12 @@ public sealed class JobJourneys
                 Raise(details, "OnLinkClicked", new LinkLabelLinkClickedEventArgs(details.Links[0]));
                 d.Wait(() => details.Text == "Hide details", "the details");
                 Assert.Contains("compresss", All(check).OfType<TextBox>().Single().Text, StringComparison.Ordinal);
+
+                // Copy puts the title, the sentence and the details on the clipboard, for a ticket.
+                Clipboard.Clear();
+                d.Click(Button(check, "Copy"));
+                Assert.StartsWith("Configuration\r\n\r\nOne or more jobs have problems", Clipboard.GetText(), StringComparison.Ordinal);
+                Assert.Contains("compresss", Clipboard.GetText(), StringComparison.Ordinal);
             });
         });
     }
