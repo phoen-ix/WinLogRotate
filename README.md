@@ -89,7 +89,7 @@ server. Only the GUI needs the .NET runtime, and only in the `-min` builds.
 | --- | ---: | --- |
 | [`WinLogRotate-Setup-<version>-min.exe`](../../releases/latest) | 4.4 MB | Only for the GUI — the [.NET 10 Desktop Runtime](https://dotnet.microsoft.com/download/dotnet/10.0), fetched for you if missing |
 | [`WinLogRotate-Setup-<version>-full.exe`](../../releases/latest) | 45.0 MB | **No** — everything is inside |
-| [`WinLogRotate-Setup-<version>.exe`](../../releases/latest) | 45.0 MB | Asks which of the two to install |
+| [`WinLogRotate-Setup-<version>.exe`](../../releases/latest) | 45.0 MB | **No** — the same as `-full` |
 
 | Portable | Size | Needs anything installed? |
 | --- | ---: | --- |
@@ -105,6 +105,10 @@ old one; it waits for any rotation in progress and keeps your configuration. Che
 unless you ask for once a day. See [updating](docs/updating.md).
 
 Sizes are v0.21.5's release assets; CI writes the measured binary size to every run's summary.
+
+The installer opens without an administrator prompt and preselects **anyone who uses this
+computer**. The prompt comes when you go on with that choice, and the installer then continues
+at the next page rather than starting over. Choosing **only for me** needs no administrator.
 
 Installing per-machine:
 - puts config in `C:\ProgramData\WinLogRotate\`;
@@ -132,6 +136,7 @@ Every switch the installer understands:
 | `/FORCEIDLE` | After two minutes of waiting for a rotation in progress, go ahead anyway. Off by default because the process being replaced may be mid-file on a multi-gigabyte log |
 | `/RESTART` | Start the console again once the files are in place, as the desktop user rather than elevated. What an in-app update passes |
 | `/D=<dir>` | Install directory (the standard NSIS switch; must be last) |
+| exit code `2` / `3` | `/HOST=` named no run model this build has / a silent all-users run without administrator rights. Nothing was installed either way; run an all-users deployment from an elevated prompt |
 | `uninstall.exe /S /PURGEDATA` | Remove the configuration, state and history too. Without it a silent uninstall keeps them — which is what an in-place upgrade depends on |
 
 The task fires at 03:00 unless `config.toml` says otherwise. For a fleet, follow the install with

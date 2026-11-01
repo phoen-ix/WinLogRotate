@@ -1,12 +1,21 @@
 ; WinLogRotate installer.
 ;
-; Adapted from the pawse installer, with the multi-user model inverted: this is a system tool,
-; so per-machine is the default and the run host executes as SYSTEM. Everything that follows
-; from that inversion is commented where it happens.
+; The same structure as the sibling installers (displayRotate's is the reference), with one
+; inversion: this is a system tool, so all-users is the preselected scope and the run host
+; executes as SYSTEM. Everything that follows from that is commented where it happens.
 ;
 ; Build:  makensis /WX /V2 /DVERSION=1.0.0 winlogrotate.nsi
 ;         makensis /WX /V2 /DVERSION=1.0.0 /DFULL_ONLY winlogrotate.nsi
 ;         makensis /WX /V2 /DVERSION=1.0.0 /DMINIMAL_ONLY winlogrotate.nsi
+;
+; Switches:   /S  /AllUsers  /CurrentUser  /HOST=task|none  /CONFIG=<dir>  /NOPATH  /NORUNTIME
+;             /FORCEIDLE  /RESTART  /D=<dir> (last)
+;             /RESUME is internal: the elevated copy ElevateForAllUsers starts gets it, and opens
+;             on the step after the scope page instead of on Welcome again.
+; Uninstall:  /S  /PURGEDATA  /FORCEIDLE
+; Exit codes: 2 = /HOST= names no run model this build has (nothing installed)
+;             3 = silent all-users run without administrator rights (nothing installed)
+; packaging/README.md explains the design; ci.yml's installer-smoke job runs it on Windows.
 
 Unicode true
 
@@ -89,24 +98,25 @@ SetCompressor /SOLID lzma
 !insertmacro un.GetOptions
 
 ; ---------------------------------------------------------------------------------------
-; Multi-user, inverted for a system tool.
+; Multi-user, the siblings' flow with all-users preselected.
 ;
-; The reference project defines MULTIUSER_INSTALLMODE_DEFAULT_CURRENTUSER and then overrides
-; the execution level back to "user", so opening its installer never raises UAC - correct for
-; a per-user tray app. Both lines are deliberately absent here.
+; Opening the installer raises no UAC prompt: RequestExecutionLevel user, after the include,
+; overrides the "highest" MULTIUSER_EXECUTIONLEVEL emits (the define stays because the mode
+; page refuses to compile without it). The prompt comes when it is needed - ElevateForAllUsers
+; re-launches the installer elevated the moment all-users is picked, and that copy continues at
+; the run-host page rather than starting over (/RESUME).
 ;
-; Leaving MULTIUSER_EXECUTIONLEVEL Highest in place without the override means an
-; administrator gets exactly one UAC prompt, at launch, before choosing anything - which is
-; the right trade for a tool whose default install writes to Program Files, hardens an ACL in
-; ProgramData, registers an Event Log source and creates a SYSTEM scheduled task. A standard
-; user still arrives with their own token and no prompt, so a per-user install remains
-; reachable rather than being refused outright.
+; MULTIUSER_INSTALLMODE_DEFAULT_CURRENTUSER stays absent, but that alone no longer makes
+; all-users the default: under asInvoker even an administrator arrives with a filtered token,
+; which MultiUser reads as a standard user and puts in per-user mode. .onInit therefore selects
+; all-users itself when no switch and no existing install say otherwise.
 ; ---------------------------------------------------------------------------------------
 !define MULTIUSER_EXECUTIONLEVEL Highest
 !define MULTIUSER_MUI
 !define MULTIUSER_USE_PROGRAMFILES64
 !define MULTIUSER_INSTALLMODE_INSTDIR "${APP}"
 !include "MultiUser.nsh"
+RequestExecutionLevel user
 
 Var RealPrivileges
 Var DataDir
@@ -116,13 +126,26 @@ Var PurgeData           ; 1 once the uninstaller has decided to remove the data 
 Var HostPage
 Var HostTask
 Var HostNone
+Var ForceIdle           ; 1 when /FORCEIDLE was passed: a rotation stuck past two minutes is not waited for
+Var GuiRunning          ; 1 | 0, set by ${UN}GuiIsRunning
+Var Resume              ; "1" in the elevated copy ElevateForAllUsers started (/RESUME), "2" once it
+                        ; has shown its first page: Welcome, License and the scope page were done
+
+!define ERROR_ACCESS_DENIED 5
 
 !define MUI_ICON   "winlogrotate.ico"
 !define MUI_UNICON "winlogrotate.ico"
 !define MUI_ABORTWARNING
 !define MUI_COMPONENTSPAGE_SMALLDESC
+!define MUI_FINISHPAGE_RUN
+!define MUI_FINISHPAGE_RUN_TEXT "Start the WinLogRotate console now"
+!define MUI_FINISHPAGE_RUN_FUNCTION "LaunchGui"
 
+; The elevated copy that "anyone who uses this computer" starts skips the three pages the first
+; copy already showed and continues at the run-host page (SkipIfResumed, FirstPageAfterResume).
+!define MUI_PAGE_CUSTOMFUNCTION_PRE SkipIfResumed
 !insertmacro MUI_PAGE_WELCOME
+!define MUI_PAGE_CUSTOMFUNCTION_PRE SkipIfResumed
 !insertmacro MUI_PAGE_LICENSE "..\LICENSE"
 
 ; ---------------------------------------------------------------------------------------
@@ -149,8 +172,11 @@ needs administrator."
 !define MULTIUSER_INSTALLMODEPAGE_TEXT_CURRENTUSER \
   "Only for me (no administrator needed; hooks are disabled)"
 
+!define MULTIUSER_PAGE_CUSTOMFUNCTION_PRE SkipIfResumed
+!define MULTIUSER_PAGE_CUSTOMFUNCTION_LEAVE ElevateForAllUsers
 !insertmacro MULTIUSER_PAGE_INSTALLMODE
 Page custom HostPageCreate HostPageLeave
+!define MUI_PAGE_CUSTOMFUNCTION_SHOW FirstPageAfterResume
 !insertmacro MUI_PAGE_COMPONENTS
 !insertmacro MUI_PAGE_DIRECTORY
 !insertmacro MUI_PAGE_INSTFILES
@@ -180,37 +206,37 @@ FunctionEnd
 
 ; Waits for any rotation in progress to finish before we replace the executable underneath it.
 ;
-; The reference project force-kills a stuck tray app after a timeout, because nothing is lost
-; by doing so. Here the process we might kill is halfway through a MoveFileEx on a
-; multi-gigabyte log, and losing a log file is the one outcome this product exists to prevent.
-; So the timeout CANCELS by default; /FORCEIDLE is the explicit opt-out.
-Function WaitForIdle
-  Push $R0
+; The sibling apps force-kill a stuck tray app after a timeout, because nothing is lost by
+; doing so. Here the process we might kill is halfway through a MoveFileEx on a multi-gigabyte
+; log, and losing a log file is the one outcome this product exists to prevent. So the timeout
+; CANCELS by default; /FORCEIDLE is the explicit opt-out. One macro for both halves: the
+; uninstaller used to carry on silently after two minutes and ignore /FORCEIDLE, so the same
+; switch meant two different things.
+!macro WAIT_FOR_IDLE UN
+Function ${UN}WaitForIdle
+  Push $0
   Push $R1
   StrCpy $R1 0
 
   wait_loop:
-    System::Call 'kernel32::OpenMutexW(i 0x00100000, i 0, w "${ROTATION_MUTEX}") i .r0'
+    System::Call 'kernel32::OpenMutexW(i 0x00100000, i 0, w "${ROTATION_MUTEX}") p .r0'
     ${If} $0 == 0
       Goto wait_done
     ${EndIf}
-    System::Call 'kernel32::CloseHandle(i r0)'
+    System::Call 'kernel32::CloseHandle(p r0)'
 
     IntOp $R1 $R1 + 1
     ${If} $R1 > 120
-      ClearErrors
-      ${GetParameters} $R0
-      ${GetOptions} $R0 "/FORCEIDLE" $R0
-      ${IfNot} ${Errors}
+      ${If} $ForceIdle == "1"
         Goto wait_done
       ${EndIf}
 
       ; /SD IDCANCEL: NSIS does not suppress message boxes under /S, so a box without a silent
-      ; default hangs an unattended install forever on a dialog nobody can see. Cancelling is
-      ; also the safe answer - see the note above about what we would otherwise be killing.
+      ; default hangs an unattended run forever on a dialog nobody can see. Cancelling is also
+      ; the safe answer - see the note above about what we would otherwise be killing.
       MessageBox MB_OKCANCEL|MB_ICONEXCLAMATION \
         "A log rotation has been running for two minutes.$\n$\nWaiting avoids interrupting it \
-mid-file. Press OK to keep waiting, or Cancel to abort this install." \
+mid-file. Press OK to keep waiting, or Cancel to stop and change nothing." \
         /SD IDCANCEL IDOK continue_waiting
       Abort "A rotation was still running; nothing was changed."
 
@@ -223,41 +249,199 @@ mid-file. Press OK to keep waiting, or Cancel to abort this install." \
 
   wait_done:
   Pop $R1
-  Pop $R0
+  Pop $0
 FunctionEnd
+!macroend
+!insertmacro WAIT_FOR_IDLE ""
+!insertmacro WAIT_FOR_IDLE "un."
 
-; Asks a running GUI to close, rather than killing it, and waits for it to be gone.
-;
-; The wait is on the GUI's single-instance mutex, which exists exactly as long as the process
-; does, and it stops the moment the mutex can no longer be opened. This replaced a fixed two
-; second sleep: on a loaded server the window took longer than that to unwind, the File below
-; then found winlogrotate-gui.exe still locked, and a silent install aborted at the one step an
-; in-app update exists to make routine. Ten seconds is the ceiling; a GUI that has not closed
-; by then is not going to, and the File error that follows is the right report.
-Function CloseGui
+; Closes a running console window before its exe is replaced: asks it to quit over the quit
+; event, waits on its single-instance mutex, and only then offers to force it. The same macro
+; displayRotate uses, adapted. It replaced a quiet ask-and-wait that gave up after ten seconds
+; and left the File below to fail on a locked winlogrotate-gui.exe. Forcing the console is safe
+; where forcing a rotation is not: the window holds no work of its own, and anything it started
+; through the CLI keeps running.
+!macro GUI_CLOSE_FUNCS UN ACTION
+
+Function ${UN}GuiIsRunning
   Push $0
   Push $1
-  System::Call 'kernel32::OpenEventW(i 0x0002, i 0, w "${GUI_QUIT_EVENT}") i .r0'
+  StrCpy $GuiRunning "0"
+  ; 1) The console window's single-instance mutex. "Access denied" means the mutex is there but
+  ;    owned by a token we can't open (the WinLogRotate console running elevated while we aren't) - still
+  ;    a running the WinLogRotate console.
+  System::Call 'kernel32::OpenMutexW(i 0x00100000, i 0, w "${GUI_INSTANCE_MUTEX}") p .r0 ?e'
+  Pop $1
   ${If} $0 != 0
-    System::Call 'kernel32::SetEvent(i r0)'
-    System::Call 'kernel32::CloseHandle(i r0)'
-    StrCpy $1 0
-    close_wait:
-      System::Call 'kernel32::OpenMutexW(i 0x00100000, i 0, w "${GUI_INSTANCE_MUTEX}") i .r0'
-      ${If} $0 == 0
-        Goto close_done
-      ${EndIf}
-      System::Call 'kernel32::CloseHandle(i r0)'
-      IntOp $1 $1 + 1
-      ${If} $1 >= 40
-        Goto close_done
-      ${EndIf}
-      Sleep 250
-      Goto close_wait
-    close_done:
+    System::Call 'kernel32::CloseHandle(p r0)'
+    StrCpy $GuiRunning "1"
+    Goto air_done
+  ${ElseIf} $1 = ${ERROR_ACCESS_DENIED}
+    StrCpy $GuiRunning "1"
+    Goto air_done
   ${EndIf}
+  ; 2) The image name. Catches an instance in another user's session (a Local\ mutex is
+  ;    per-session), and a command-line run, either of which still locks the exe.
+  ;    Fully qualified so a planted tasklist.exe beside an elevated installer can't run.
+  nsExec::ExecToStack /TIMEOUT=10000 '"$SYSDIR\tasklist.exe" /NH /FO CSV /FI "IMAGENAME eq ${GUI}"'
+  Pop $0
+  Pop $1
+  ; A match is a CSV row: "winlogrotate-gui.exe","1234",... The no-match line ("INFO: No tasks...")
+  ; is translated on localised Windows but is never quoted - so test the first character.
+  StrCpy $1 $1 1
+  ${If} $0 == 0
+  ${AndIf} $1 == '"'
+    StrCpy $GuiRunning "1"
+  ${EndIf}
+ air_done:
   Pop $1
   Pop $0
+FunctionEnd
+
+Function ${UN}GuiRequestQuit
+  Push $0
+  Push $1
+  System::Call 'kernel32::OpenEventW(i 0x0002, i 0, w "${GUI_QUIT_EVENT}") p .r0 ?e'
+  Pop $1
+  ${If} $0 != 0
+    System::Call 'kernel32::SetEvent(p r0)'
+    System::Call 'kernel32::CloseHandle(p r0)'
+    DetailPrint "Asked the WinLogRotate console to close..."
+  ${ElseIf} $1 = ${ERROR_ACCESS_DENIED}
+    DetailPrint "The WinLogRotate console is running with higher privileges - it cannot be asked to close."
+  ${Else}
+    DetailPrint "the WinLogRotate console offers no quit channel here (another session, or the command line)."
+  ${EndIf}
+  ; Wait on the mutex, not the clock: it exists exactly as long as the console window does.
+  ; Ten seconds is the ceiling; a healthy instance is gone in well under one.
+  StrCpy $1 0
+ arq_loop:
+  Call ${UN}GuiIsRunning
+  ${If} $GuiRunning == "0"
+    ; The mutex goes a moment before the process does, and the exe stays locked until then.
+    Sleep 500
+    DetailPrint "the WinLogRotate console closed."
+    Goto arq_done
+  ${EndIf}
+  ${If} $1 >= 20
+    Goto arq_done
+  ${EndIf}
+  Sleep 500
+  IntOp $1 $1 + 1
+  Goto arq_loop
+ arq_done:
+  Pop $1
+  Pop $0
+FunctionEnd
+
+Function ${UN}GuiForceClose
+  Push $0
+  DetailPrint "Force-closing the WinLogRotate console..."
+  nsExec::ExecToLog '"$SYSDIR\taskkill.exe" /F /IM ${GUI}'
+  Pop $0
+  Pop $0
+FunctionEnd
+
+Function ${UN}EnsureGuiClosed
+  Call ${UN}GuiIsRunning
+  ${If} $GuiRunning == "0"
+    Return
+  ${EndIf}
+  MessageBox MB_YESNOCANCEL|MB_ICONEXCLAMATION|MB_TOPMOST|MB_SETFOREGROUND "The WinLogRotate console is running and has to close before ${ACTION} can continue.$\n$\nYes - close the WinLogRotate console now.$\nNo - leave it to me; I'll close it myself.$\nCancel - stop and change nothing." /SD IDYES IDYES eac_ask IDNO eac_retry
+  Abort "Cancelled - The WinLogRotate console is still running."
+ eac_ask:
+  Call ${UN}GuiRequestQuit
+  ${If} $GuiRunning == "0"
+    Return
+  ${EndIf}
+ eac_retry:
+  Call ${UN}GuiIsRunning
+  ${If} $GuiRunning == "0"
+    Return
+  ${EndIf}
+  ; /SD IDIGNORE: unattended, force it rather than fail - the WinLogRotate console holds nothing that a
+  ; forced close would lose (settings are written the moment they are saved).
+  MessageBox MB_ABORTRETRYIGNORE|MB_ICONEXCLAMATION|MB_TOPMOST|MB_SETFOREGROUND "The WinLogRotate console is still running.$\n$\nRetry - I've closed it; check again.$\nIgnore - force it closed.$\nAbort - stop and change nothing." /SD IDIGNORE IDRETRY eac_retry IDIGNORE eac_force
+  Abort "Cancelled - The WinLogRotate console is still running."
+ eac_force:
+  Call ${UN}GuiForceClose
+  Call ${UN}GuiIsRunning
+  ${If} $GuiRunning == "0"
+    Return
+  ${EndIf}
+  ; Still there: it runs elevated, or in another account. /SD IDNO so a silent run never
+  ; raises a UAC prompt nobody is there to answer.
+  MessageBox MB_YESNO|MB_ICONEXCLAMATION|MB_TOPMOST|MB_SETFOREGROUND "The WinLogRotate console is running as administrator or in another account, so it can't be closed from here.$\n$\nClose it using administrator rights?" /SD IDNO IDNO eac_stuck
+  ClearErrors
+  ExecShellWait "runas" "$SYSDIR\taskkill.exe" "/F /IM ${GUI}" SW_HIDE
+  Call ${UN}GuiIsRunning
+  ${If} $GuiRunning == "0"
+    Return
+  ${EndIf}
+ eac_stuck:
+  MessageBox MB_RETRYCANCEL|MB_ICONSTOP|MB_TOPMOST|MB_SETFOREGROUND "The WinLogRotate console could not be closed.$\n$\nClose the console window, or re-run this as administrator, then Retry." /SD IDCANCEL IDRETRY eac_retry
+  Abort "The WinLogRotate console could not be closed."
+FunctionEnd
+!macroend
+!insertmacro GUI_CLOSE_FUNCS ""    "Setup"
+!insertmacro GUI_CLOSE_FUNCS "un." "the uninstaller"
+
+; =======================================================================================
+; Pages: resuming after the UAC prompt, and starting the console
+; =======================================================================================
+
+; A page the first copy already showed: skipped in the elevated copy.
+Function SkipIfResumed
+  ${If} $Resume != ""
+    Abort
+  ${EndIf}
+FunctionEnd
+
+; The elevated copy's first page has no Back: the pages behind it were the first copy's.
+Function FirstPageAfterResume
+  ${If} $Resume == "1"
+    GetDlgItem $0 $HWNDPARENT 3
+    EnableWindow $0 0
+    StrCpy $Resume "2"
+  ${EndIf}
+FunctionEnd
+
+; Through explorer.exe, not directly. An all-users install runs elevated, and a window started
+; by an elevated process inherits that token: the console would then run as administrator for
+; the rest of its life, and everything it launched would too. Handing the path to the shell
+; starts it with the desktop user's ordinary token instead. Server Core has no explorer.exe and
+; no desktop to speak of; there the window is started directly, which is the best that can be
+; done, and it is at least started.
+Function LaunchGui
+  ${If} ${FileExists} "$WINDIR\explorer.exe"
+    Exec '"$WINDIR\explorer.exe" "$INSTDIR\${GUI}"'
+  ${Else}
+    Exec '"$INSTDIR\${GUI}"'
+  ${EndIf}
+FunctionEnd
+
+; The mode page's leave handler, after MultiUser has applied the choice. A standard user (or an
+; administrator, whose token is filtered under asInvoker) who picked all-users hands the install
+; to an elevated copy of this installer. Everything this run was started with goes along -
+; /HOST= /CONFIG= /NOPATH /NORUNTIME /FORCEIDLE - plus /AllUsers and /RESUME.
+Function ElevateForAllUsers
+  ${If} $MultiUser.InstallMode != "AllUsers"
+    Return
+  ${EndIf}
+  ${If} $RealPrivileges == "Admin"
+  ${OrIf} $RealPrivileges == "Power"
+    Return                        ; already elevated - nothing to do
+  ${EndIf}
+  ${GetParameters} $0
+  ClearErrors
+  ExecShell "runas" "$EXEPATH" "$0 /AllUsers /RESUME"
+  ${IfNot} ${Errors}
+    Quit                          ; the elevated copy takes over
+  ${EndIf}
+  ; UAC declined, or no administrator account available.
+  Call MultiUser.InstallMode.CurrentUser
+  Call ResolveDataDir
+  MessageBox MB_OK|MB_ICONINFORMATION|MB_TOPMOST|MB_SETFOREGROUND "Administrator rights weren't granted, so WinLogRotate will be installed for you only. Hooks and the Event Log are not available in a per-user install." /SD IDOK
 FunctionEnd
 
 ; Is a .NET 10 Desktop Runtime present?
@@ -274,7 +458,7 @@ FunctionEnd
 ; returned empty on every machine and the $PROGRAMFILES64 fallback below did all the work. That
 ; is fine until somebody installs .NET somewhere else - which is precisely the case the registry
 ; lookup exists to handle, and precisely when it silently did not.
-!ifndef FULL_ONLY
+!ifdef MINIMAL_ONLY
 Function DotnetPresent
   Push $0
   Push $1
@@ -310,17 +494,20 @@ Function EnsureDotnet
   Push $0
   Push $1
 
+  ; Present already: nothing to do, with or without /NORUNTIME. The switch used to be checked
+  ; first, so an interactive /NORUNTIME run offered the download page for a runtime that was
+  ; there.
+  Call DotnetPresent
+  Pop $0
+  ${If} $0 == "1"
+    Goto done
+  ${EndIf}
+
   ClearErrors
   ${GetParameters} $0
   ${GetOptions} $0 "/NORUNTIME" $1
   ${IfNot} ${Errors}
     Goto manual
-  ${EndIf}
-
-  Call DotnetPresent
-  Pop $0
-  ${If} $0 == "1"
-    Goto done
   ${EndIf}
 
   ; /SD IDYES so a scripted deployment provisions the runtime unattended rather than stalling.
@@ -436,6 +623,7 @@ resident, missed runs are caught up after a reboot, and it is visible in Task Sc
   ${Else}
     ${NSD_Check} $HostTask
   ${EndIf}
+  Call FirstPageAfterResume
   nsDialogs::Show
 FunctionEnd
 
@@ -457,7 +645,7 @@ Section "-Core" SEC_CORE
   SetOutPath "$INSTDIR"
 
   Call WaitForIdle
-  Call CloseGui
+  Call EnsureGuiClosed
 
   ; Remove whatever host is currently registered before replacing the binaries it points at.
   nsExec::ExecToLog '"$INSTDIR\${CLI}" host use none --config-dir "$DataDir"'
@@ -481,6 +669,18 @@ Section "-Core" SEC_CORE
   ; hardened by the pass below rather than appearing later under whatever ProgramData hands out -
   ; the local account that record exists to detect must not be the account that owns it.
   CreateDirectory "$DataDir\run"
+
+  ; A seeded configuration for unattended customer deployment: /CONFIG=\\srv\deploy\jobs.
+  ; Here, not in .onInit: there it ran before the mode page and before any elevation, so the
+  ; files could land in the other scope's directory, or in a ProgramData folder created by the
+  ; unelevated user before the pass below had hardened it. Copied before that pass, so the
+  ; copies are re-owned with everything else.
+  ClearErrors
+  ${GetParameters} $0
+  ${GetOptions} $0 "/CONFIG=" $1
+  ${IfNot} ${Errors}
+    CopyFiles /SILENT "$1\*.toml" "$DataDir\conf.d"
+  ${EndIf}
 
   ; -------------------------------------------------------------------------------------
   ; Harden the configuration directory.
@@ -586,8 +786,6 @@ Section "-Core" SEC_CORE
     ${EndIf}
   ${EndIf}
 
-  ; Carry a configuration forward from a previous location, without ever overwriting one that
-  ; is already there.
   WriteUninstaller "$INSTDIR\uninstall.exe"
 
   WriteRegStr   SHCTX "${UNINST_KEY}" "DisplayName"          "${APP}"
@@ -595,6 +793,7 @@ Section "-Core" SEC_CORE
   WriteRegStr   SHCTX "${UNINST_KEY}" "Publisher"            "${PUBLISHER}"
   WriteRegStr   SHCTX "${UNINST_KEY}" "DisplayIcon"          "$INSTDIR\winlogrotate.ico"
   WriteRegStr   SHCTX "${UNINST_KEY}" "InstallLocation"      "$INSTDIR"
+  WriteRegStr   SHCTX "${UNINST_KEY}" "URLInfoAbout"         "https://github.com/phoen-ix/WinLogRotate"
   WriteRegStr   SHCTX "${UNINST_KEY}" "DataDir"              "$DataDir"
   WriteRegStr   SHCTX "${UNINST_KEY}" "${REG_HOST_KIND}"     "$HostChoice"
   WriteRegStr   SHCTX "${UNINST_KEY}" "${REG_BUILD_VARIANT}" "${BUILD_VARIANT}"
@@ -634,7 +833,10 @@ Section "-Core" SEC_CORE
   ${EndIf}
 SectionEnd
 
-!ifndef FULL_ONLY
+; Only the -min installer carries the framework-dependent console. The unsuffixed one ships the
+; self-contained console exactly as -full does, and compiling this in there ran winget for a
+; runtime nothing installed needs.
+!ifdef MINIMAL_ONLY
 Section "-Runtime" SEC_RUNTIME
   Call EnsureDotnet
 SectionEnd
@@ -653,26 +855,19 @@ SectionEnd
 ; =======================================================================================
 
 ; /RESTART starts the window again once the files are in place. This is what an in-app update
-; passes: the GUI launched `update apply`, which handed over to this installer and exited, and
-; CloseGui then asked the window to close - so nothing is left to bring it back except us.
-;
-; Through explorer.exe, not directly. A per-machine install runs elevated, and a window started
-; by an elevated process inherits that token: the console would then run as administrator for
-; the rest of its life, and everything it launched would too. Handing the path to the shell
-; starts it with the desktop user's ordinary token instead. Server Core has no explorer.exe and
-; no desktop to speak of; there the window is started directly, which is the best that can be
-; done, and it is at least started.
+; passes: the console launched `update apply`, which handed over to this installer and exited,
+; and EnsureGuiClosed then asked the window to close - so nothing is left to bring it back except
+; us. Only under /S: an interactive run has the finish page's checkbox, and both firing would
+; start the console twice.
 Function .onInstSuccess
   Push $0
   Push $1
-  ClearErrors
-  ${GetParameters} $0
-  ${GetOptions} $0 "/RESTART" $1
-  ${IfNot} ${Errors}
-    ${If} ${FileExists} "$WINDIR\explorer.exe"
-      Exec '"$WINDIR\explorer.exe" "$INSTDIR\${GUI}"'
-    ${Else}
-      Exec '"$INSTDIR\${GUI}"'
+  ${If} ${Silent}
+    ClearErrors
+    ${GetParameters} $0
+    ${GetOptions} $0 "/RESTART" $1
+    ${IfNot} ${Errors}
+      Call LaunchGui
     ${EndIf}
   ${EndIf}
   Pop $1
@@ -700,20 +895,25 @@ Function .onInit
 
   Push $R0
   Push $R1
+  Push $R2
   ${GetParameters} $R0
 
   ; Parsed by hand, after the fib. Stock MultiUser answers an unelevated /AllUsers with a
   ; message box that has no silent default, so "/S /AllUsers" would hang forever on an
-  ; invisible dialog and then report success having installed nothing.
+  ; invisible dialog and then report success having installed nothing. /AllUsers wins when
+  ; both are given; $R2 records that a switch was given at all.
+  StrCpy $R2 "0"
   ClearErrors
   ${GetOptions} $R0 "/CurrentUser" $R1
   ${IfNot} ${Errors}
     Call MultiUser.InstallMode.CurrentUser
+    StrCpy $R2 "1"
   ${EndIf}
   ClearErrors
   ${GetOptions} $R0 "/AllUsers" $R1
   ${IfNot} ${Errors}
     Call MultiUser.InstallMode.AllUsers
+    StrCpy $R2 "1"
   ${EndIf}
 
   ; /HOST=task|none for unattended deployment.
@@ -745,19 +945,17 @@ resident, and a run missed while the machine was off is caught up afterwards." /
     ${EndIf}
   ${EndIf}
 
-  ; Match an existing install's scope rather than creating a second copy beside it, in both
-  ; directions. This used to switch up to all-users when HKLM held the entry and do nothing
-  ; when HKCU did - and "nothing" for an administrator is all-users, because that is where
-  ; MultiUser puts an elevated token. So a per-user install re-run silently by an administrator,
-  ; which is what an in-app update is, installed a second copy into Program Files and left the
-  ; first one registered and on the user's PATH. An existing install now wins over the switch
-  ; either way; to change scope, uninstall first.
-  ReadRegStr $0 HKCU "${UNINST_KEY}" "UninstallString"
-  ${If} $0 != ""
-    Call MultiUser.InstallMode.CurrentUser
-  ${Else}
-    ReadRegStr $0 HKLM "${UNINST_KEY}" "UninstallString"
+  ; The scope, as the sibling installers decide it. An explicit switch is obeyed: the in-app
+  ; updater always passes the scope of the copy it is updating, which may be the machine-wide
+  ; one on a PC that has both. Without a switch, follow an existing install - per-user first,
+  ; the order the app reads them - rather than putting a second copy beside it: a per-user
+  ; install re-run silently by an administrator must not land in Program Files. Without either,
+  ; all-users, the preselected scope of a system tool (see the MultiUser defines above).
+  ${If} $R2 == "0"
+    ReadRegStr $0 HKCU "${UNINST_KEY}" "UninstallString"
     ${If} $0 != ""
+      Call MultiUser.InstallMode.CurrentUser
+    ${Else}
       Call MultiUser.InstallMode.AllUsers
     ${EndIf}
   ${EndIf}
@@ -790,16 +988,31 @@ resident, and a run missed while the machine was off is caught up afterwards." /
     Quit
   ${EndIf}
 
-  Call ResolveDataDir
-
-  ; A seeded configuration for unattended customer deployment: /CONFIG=\\srv\deploy\jobs
+  ; /FORCEIDLE, read once for WaitForIdle.
+  StrCpy $ForceIdle "0"
   ClearErrors
-  ${GetOptions} $R0 "/CONFIG=" $R1
+  ${GetOptions} $R0 "/FORCEIDLE" $R1
   ${IfNot} ${Errors}
-    CreateDirectory "$DataDir\conf.d"
-    CopyFiles /SILENT "$R1\*.toml" "$DataDir\conf.d"
+    StrCpy $ForceIdle "1"
   ${EndIf}
 
+  ; /RESUME (internal) - this is the elevated copy ElevateForAllUsers started, so Welcome,
+  ; License and the scope page were shown by the first copy. Only for that case: interactive,
+  ; and for everyone.
+  StrCpy $Resume ""
+  ClearErrors
+  ${GetOptions} $R0 "/RESUME" $R1
+  ${IfNot} ${Errors}
+  ${AndIfNot} ${Silent}
+  ${AndIf} $MultiUser.InstallMode == "AllUsers"
+    StrCpy $Resume "1"
+  ${EndIf}
+
+  ; Again whenever the scope changes - ElevateForAllUsers' fallback does - and in -Core, which
+  ; is what the files are written by.
+  Call ResolveDataDir
+
+  Pop $R2
   Pop $R1
   Pop $R0
 FunctionEnd
@@ -813,20 +1026,45 @@ Function un.onInit
 
   ; Work out on our own which install this uninstaller belongs to. The registered uninstall
   ; strings carry no /AllUsers or /CurrentUser, and MULTIUSER_UNINIT's default is decided by
-  ; the token, not by the install: with MULTIUSER_EXECUTIONLEVEL Highest an administrator
-  ; arrives elevated and in ALL-USERS mode. This used to assume the opposite - that stock
-  ; MultiUser put every token into per-user mode - and only ever switched up to all-users, so a
-  ; per-user install uninstalled by an administrator ran in the wrong mode: its DataDir was read
-  ; from HKLM and found empty, so /PURGEDATA removed nothing, and its PATH entry was looked for
-  ; on the machine PATH and left on the user's for good.
+  ; the token, not by the install. Both directions are set explicitly: a per-user install
+  ; uninstalled from an elevated prompt must stay per-user, or its DataDir is read from HKLM and
+  ; found empty, so /PURGEDATA removes nothing and its PATH entry is left on the user's for
+  ; good. The all-users mode is assigned directly, as the siblings do:
+  ; un.MultiUser.InstallMode.AllUsers refuses on a standard token, and asInvoker makes every
+  ; uninstaller start as one.
   ReadRegStr $0 HKCU "${UNINST_KEY}" "InstallLocation"
   ${If} $0 == "$INSTDIR"
     Call un.MultiUser.InstallMode.CurrentUser
   ${Else}
     ReadRegStr $0 HKLM "${UNINST_KEY}" "InstallLocation"
     ${If} $0 == "$INSTDIR"
-      Call un.MultiUser.InstallMode.AllUsers
+      StrCpy $MultiUser.InstallMode AllUsers
+      SetShellVarContext all
     ${EndIf}
+  ${EndIf}
+
+  ${un.GetParameters} $1
+  StrCpy $ForceIdle "0"
+  ClearErrors
+  ${un.GetOptions} $1 "/FORCEIDLE" $2
+  ${IfNot} ${Errors}
+    StrCpy $ForceIdle "1"
+  ${EndIf}
+
+  ; An all-users uninstall needs an administrator. Hand over to an elevated copy of the
+  ; registered uninstaller - $INSTDIR\uninstall.exe, not $EXEPATH: NSIS runs uninstallers from
+  ; a copy in $TEMP - with every switch this run was given, so /S stays quiet and /PURGEDATA
+  ; still purges.
+  ${If} $MultiUser.InstallMode == "AllUsers"
+  ${AndIf} $MultiUser.Privileges != "Admin"
+  ${AndIf} $MultiUser.Privileges != "Power"
+    ClearErrors
+    ExecShell "runas" "$INSTDIR\uninstall.exe" "$1"
+    ${IfNot} ${Errors}
+      Quit
+    ${EndIf}
+    MessageBox MB_OK|MB_ICONSTOP|MB_TOPMOST|MB_SETFOREGROUND "WinLogRotate was installed for everyone on this computer, so removing it needs administrator rights.$\n$\nRight-click uninstall.exe in the WinLogRotate folder and choose 'Run as administrator'." /SD IDOK
+    Quit
   ${EndIf}
 
   ReadRegStr $DataDir SHCTX "${UNINST_KEY}" "DataDir"
@@ -834,7 +1072,7 @@ FunctionEnd
 
 Section "Uninstall"
   Call un.WaitForIdle
-  Call un.CloseGui
+  Call un.EnsureGuiClosed
 
   ; Remove the run host BEFORE the executable it points at, or a task fires against a missing
   ; binary and logs a failure every day forever. --config-dir as the install passes it, so the
@@ -846,12 +1084,16 @@ Section "Uninstall"
     nsExec::ExecToLog '"$INSTDIR\${CLI}" host use none'
   ${EndIf}
   Pop $0
-  nsExec::ExecToLog '"$SYSDIR\schtasks.exe" /delete /tn "${TASK_PATH}" /f'
-  Pop $0
-  nsExec::ExecToLog '"$SYSDIR\sc.exe" stop "${SERVICE_NAME}"'
-  Pop $0
-  nsExec::ExecToLog '"$SYSDIR\sc.exe" delete "${SERVICE_NAME}"'
-  Pop $0
+  ; The machine's task and service, only from the install that owns them. A per-user uninstall
+  ; run by an administrator used to remove an all-users install's task beside it.
+  ${If} $MultiUser.InstallMode == "AllUsers"
+    nsExec::ExecToLog '"$SYSDIR\schtasks.exe" /delete /tn "${TASK_PATH}" /f'
+    Pop $0
+    nsExec::ExecToLog '"$SYSDIR\sc.exe" stop "${SERVICE_NAME}"'
+    Pop $0
+    nsExec::ExecToLog '"$SYSDIR\sc.exe" delete "${SERVICE_NAME}"'
+    Pop $0
+  ${EndIf}
 
   ${If} $MultiUser.InstallMode == "AllUsers"
     nsExec::ExecToLog '"$INSTDIR\${CLI}" host path-remove --machine'
@@ -873,9 +1115,24 @@ Section "Uninstall"
   Delete "$SMPROGRAMS\${APP}.lnk"
   Delete "$DESKTOP\${APP}.lnk"
 
-  ; Both hives: SHCTX can be wrong if the install scope was ever changed by hand.
-  DeleteRegKey HKCU "${UNINST_KEY}"
-  DeleteRegKey HKLM "${UNINST_KEY}"
+  ; This install's entry, and only this one: both hives use the same key name, and a per-user
+  ; copy may sit beside an all-users one.
+  ReadRegStr $0 HKCU "${UNINST_KEY}" "InstallLocation"
+  ${If} $0 == "$INSTDIR"
+    DeleteRegKey HKCU "${UNINST_KEY}"
+  ${EndIf}
+  ReadRegStr $0 HKLM "${UNINST_KEY}" "InstallLocation"
+  ${If} $0 == "$INSTDIR"
+    DeleteRegKey HKLM "${UNINST_KEY}"
+  ${EndIf}
+
+  ; Update downloads the in-app updater left behind (UpdateEngine.DownloadDirectoryPrefix).
+  FindFirst $0 $1 "$TEMP\WinLogRotate-update-*"
+  ${DoWhile} $1 != ""
+    RMDir /r "$TEMP\$1"
+    FindNext $0 $1
+  ${Loop}
+  FindClose $0
 
   ; Configuration, state and the journal are the customer's data, not ours.
   ;
@@ -918,50 +1175,3 @@ Choose No to keep them for a future install." \
   IfFileExists "$INSTDIR\uninstall.exe" 0 +2
     Exec '"$SYSDIR\cmd.exe" /c ping 127.0.0.1 -n 3 >nul & del /f /q "$INSTDIR\uninstall.exe" & rmdir "$INSTDIR"'
 SectionEnd
-
-; The uninstaller cannot call installer functions, so the two it needs are duplicated with the
-; un. prefix. NSIS has no better answer for this.
-Function un.WaitForIdle
-  Push $R1
-  StrCpy $R1 0
-  un_wait_loop:
-    System::Call 'kernel32::OpenMutexW(i 0x00100000, i 0, w "${ROTATION_MUTEX}") i .r0'
-    ${If} $0 == 0
-      Goto un_wait_done
-    ${EndIf}
-    System::Call 'kernel32::CloseHandle(i r0)'
-    IntOp $R1 $R1 + 1
-    ${If} $R1 > 120
-      Goto un_wait_done
-    ${EndIf}
-    Sleep 1000
-    Goto un_wait_loop
-  un_wait_done:
-  Pop $R1
-FunctionEnd
-
-Function un.CloseGui
-  Push $0
-  Push $1
-  System::Call 'kernel32::OpenEventW(i 0x0002, i 0, w "${GUI_QUIT_EVENT}") i .r0'
-  ${If} $0 != 0
-    System::Call 'kernel32::SetEvent(i r0)'
-    System::Call 'kernel32::CloseHandle(i r0)'
-    StrCpy $1 0
-    un_close_wait:
-      System::Call 'kernel32::OpenMutexW(i 0x00100000, i 0, w "${GUI_INSTANCE_MUTEX}") i .r0'
-      ${If} $0 == 0
-        Goto un_close_done
-      ${EndIf}
-      System::Call 'kernel32::CloseHandle(i r0)'
-      IntOp $1 $1 + 1
-      ${If} $1 >= 40
-        Goto un_close_done
-      ${EndIf}
-      Sleep 250
-      Goto un_close_wait
-    un_close_done:
-  ${EndIf}
-  Pop $1
-  Pop $0
-FunctionEnd

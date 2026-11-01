@@ -97,6 +97,12 @@ from elevation rather than from the install.
   so the installer's own wizard pages have never been drawn either.
 - **Nothing unelevated.** The runner is an administrator throughout, so the read-only banner, the
   "needs administrator" refusals and the UAC child-process elevation are untested.
+- **The installer's own elevation.** It opens without UAC and asks only when all-users is picked;
+  that copy then continues at the run-host page with `/RESUME`, and an all-users uninstall hands
+  over to an elevated `uninstall.exe` with its switches. The runner already holds a full admin
+  token, so neither handoff happens in CI. Checked by hand: a standard user picks all-users → one
+  prompt → the installer opens on *Scheduling* with Back disabled → the install lands in Program
+  Files; *Installed apps* → Uninstall → one prompt → removed, data kept.
 - **No writer that genuinely misbehaves.** The NUL-fill is reproduced by a handle that caches its
   own file offset and resumes at it — which is what log4net and most C++ `std::ofstream`
   implementations do — but it is not log4net. No runner has IIS, SQL Server or http.sys installed,
