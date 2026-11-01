@@ -523,17 +523,18 @@ public sealed record UpdateResult
     public string? Latest { get; init; }
     public required bool UpdateAvailable { get; init; }
 
-    /// <summary>A word or a URL: <c>up to date</c>, <c>disabled by policy</c>, <c>could not
-    /// reach the feed</c>, the release page when an update exists, <c>installing</c> once
-    /// <c>apply</c> has handed over, <c>not installed</c> when it refused.</summary>
+    /// <summary>A word or a URL: <c>up to date</c>, <c>development build</c>, <c>disabled by
+    /// policy</c>, <c>could not reach the feed</c>, the release page when an update exists,
+    /// <c>installing</c> once <c>apply</c> has handed over, <c>declined</c> when the installer's
+    /// administrator prompt was answered No, <c>not installed</c> when it failed.</summary>
     public string? Detail { get; init; }
 
-    /// <summary><c>PerMachine</c> or <c>PerUser</c>, as the installer recorded it; absent for
-    /// a portable copy. The console reads it to know whether Update will ask for elevation.</summary>
+    /// <summary><c>PerMachine</c>, <c>PerUser</c> or <c>Portable</c>, as the installer recorded
+    /// it for this copy's folder. The console reads it to know whether Update will ask for
+    /// elevation, or whether to offer the release page instead.</summary>
     public string? Scope { get; init; }
 
-    /// <summary><c>full</c> or <c>min</c>: which installer an update fetches. Absent for a
-    /// portable copy.</summary>
+    /// <summary><c>full</c> or <c>min</c>: which installer an update fetches.</summary>
     public string? Variant { get; init; }
 
     /// <summary>True once <c>update apply</c> has handed over to the installer, which then

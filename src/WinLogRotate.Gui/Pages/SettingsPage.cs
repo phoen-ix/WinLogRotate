@@ -22,11 +22,13 @@ public sealed class SettingsPage : UserControl
 
     // The Updates panel. Two choices, one of which is the default and neither of which installs
     // anything; a check, which reads; and an update, which is hidden until a check has found
-    // something to install and which is the one press that changes the machine.
+    // something to install and which is the one press that changes the machine. A portable copy
+    // is offered the release page instead, because there is no installer to re-run.
     private readonly RadioButton _manual = new() { Text = UpdateText.OnlyWhenAsked, AutoSize = true };
     private readonly RadioButton _daily = new() { Text = UpdateText.OnceADay, AutoSize = true };
     private readonly Button _checkNow = new() { Text = UpdatesPanel.CheckNow.Text, Width = UpdatesPanel.CheckNow.Width, FlatStyle = FlatStyle.System };
     private readonly Button _update = new() { Text = UpdatesPanel.Update.Text, Width = UpdatesPanel.Update.Width, FlatStyle = FlatStyle.System, Visible = false };
+    private readonly Button _download = new() { Text = UpdatesPanel.OpenDownloadPage.Text, Width = UpdatesPanel.OpenDownloadPage.Width, FlatStyle = FlatStyle.System, Visible = false };
     private readonly Label _status = new() { AutoSize = true, Margin = new Padding(UpdatesPanel.Padding, UpdatesPanel.Padding + 3, 0, 0) };
 
     private UpdateStatus? _known;
@@ -107,6 +109,7 @@ public sealed class SettingsPage : UserControl
 
         _checkNow.Click += async (_, _) => await OneAtATimeAsync(CheckAsync).ConfigureAwait(true);
         _update.Click += async (_, _) => await OneAtATimeAsync(ApplyAsync).ConfigureAwait(true);
+        _download.Click += (_, _) => OpenReleasePage();
 
         _watchdog.Tick += async (_, _) => await WatchdogAsync().ConfigureAwait(true);
 
@@ -114,7 +117,7 @@ public sealed class SettingsPage : UserControl
         _titleFont = title.Font;
 
         var buttons = new FlowLayoutPanel { AutoSize = true, WrapContents = false, Margin = new Padding(0) };
-        buttons.Controls.AddRange([_checkNow, _update, _status]);
+        buttons.Controls.AddRange([_checkNow, _update, _download, _status]);
 
         var rows = new FlowLayoutPanel
         {
@@ -137,7 +140,7 @@ public sealed class SettingsPage : UserControl
     {
         _status.Text = UpdateText.Checking;
         _status.ForeColor = Theme.Current.Muted;
-        _update.Visible = false;
+        _update.Visible = _download.Visible = false;
 
         // Not CliArgs.For: the update verbs declare no --config-dir, and would answer one with
         // a parse error.
@@ -148,16 +151,20 @@ public sealed class SettingsPage : UserControl
             return;
         }
 
-        // Stamped whether or not the feed answered, so a scheduled check on an offline machine
-        // waits a day rather than trying on every start.
-        PreferencesStore.Save(PreferencesStore.Load() with { LastUpdateCheckUtc = DateTimeOffset.UtcNow });
-
         if (result.IsDefect)
         {
             LrDialog.Error(this, UpdateText.Title, result.Describe(), result.Details);
         }
 
         _known = UpdateStatusProjection.From(result, ProductInfo.Version);
+
+        // Stamped whether or not the feed answered, so a scheduled check on an offline machine
+        // waits a day rather than trying every hour. Not under policy: no check was made, and
+        // the day the policy is lifted the first check should not wait for one that never ran.
+        if (!_known.DisabledByPolicy)
+        {
+            PreferencesStore.Save(PreferencesStore.Load() with { LastUpdateCheckUtc = DateTimeOffset.UtcNow });
+        }
 
         _status.Text = _known.Sentence;
         _status.ForeColor = _known.Tone switch
@@ -167,10 +174,15 @@ public sealed class SettingsPage : UserControl
             _ => Theme.Current.Muted,
         };
 
-        if (_known.Available)
+        if (_known is { Available: true, Portable: true })
         {
-            // The shield says "this will prompt", and only a per-machine install does. The
-            // decision of whether to draw one at all is LrDialog's.
+            _download.Visible = _known.ReleasePage is not null;
+        }
+        else if (_known.Available)
+        {
+            // The shield says "this will prompt", and only a per-machine install does - the
+            // installer's prompt, not this window's. The decision of whether to draw one at all
+            // is LrDialog's.
             if (_known.NeedsElevation)
             {
                 LrDialog.AddShield(_update);
@@ -180,10 +192,31 @@ public sealed class SettingsPage : UserControl
         }
     }
 
+    /// <summary>The release page, in the browser, for a copy that can only be replaced by hand.</summary>
+    private void OpenReleasePage()
+    {
+        if (_known?.ReleasePage is not { } page)
+        {
+            return;
+        }
+
+        try
+        {
+            // Disposed rather than discarded: opening an address through the shell may or may
+            // not hand a process back.
+            System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo(page) { UseShellExecute = true })?.Dispose();
+        }
+        catch (Exception e) when (e is System.ComponentModel.Win32Exception or InvalidOperationException)
+        {
+            // No browser to open it with. The details carry the address, to be copied instead.
+            LrDialog.Show(this, DialogKind.Error, UpdateText.Title, e.Message, page);
+        }
+    }
+
     /// <summary>Downloads and hands over. If it goes well, this window is closed by the installer.</summary>
     private async Task ApplyAsync()
     {
-        if (_known is not { Available: true } known)
+        if (_known is not { Available: true })
         {
             return;
         }
@@ -201,9 +234,10 @@ public sealed class SettingsPage : UserControl
             }
         });
 
-        var result = known.NeedsElevation
-            ? await _cli.RunElevatedAsync(arguments, onLine).ConfigureAwait(true)
-            : await _cli.RunStreamingAsync(arguments, onLine).ConfigureAwait(true);
+        // Never elevated, whatever the install: the verb starts the installer through the
+        // administrator prompt when an all-users install needs it, so only the installer runs
+        // with those rights - and this window keeps reading the download's progress.
+        var result = await _cli.RunStreamingAsync(arguments, onLine).ConfigureAwait(true);
 
         if (IsDisposed)
         {

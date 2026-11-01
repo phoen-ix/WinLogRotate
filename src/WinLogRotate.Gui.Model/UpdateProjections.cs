@@ -15,11 +15,22 @@ public sealed record UpdateStatus
 
     public bool Available => Latest is not null;
 
-    /// <summary><c>PerMachine</c>, <c>PerUser</c>, or null for a portable copy.</summary>
+    /// <summary><c>PerMachine</c>, <c>PerUser</c> or <c>Portable</c>; null when the verb did
+    /// not say.</summary>
     public string? Scope { get; init; }
 
-    /// <summary>Pressing Update will raise a UAC prompt.</summary>
+    /// <summary>Pressing Update will raise a UAC prompt - the installer's, not this window's.</summary>
     public bool NeedsElevation => string.Equals(Scope, "PerMachine", StringComparison.OrdinalIgnoreCase);
+
+    /// <summary>No installer put this copy here, so it can only be replaced by hand.</summary>
+    public bool Portable => string.Equals(Scope, "Portable", StringComparison.OrdinalIgnoreCase);
+
+    /// <summary>Where the newer release can be downloaded by hand, as the verb named it. The
+    /// console never spells the address itself: the publisher is named in one file only.</summary>
+    public string? ReleasePage { get; init; }
+
+    /// <summary>The check was not made, so it is not a check to remember having made.</summary>
+    public bool DisabledByPolicy { get; init; }
 
     /// <summary>Everything the verb said, for a dialog's details when it did not go well.</summary>
     public string? Details { get; init; }
@@ -59,7 +70,7 @@ public static class UpdateStatusProjection
 
             if (string.Equals(detail, "disabled by policy", StringComparison.Ordinal))
             {
-                return new UpdateStatus { Tone = CheckTone.Clean, Sentence = UpdateText.DisabledByPolicy, Scope = scope };
+                return new UpdateStatus { Tone = CheckTone.Clean, Sentence = UpdateText.DisabledByPolicy, Scope = scope, DisabledByPolicy = true };
             }
 
             if (latest is null)
@@ -73,11 +84,30 @@ public static class UpdateStatusProjection
                 };
             }
 
+            if (string.Equals(detail, "development build", StringComparison.Ordinal))
+            {
+                return new UpdateStatus { Tone = CheckTone.Clean, Sentence = UpdateText.DevBuild(latest), Scope = scope };
+            }
+
             var available = payload.TryGetProperty("updateAvailable", out var a) && a.ValueKind == JsonValueKind.True;
 
-            return available
-                ? new UpdateStatus { Tone = CheckTone.Clean, Sentence = UpdateText.Available(latest, current), Latest = latest, Scope = scope }
-                : new UpdateStatus { Tone = CheckTone.Clean, Sentence = UpdateText.Newest(current), Scope = scope };
+            if (!available)
+            {
+                return new UpdateStatus { Tone = CheckTone.Clean, Sentence = UpdateText.Newest(current), Scope = scope };
+            }
+
+            // Only an https address is offered to the shell to open.
+            var page = Uri.TryCreate(detail, UriKind.Absolute, out var uri) && uri.Scheme == Uri.UriSchemeHttps ? detail : null;
+            var portable = string.Equals(scope, "Portable", StringComparison.OrdinalIgnoreCase);
+
+            return new UpdateStatus
+            {
+                Tone = CheckTone.Clean,
+                Sentence = portable ? UpdateText.AvailableToDownload(latest, current) : UpdateText.Available(latest, current),
+                Latest = latest,
+                Scope = scope,
+                ReleasePage = page,
+            };
         }
         catch (Exception e) when (e is JsonException or KeyNotFoundException or InvalidOperationException)
         {
@@ -99,7 +129,7 @@ public enum UpdateOutcomeKind
     /// <summary>The installer has the file and this window is about to be closed by it.</summary>
     Installing,
 
-    /// <summary>The user answered No to the elevation prompt. Nothing was changed.</summary>
+    /// <summary>The user answered No to the installer's elevation prompt. Nothing was changed.</summary>
     Cancelled,
 
     /// <summary>The verb declined, and said why in a diagnostic.</summary>
@@ -154,11 +184,6 @@ public static class UpdateApplyProjection
 
     public static UpdateOutcome From(CliResult result)
     {
-        if (result.Failure == CliFailure.UacDeclined)
-        {
-            return new UpdateOutcome { Kind = UpdateOutcomeKind.Cancelled, Message = result.Describe() };
-        }
-
         if (result.Failure != CliFailure.None)
         {
             return new UpdateOutcome { Kind = UpdateOutcomeKind.Failed, Message = result.Describe(), Details = result.Details };
@@ -181,12 +206,20 @@ public static class UpdateApplyProjection
             using var document = JsonDocument.Parse(envelope);
             var root = document.RootElement;
 
-            if (root.TryGetProperty("result", out var payload)
-                && payload.ValueKind == JsonValueKind.Object
-                && payload.TryGetProperty("installing", out var installing)
-                && installing.ValueKind == JsonValueKind.True)
+            if (root.TryGetProperty("result", out var payload) && payload.ValueKind == JsonValueKind.Object)
             {
-                return new UpdateOutcome { Kind = UpdateOutcomeKind.Installing, Message = UpdateText.Installing };
+                if (payload.TryGetProperty("installing", out var installing) && installing.ValueKind == JsonValueKind.True)
+                {
+                    return new UpdateOutcome { Kind = UpdateOutcomeKind.Installing, Message = UpdateText.Installing };
+                }
+
+                // A No to the installer's prompt is a choice, not a fault: the verb exits 1
+                // for a script's sake, and says which it was here.
+                if (payload.TryGetProperty("detail", out var detail) && detail.ValueKind == JsonValueKind.String
+                    && detail.GetString() == "declined")
+                {
+                    return new UpdateOutcome { Kind = UpdateOutcomeKind.Cancelled, Message = UpdateText.Declined };
+                }
             }
 
             // Its own words: the verb already explains why it declined and what to do instead.

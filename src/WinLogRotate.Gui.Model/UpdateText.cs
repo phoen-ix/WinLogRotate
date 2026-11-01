@@ -16,7 +16,7 @@ public static class UpdateText
     public const string Title = "Updates";
 
     public const string OnlyWhenAsked = "Only when I ask";
-    public const string OnceADay = "Check once a day when this window opens";
+    public const string OnceADay = "Check once a day while this window is open";
 
     public const string NeverChecked = "Never checked.";
     public const string Checking = "Checking…";
@@ -28,6 +28,10 @@ public static class UpdateText
     public const string Installing =
         "Installing… This window closes while the files are replaced, and opens again at the new version.";
 
+    public const string Declined = "The administrator prompt was declined. Nothing was changed.";
+
+    public const string OpenDownloadPage = "Open download page";
+
     public const string DidNotInstall =
         "The update did not install. A rotation may have been running; try again in a minute.";
 
@@ -36,6 +40,13 @@ public static class UpdateText
 
     public static string Available(string latest, string current) =>
         $"{ProductInfo.Name} {latest} is available (you have {current}).";
+
+    /// <summary>A copy no installer put there: it is replaced by hand, from the release page.</summary>
+    public static string AvailableToDownload(string latest, string current) =>
+        $"{ProductInfo.Name} {latest} is available (you have {current}). This copy was not installed, so download it and replace this one.";
+
+    public static string DevBuild(string latest) =>
+        $"This is a development build. The newest release is {latest}.";
 
     public static string Newest(string current) =>
         $"You have the newest release, {current}.";

@@ -12,8 +12,9 @@ public enum UpdateCheckMode
     /// about.</summary>
     Manual,
 
-    /// <summary>Once a day, when the window opens. Never more often, never while it is open,
-    /// and never anything more than a check: installing is always a press.</summary>
+    /// <summary>Once a day, while the window is open: when it opens, and on the hour after
+    /// that if a day has passed. Never more often, and never anything more than a check:
+    /// installing is always a press.</summary>
     Daily,
 }
 

@@ -135,11 +135,59 @@ public sealed class UpdateStatusProjectionTests
         status.Sentence.ShouldBe(UpdateText.CouldNotCheck);
     }
 
+    /// <summary>Said plainly, and flagged so the console does not stamp a check that was not made.</summary>
     [Fact]
-    public void APolicyBlockIsSaidPlainly() =>
+    public void APolicyBlockIsSaidPlainly()
+    {
+        var status = UpdateStatusProjection.From(
+            Ok("{\"current\":\"0.17.0\",\"updateAvailable\":false,\"detail\":\"disabled by policy\"}"), "0.17.0");
+
+        status.Sentence.ShouldBe(UpdateText.DisabledByPolicy);
+        status.DisabledByPolicy.ShouldBeTrue();
+    }
+
+    [Fact]
+    public void AnOrdinaryCheckIsStamped() =>
         UpdateStatusProjection.From(
-            Ok("{\"current\":\"0.17.0\",\"updateAvailable\":false,\"detail\":\"disabled by policy\"}"), "0.17.0")
-            .Sentence.ShouldBe(UpdateText.DisabledByPolicy);
+            Ok("{\"current\":\"0.17.0\",\"updateAvailable\":false,\"detail\":\"could not reach the feed\"}"), "0.17.0")
+            .DisabledByPolicy.ShouldBeFalse();
+
+    /// <summary>A local build is told the newest release, not that it is the newest release.</summary>
+    [Fact]
+    public void ADevelopmentBuildIsNotCalledTheNewest()
+    {
+        var status = UpdateStatusProjection.From(
+            Ok("{\"current\":\"0.0.0\",\"latest\":\"0.18.0\",\"updateAvailable\":false,\"detail\":\"development build\"}"), "0.0.0");
+
+        status.Available.ShouldBeFalse();
+        status.Sentence.ShouldBe("This is a development build. The newest release is 0.18.0.");
+    }
+
+    /// <summary>A portable copy is pointed at the release page the verb named, and nothing else.</summary>
+    [Fact]
+    public void APortableCopyIsOfferedTheReleasePage()
+    {
+        var status = UpdateStatusProjection.From(
+            Ok("{\"current\":\"0.17.0\",\"latest\":\"0.18.0\",\"updateAvailable\":true,\"detail\":\"https://example.invalid/releases/latest\",\"scope\":\"Portable\"}"),
+            "0.17.0");
+
+        status.Available.ShouldBeTrue();
+        status.Portable.ShouldBeTrue();
+        status.NeedsElevation.ShouldBeFalse();
+        status.ReleasePage.ShouldBe("https://example.invalid/releases/latest");
+        status.Sentence.ShouldStartWith("WinLogRotate 0.18.0 is available (you have 0.17.0).");
+        status.Sentence.ShouldContain("was not installed");
+    }
+
+    [Theory]
+    [InlineData("up to date")]
+    [InlineData("http://example.invalid/releases/latest")]
+    [InlineData("file:///C:/Windows/System32/calc.exe")]
+    public void OnlyAnHttpsAddressIsAReleasePage(string detail) =>
+        UpdateStatusProjection.From(
+            Ok($"{{\"current\":\"0.17.0\",\"latest\":\"0.18.0\",\"updateAvailable\":true,\"detail\":\"{detail}\",\"scope\":\"Portable\"}}"),
+            "0.17.0")
+            .ReleasePage.ShouldBeNull();
 
     [Fact]
     public void ACliThatCouldNotRunIsAnError()
@@ -226,13 +274,18 @@ public sealed class UpdateApplyProjectionTests
         outcome.Details.ShouldNotBeNull().ShouldContain("Try again.", customMessage: "the remedy travels in the details");
     }
 
+    /// <summary>
+    /// No to the installer's prompt is not an error, though the verb exits 1 for it.
+    /// </summary>
     [Fact]
-    public void DecliningTheUacPromptIsNotAnError()
+    public void DecliningTheInstallersPromptIsNotAnError()
     {
-        var outcome = UpdateApplyProjection.From(new CliResult { ExitCode = -1, StdOut = "", StdErr = "", Failure = CliFailure.UacDeclined });
+        var outcome = UpdateApplyProjection.From(Stream(ExitCode.Errors, Progress, Verdict,
+            "{\"schema\":1,\"verb\":\"update apply\",\"ok\":false,\"exitCode\":1,\"result\":{\"installing\":false,\"detail\":\"declined\"},"
+            + "\"diagnostics\":[{\"severity\":\"Error\",\"code\":\"LR4006\",\"message\":\"The administrator prompt was declined, so nothing was changed.\"}]}"));
 
         outcome.Kind.ShouldBe(UpdateOutcomeKind.Cancelled);
-        outcome.Message.ShouldBe("Elevation was cancelled. Nothing was changed.");
+        outcome.Message.ShouldBe(UpdateText.Declined);
     }
 
     [Fact]
@@ -265,7 +318,8 @@ public sealed class UpdateTextTests
             UpdateText.OnlyWhenAsked, UpdateText.OnceADay, UpdateText.NeverChecked, UpdateText.Checking,
             UpdateText.DisabledByPolicy, UpdateText.CouldNotCheck, UpdateText.Installing, UpdateText.DidNotInstall,
             UpdateText.Available("0.18.0", "0.17.0"), UpdateText.Newest("0.17.0"), UpdateText.Banner("0.18.0"),
-            UpdateText.InstalledButStillOpen("0.18.0"),
+            UpdateText.InstalledButStillOpen("0.18.0"), UpdateText.Declined, UpdateText.OpenDownloadPage,
+            UpdateText.AvailableToDownload("0.18.0", "0.17.0"), UpdateText.DevBuild("0.18.0"),
         ];
 
         foreach (var sentence in sentences)
@@ -290,7 +344,7 @@ public sealed class UpdatesPanelLayoutTests
     [Fact]
     public void EveryButtonHasRoomForItsCaption()
     {
-        foreach (var button in new[] { UpdatesPanel.CheckNow, UpdatesPanel.Update })
+        foreach (var button in new[] { UpdatesPanel.CheckNow, UpdatesPanel.Update, UpdatesPanel.OpenDownloadPage })
         {
             button.Width.ShouldBeGreaterThanOrEqualTo((button.Text.Length * 6) + 12, button.Text);
         }

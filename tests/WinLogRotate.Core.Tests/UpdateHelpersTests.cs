@@ -45,6 +45,36 @@ public sealed class InstallRecordTests
     [InlineData("standard")]
     public void AnUnknownRecordFallsBackToTheInference(string? recorded) =>
         InstallRecord.ResolveVariant(recorded, 44L * 1024 * 1024).ShouldBe("full");
+
+    /// <summary>
+    /// Only the folder an installer recorded counts as installed.
+    /// </summary>
+    /// <remarks>
+    /// An unzipped copy on a machine that also has an installed one is portable: updating it
+    /// through the installer would update the other copy instead.
+    /// </remarks>
+    [Theory]
+    [InlineData("/home/u/Programs/WinLogRotate", "/home/u/Programs/WinLogRotate", null, InstallScope.PerUser)]
+    [InlineData("/home/u/Programs/WinLogRotate", "/home/u/Programs/WinLogRotate/", "/opt/WinLogRotate", InstallScope.PerUser)]
+    [InlineData("/opt/WinLogRotate/", "/home/u/Programs/WinLogRotate", "/opt/WinLogRotate", InstallScope.PerMachine)]
+    [InlineData("/opt/winlogrotate", null, "/opt/WinLogRotate", InstallScope.PerMachine)]
+    [InlineData("/home/u/Downloads/WinLogRotate", "/home/u/Programs/WinLogRotate", "/opt/WinLogRotate", InstallScope.Portable)]
+    [InlineData("/home/u/Downloads", null, null, InstallScope.Portable)]
+    [InlineData("/home/u/Downloads", "", "  ", InstallScope.Portable)]
+    public void OnlyTheFolderAnInstallerRecordedCountsAsInstalled(string exeFolder, string? user, string? machine, InstallScope expected) =>
+        InstallRecord.ScopeOf(exeFolder, user, machine).ShouldBe(expected);
+
+    [Fact]
+    public void NothingIsInstalledWhereThereIsNoRegistry()
+    {
+        Assert.SkipWhen(OperatingSystem.IsWindows(), "the registry is real there.");
+
+        var record = InstallRecord.Detect(AppContext.BaseDirectory);
+
+        record.Scope.ShouldBe(InstallScope.Portable);
+        record.Location.ShouldBeNull();
+        record.BuildVariant.ShouldBe("min");
+    }
 }
 
 /// <summary>The asset names an update fetches are the ones the release workflow publishes.</summary>

@@ -46,4 +46,22 @@ public class ProductInfoTests
     [Fact]
     public void VersionIsThreePartAndParseable() =>
         Version.TryParse(ProductInfo.Version, out _).ShouldBeTrue();
+
+    [Theory]
+    [InlineData("0.1.0", "0.1.1", true)]
+    [InlineData("0.9.0", "0.10.0", true)]
+    [InlineData("0.1.0", "0.1.0", false)]
+    [InlineData("0.1.0.0", "0.1.0", false)]
+    [InlineData("0.2.0", "0.1.9", false)]
+    [InlineData("not a version", "9.9.9", false)]
+    public void IsNewerReadsTheCurrentVersionAsThisBuildSpellsIt(string current, string candidate, bool expected) =>
+        ProductInfo.IsNewer(current, Version.Parse(candidate)).ShouldBe(expected);
+
+    /// <summary>Directory.Build.props keeps 0.0.0-dev; only CI's -p:Version makes a release.</summary>
+    [Fact]
+    public void ALocalBuildReportsTheDevVersion()
+    {
+        ProductInfo.Version.ShouldBe(ProductInfo.DevVersion);
+        ProductInfo.IsDevBuild.ShouldBeTrue();
+    }
 }

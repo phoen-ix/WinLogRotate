@@ -21,12 +21,20 @@ public static class ProductInfo
     public const int ContractSchema = 1;
 
     /// <summary>
-    /// Three-part version of the running assembly ("1.4.0"), or "0.0.0" for a local build.
+    /// Three-part version of the running assembly ("1.4.0"), or <see cref="DevVersion"/> for a
+    /// local build.
     /// </summary>
     public static string Version { get; } =
         Assembly.GetExecutingAssembly().GetName().Version is { } v
             ? Normalize(v).ToString(3)
-            : "0.0.0";
+            : DevVersion;
+
+    /// <summary>What a build without CI's <c>-p:Version</c> reports: Directory.Build.props keeps
+    /// <c>0.0.0-dev</c>, which the assembly version reads as this. Never offered an update - every
+    /// release is newer, and installing one over a build somebody is working on is not an update.</summary>
+    public const string DevVersion = "0.0.0";
+
+    public static bool IsDevBuild => Version == DevVersion;
 
     /// <summary>
     /// Reads absent version components as zero.
@@ -47,4 +55,9 @@ public static class ProductInfo
     /// <paramref name="current"/>, comparing three-part and four-part strings correctly.</summary>
     public static bool IsNewer(Version current, Version candidate) =>
         Normalize(candidate) > Normalize(current);
+
+    /// <summary>The same, for this build's own spelling. A current version that does not parse
+    /// is never older than anything: an update is offered on evidence, not on doubt.</summary>
+    public static bool IsNewer(string current, Version candidate) =>
+        System.Version.TryParse(current, out var now) && IsNewer(now, candidate);
 }

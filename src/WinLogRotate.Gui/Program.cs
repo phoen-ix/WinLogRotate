@@ -1,5 +1,6 @@
 using WinLogRotate.Gui.Cli;
 using WinLogRotate.Gui.Ui;
+using WinLogRotate.Hosting.Install;
 
 namespace WinLogRotate.Gui;
 
@@ -148,6 +149,7 @@ internal static class Program
 
         // What earlier operations could not remove themselves, before anything new is started.
         CliRunner.SweepStaleWork();
+        UpdateEngine.SweepOldDownloads(Path.GetTempPath(), DateTime.UtcNow);
 
         var form = new MainForm(configDir);
 

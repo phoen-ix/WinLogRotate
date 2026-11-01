@@ -8,8 +8,8 @@ using Xunit;
 namespace WinLogRotate.Core.Tests;
 
 /// <summary>
-/// <c>update apply</c>, driven through every one of its steps with the network, the registry
-/// and the installer replaced by fakes.
+/// <c>update check</c> and <c>update apply</c> over <see cref="UpdateEngine"/>, with the
+/// network, the registry and the installer replaced by fakes.
 /// </summary>
 /// <remarks>
 /// <para>
@@ -25,11 +25,19 @@ namespace WinLogRotate.Core.Tests;
 /// <c>next</c> when nothing was installed.
 /// </para>
 /// </remarks>
-public sealed class UpdateCommandTests
+public sealed class UpdateCommandTests : IDisposable
 {
     private const string Digest = "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef";
 
+    /// <summary>A released build's version. The test assembly's own is the development one,
+    /// which is never offered an update.</summary>
+    private const string Current = "1.0.0";
+
     private static readonly Version Newer = new(99, 0, 0);
+
+    private readonly string _temp = Directory.CreateTempSubdirectory("lr-update-").FullName;
+
+    public void Dispose() => Directory.Delete(_temp, recursive: true);
 
     private sealed class Sink : IOutputSink
     {
@@ -103,17 +111,20 @@ public sealed class UpdateCommandTests
 
     private sealed class Launcher : IInstallerLauncher
     {
-        public string? Problem { get; init; }
+        public LaunchResult Result { get; init; } = LaunchResult.Ok;
 
         public string? Installer { get; private set; }
 
         public IReadOnlyList<string>? Arguments { get; private set; }
 
-        public string? Launch(string installer, IReadOnlyList<string> arguments)
+        public bool? Elevate { get; private set; }
+
+        public LaunchResult Launch(string installer, IReadOnlyList<string> arguments, bool elevate)
         {
             Installer = installer;
             Arguments = arguments;
-            return Problem;
+            Elevate = elevate;
+            return Result;
         }
     }
 
@@ -141,29 +152,35 @@ public sealed class UpdateCommandTests
         return releases;
     }
 
-    private static (Sink Sink, int Exit) Apply(
+    private (Sink Sink, int Exit) Apply(
         IReleaseSource releases,
-        InstallRecord? record,
+        InstallRecord record,
         Launcher? launcher = null,
         bool elevated = true,
-        bool restartGui = true)
+        bool restartGui = true,
+        string current = Current,
+        bool policy = false)
     {
         var sink = new Sink();
         var ctx = new CommandContext(sink, CommandTree.Build().Parse(["update", "apply"]));
-
-        launcher ??= new Launcher();
+        var engine = new UpdateEngine(releases, launcher ?? new Launcher(), () => policy, () => elevated, _temp);
 
         var exit = UpdateCommand
-            .ApplyAsync(ctx, restartGui, releases, () => record, launcher, () => elevated)
+            .ApplyAsync(ctx, restartGui, engine, () => record, current)
             .GetAwaiter().GetResult();
 
-        // A hand-over leaves its folder for the installer, which here never ran.
-        if (launcher.Installer is { } installer && Path.GetDirectoryName(installer) is { } folder && Directory.Exists(folder))
-        {
-            Directory.Delete(folder, recursive: true);
-        }
-
         return (sink, exit);
+    }
+
+    private async Task<Sink> CheckAsync(IReleaseSource releases, InstallRecord record, string current = Current)
+    {
+        var sink = new Sink();
+        var ctx = new CommandContext(sink, CommandTree.Build().Parse(["update", "check"]));
+        var engine = new UpdateEngine(releases, new Launcher(), () => false, () => false, _temp);
+
+        (await UpdateCommand.CheckAsync(ctx, engine, () => record, current)).ShouldBe(ExitCode.Ok);
+
+        return sink;
     }
 
     private static UpdateResult Payload(Sink sink) => sink.Result.ShouldBeOfType<UpdateResult>();
@@ -178,6 +195,7 @@ public sealed class UpdateCommandTests
 
         exit.ShouldBe(ExitCode.Ok);
         sink.Diagnostics.ShouldBeEmpty();
+        launcher.Elevate.ShouldBe(false, "this token is already elevated");
 
         var result = Payload(sink);
         result.Installing.ShouldBeTrue();
@@ -229,6 +247,7 @@ public sealed class UpdateCommandTests
 
         exit.ShouldBe(ExitCode.Ok);
         launcher.Arguments.ShouldBe(["/S", "/CurrentUser", "/HOST=none", "/NORUNTIME"]);
+        launcher.Elevate.ShouldBe(false, "a per-user installer asks nothing");
     }
 
     /// <summary>
@@ -295,7 +314,9 @@ public sealed class UpdateCommandTests
     {
         var launcher = new Launcher();
 
-        var (sink, exit) = Apply(Complete(), record: null, launcher);
+        var releases = Complete();
+
+        var (sink, exit) = Apply(releases, InstallRecord.Portable("full"), launcher);
 
         exit.ShouldNotBe(ExitCode.Ok, "'update apply && next' must not run next");
 
@@ -307,25 +328,86 @@ public sealed class UpdateCommandTests
 
         sink.Result.ShouldBeNull();
         launcher.Installer.ShouldBeNull();
+        releases.Fetched.ShouldBeEmpty("nothing is fetched for a copy that cannot use it");
     }
 
+    /// <summary>
+    /// An all-users install is updated from an unelevated prompt: only the installer is elevated.
+    /// </summary>
+    /// <remarks>
+    /// This used to be refused with <c>LR1001</c> before anything was fetched, and the console
+    /// ran the whole verb elevated to get past it. Now the verb downloads as whoever ran it and
+    /// starts the installer through the administrator prompt.
+    /// </remarks>
     [Fact]
-    public void APerMachineInstallNeedsAnElevatedToken()
+    public void APerMachineInstallStartsItsInstallerThroughThePrompt()
     {
+        var launcher = new Launcher();
+
+        var (sink, exit) = Apply(Complete(), PerMachine(), launcher, elevated: false);
+
+        exit.ShouldBe(ExitCode.Ok);
+        sink.Diagnostics.ShouldBeEmpty();
+        launcher.Elevate.ShouldBe(true);
+        launcher.Arguments.ShouldBe(["/S", "/AllUsers", "/HOST=task", "/NORUNTIME", "/RESTART"]);
+        Payload(sink).Installing.ShouldBeTrue();
+    }
+
+    /// <summary>
+    /// No to the prompt is not a fault, and not a success either.
+    /// </summary>
+    /// <remarks>
+    /// Exit 1, because <c>update apply &amp;&amp; next</c> must not run <c>next</c> on a machine
+    /// still on the old version; <c>declined</c>, because the console says "cancelled" for it
+    /// rather than putting up an error.
+    /// </remarks>
+    [Fact]
+    public void ADeclinedPromptIsReportedAsDeclined()
+    {
+        var launcher = new Launcher { Result = new LaunchResult(false, true, "the administrator prompt was declined") };
+
+        var (sink, exit) = Apply(Complete(), PerMachine(), launcher, elevated: false);
+
+        exit.ShouldBe(ExitCode.Errors);
+        sink.Diagnostics.ShouldHaveSingleItem().Code.ShouldBe(DiagnosticCode.UpdateNotInstalled);
+        sink.Diagnostics[0].Message.ShouldContain("declined");
+        Payload(sink).Detail.ShouldBe("declined");
+        Payload(sink).Installing.ShouldBeFalse();
+        Directory.Exists(Path.GetDirectoryName(launcher.Installer!)).ShouldBeFalse("the download is discarded");
+    }
+
+    /// <summary>A local build reports the newest release and installs nothing over itself.</summary>
+    [Fact]
+    public async Task ADevelopmentBuildIsToldTheLatestAndOfferedNothing()
+    {
+        var sink = await CheckAsync(Complete(), PerUser(), current: ProductInfo.DevVersion);
+
+        var result = Payload(sink);
+        result.Latest.ShouldBe("99.0.0");
+        result.UpdateAvailable.ShouldBeFalse();
+        result.Detail.ShouldBe("development build");
+
         var releases = Complete();
         var launcher = new Launcher();
 
-        var (sink, exit) = Apply(releases, PerMachine(), launcher, elevated: false);
+        var (applied, exit) = Apply(releases, PerUser(), launcher, current: ProductInfo.DevVersion);
 
-        exit.ShouldBe(ExitCode.Errors);
-
-        var refusal = sink.Diagnostics.ShouldHaveSingleItem();
-        refusal.Code.ShouldBe(DiagnosticCode.NeedsAdministrator);
-        refusal.Remedy.ShouldNotBeNull().ShouldContain("elevated prompt");
-
-        // Before anything was fetched: nobody downloads forty megabytes to then be told no.
+        exit.ShouldBe(ExitCode.Ok);
+        Payload(applied).Detail.ShouldBe("development build");
         releases.Fetched.ShouldBeEmpty();
         launcher.Installer.ShouldBeNull();
+    }
+
+    [Fact]
+    public void APolicyBlockIsSaidAtExitZero()
+    {
+        var releases = Complete();
+
+        var (sink, exit) = Apply(releases, PerUser(), policy: true);
+
+        exit.ShouldBe(ExitCode.Ok);
+        Payload(sink).Detail.ShouldBe("disabled by policy");
+        releases.Fetched.ShouldBeEmpty();
     }
 
     [Fact]
@@ -411,7 +493,7 @@ public sealed class UpdateCommandTests
     [Fact]
     public void AnInstallerThatWillNotStartIsReported()
     {
-        var launcher = new Launcher { Problem = "Access is denied." };
+        var launcher = new Launcher { Result = new LaunchResult(false, false, "Access is denied.") };
 
         var (sink, exit) = Apply(Complete(), PerMachine(), launcher);
 
@@ -428,7 +510,7 @@ public sealed class UpdateCommandTests
     [InlineData("service", "none")]
     [InlineData("", "none")]
     public void OnlyAHostTheInstallerAcceptsIsPassedBack(string recorded, string passed) =>
-        UpdateCommand.HostKindFor(PerMachine(hostKind: recorded)).ShouldBe(passed);
+        UpdateEngine.HostKindFor(PerMachine(hostKind: recorded)).ShouldBe(passed);
 
     /// <summary>The sentences a person reads say nothing a person would have to look up.</summary>
     [Fact]
@@ -443,12 +525,8 @@ public sealed class UpdateCommandTests
     [Fact]
     public async Task CheckReportsTheInstallRecordForTheConsole()
     {
-        var sink = new Sink();
-        var ctx = new CommandContext(sink, CommandTree.Build().Parse(["update", "check"]));
+        var sink = await CheckAsync(Complete(), PerUser());
 
-        var exit = await UpdateCommand.CheckAsync(ctx, Complete(), () => PerUser());
-
-        exit.ShouldBe(ExitCode.Ok);
         var result = Payload(sink);
         result.UpdateAvailable.ShouldBeTrue();
         result.Scope.ShouldBe("PerUser");
@@ -456,35 +534,23 @@ public sealed class UpdateCommandTests
         result.Installing.ShouldBeFalse();
     }
 
+    /// <summary>The console offers a portable copy the release page, which the check names.</summary>
     [Fact]
-    public async Task CheckOnAPortableCopyReportsNoRecord()
+    public async Task CheckOnAPortableCopySaysSoAndNamesTheReleasePage()
     {
-        var sink = new Sink();
-        var ctx = new CommandContext(sink, CommandTree.Build().Parse(["update", "check"]));
+        var sink = await CheckAsync(Complete(), InstallRecord.Portable("min"));
 
-        await UpdateCommand.CheckAsync(ctx, Complete(), () => null);
-
-        Payload(sink).Scope.ShouldBeNull();
-        Payload(sink).Variant.ShouldBeNull();
+        Payload(sink).Scope.ShouldBe("Portable");
+        Payload(sink).UpdateAvailable.ShouldBeTrue();
+        Payload(sink).Detail.ShouldBe(UpdateCommand.LatestReleaseUrl);
     }
-
-    [Theory]
-    [InlineData("github.com", true)]
-    [InlineData("objects.githubusercontent.com", true)]
-    [InlineData("release-assets.githubusercontent.com", true)]
-    [InlineData("codeload.github.com", true)]
-    [InlineData("github.com.evil.example", false)]
-    [InlineData("evilgithub.com", false)]
-    [InlineData("example.com", false)]
-    public void OnlyTheReleaseHostsAreFollowed(string host, bool trusted) =>
-        UpdateCommand.IsTrustedDownloadHost(host).ShouldBe(trusted);
 
     [Theory]
     [InlineData(0L, "0.0 MB")]
     [InlineData(1048576L, "1.0 MB")]
     [InlineData(49283072L, "47.0 MB")]
     public void SizesAreSpelledInMegabytesRegardlessOfLocale(long bytes, string expected) =>
-        UpdateCommand.Megabytes(bytes).ShouldBe(expected);
+        UpdateEngine.Megabytes(bytes).ShouldBe(expected);
 
     /// <summary>The option the console passes is one the tree declares and the verb reads.</summary>
     [Fact]

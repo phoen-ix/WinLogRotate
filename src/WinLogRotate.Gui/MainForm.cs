@@ -30,6 +30,10 @@ public sealed class MainForm : Form
     private readonly Label _banner = new() { Dock = DockStyle.Top, Height = 0, Padding = new Padding(12, 8, 12, 8), Visible = false };
     private readonly string? _configDir;
 
+    // The once-a-day check for a window left open for days: a minute after the start-up check,
+    // then hourly, each tick checking only when a day has passed since the last one.
+    private readonly System.Windows.Forms.Timer _updateTimer = new() { Interval = 60_000 };
+
     public MainForm(string? configDir = null)
     {
         _configDir = configDir;
@@ -66,6 +70,12 @@ public sealed class MainForm : Form
         Controls.Add(_banner);
 
         Load += OnLoad;
+
+        _updateTimer.Tick += async (_, _) =>
+        {
+            _updateTimer.Interval = 3_600_000;
+            await CheckForUpdateIfDueAsync().ConfigureAwait(true);
+        };
 
         ResumeLayout(false);
         PerformAutoScale();
@@ -138,6 +148,11 @@ public sealed class MainForm : Form
         }
 
         await CheckForUpdateIfDueAsync().ConfigureAwait(true);
+
+        if (!IsDisposed)
+        {
+            _updateTimer.Start();
+        }
     }
 
     /// <summary>
@@ -152,8 +167,8 @@ public sealed class MainForm : Form
     /// </para>
     /// <para>
     /// The stamp is written whether or not the feed answered, so an offline machine asks again
-    /// tomorrow rather than on every start. A check that failed says nothing here; the Settings
-    /// page says it when asked.
+    /// tomorrow rather than every hour - but not under policy, where no check was made. A check
+    /// that failed says nothing here; the Settings page says it when asked.
     /// </para>
     /// </remarks>
     private async Task CheckForUpdateIfDueAsync()
@@ -175,14 +190,27 @@ public sealed class MainForm : Form
             return;
         }
 
-        PreferencesStore.Save(preferences with { LastUpdateCheckUtc = DateTimeOffset.UtcNow });
-
         var status = UpdateStatusProjection.From(result, ProductInfo.Version);
+
+        if (!status.DisabledByPolicy)
+        {
+            PreferencesStore.Save(PreferencesStore.Load() with { LastUpdateCheckUtc = DateTimeOffset.UtcNow });
+        }
 
         if (status.Latest is { } latest)
         {
             ShowBanner(UpdateText.Banner(latest), Severity.Info);
         }
+    }
+
+    protected override void Dispose(bool disposing)
+    {
+        if (disposing)
+        {
+            _updateTimer.Dispose();
+        }
+
+        base.Dispose(disposing);
     }
 
     /// <summary>

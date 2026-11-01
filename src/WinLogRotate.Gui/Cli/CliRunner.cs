@@ -161,9 +161,9 @@ public sealed class CliRunner(string executablePath)
     /// </summary>
     /// <remarks>
     /// The same file and the same tail as <see cref="RunElevatedAsync"/>, so a page that
-    /// shows progress does not need two code paths for the two tokens - which is what the
-    /// Updates panel needs: a per-machine install updates elevated and a per-user one does
-    /// not, and the download looks the same either way.
+    /// shows progress does not need two code paths for the two tokens. The Updates panel runs
+    /// <c>update apply</c> this way for every install: the verb starts only the installer
+    /// through the administrator prompt, and the download is read the same way either way.
     /// </remarks>
     public Task<CliResult> RunStreamingAsync(
         IReadOnlyList<string> arguments,

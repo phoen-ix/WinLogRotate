@@ -23,12 +23,16 @@ winlogrotate update apply
 
 `update check` asks GitHub which release is newest and says whether it is newer than this one.
 It makes no changes and needs no rights. Under `--json` it also reports `scope` (`PerMachine`,
-`PerUser`, or absent for a portable copy) and `variant` (`full` or `min`).
+`PerUser` or `Portable`) and `variant` (`full` or `min`), and when a newer release exists, its
+page as `detail`. A development build (version `0.0.0`, anything not built by the release
+workflow) is told the newest release with `detail: "development build"` and is never offered it.
 
 `update apply` does the update:
 
-1. Reads what the installer recorded: where this copy is, for whom, which run host it was set up
-   with, and which GUI build it carries.
+1. Reads what the installer recorded: for whom this copy was installed, which run host it was set
+   up with, and which GUI build it carries. An entry counts only if its install folder is the
+   folder this `winlogrotate.exe` runs from (the per-user entry first, then the all-users one), so
+   an unzipped copy on a machine that also has an installed one is still a portable copy.
 2. Fetches the release's `SHA256SUMS.txt`, then the matching installer (`-full` for a
    self-contained GUI, `-min` for one that uses the .NET Desktop Runtime), into a folder under
    `%TEMP%`. Progress is printed, and streamed as events under `--json-stream`.
@@ -39,12 +43,17 @@ It makes no changes and needs no rights. Under `--json` it also reports `scope` 
    with `--restart-gui` starts the console again.
 
 What it needs: an installed copy, not a portable one (a portable copy is refused with a sentence
-saying to unzip the new release over it), and for an all-users install, an elevated prompt.
-Exit 0 means the installer was handed the file; whether the install then finished is what
-`winlogrotate --version` says a minute later.
+saying to unzip the new release over it). It does not need an elevated prompt. For an all-users
+install run from an ordinary prompt, the download happens with your own rights and only the
+installer is started through the administrator prompt (UAC); from an elevated prompt there is no
+prompt at all. A per-user install never prompts: the installer runs with your own rights.
+Answering No to the prompt changes nothing - the download is deleted - and is reported as
+`detail: "declined"` with `LR4006`. Exit 0 means the installer was handed the file; whether the
+install then finished is what `winlogrotate --version` says a minute later.
 
-A script can rely on the exit code: 0 when up to date or handed over, 1 with `LR4006` when a
-newer release exists and was not installed, and the usual envelope either way. `update apply`
+A script can rely on the exit code: 0 when up to date, on a development build, or handed over;
+1 with `LR4006` when a newer release exists and was not installed, including when the
+administrator prompt was declined; and the usual envelope either way. `update apply`
 from a scheduled task is not something this product does on its own; if you want unattended
 updates, that is one line of configuration management calling this verb.
 
@@ -55,23 +64,33 @@ Settings, at the top: **Updates**.
 <img src="screenshots/settings-overview.png" alt="The Settings page: the Updates choice set to Only when I ask, Check now, never checked yet, and the doctor report below" width="800">
 
 - **Only when I ask** is the default. Nothing reaches the internet unless you press Check now.
-- **Check once a day when this window opens** runs the same check, at most once a day, when the
-  console starts. It only checks. A newer release shows as a line across the top of the window;
-  installing is always a press.
+- **Check once a day while this window is open** runs the same check, at most once a day: when
+  the console starts, and then every hour for as long as it stays open, checking only once a day
+  has passed since the last check. It only checks. A newer release shows as a line across the top
+  of the window; installing is always a press.
 - **Check now** asks, and the line beside it says what came back: the newer version, that this is
   the newest, that the feed could not be reached, or that policy forbids checking.
-- **Update…** appears once a check has found a newer release. It runs `update apply` for you;
-  on an all-users install the button carries the shield and asks for elevation once. The download
-  shows on the same line, and then the window closes and opens again at the new version.
-  (A per-user install needs no elevation, but on an account that is an administrator the installer
-  itself asks for consent when it starts, because it runs with the highest rights the account has.)
+- **Update…** appears once a check has found a newer release. It runs `update apply` for you,
+  never elevated itself. On an all-users install the button carries the shield: once the download
+  is verified, the installer asks for administrator rights, and only the installer gets them.
+  Answering No says "The administrator prompt was declined. Nothing was changed." and leaves the
+  button there to try again. A per-user install asks nothing. The download shows on the same
+  line, and then the window closes and opens again at the new version.
+- **Open download page** appears instead of Update on a portable copy, which has no installer to
+  re-run: it opens the release page in the browser, to download the new release and replace this
+  copy by hand (or to run its installer, after which updates are handled here).
 
 If the window does not come back within a few minutes, the update did not install: a rotation
 that ran for over two minutes makes the installer give up rather than interrupt it, and the panel
 says so. Press Update again when the rotation has finished.
 
 The choice and the time of the last check are stored per user, in
-`%LOCALAPPDATA%\WinLogRotate\gui.json`. Nothing else is.
+`%LOCALAPPDATA%\WinLogRotate\gui.json`. Nothing else is. A check that policy forbade is not
+recorded as a check, so the first one after the policy is lifted is not held back a day.
+
+Each update downloads into its own `%TEMP%\WinLogRotate-update-…` folder. The installer cannot
+delete itself, so those folders are removed once they are a day old, when the console starts and
+before each new download.
 
 ## What is verified, and what is not
 
@@ -108,8 +127,8 @@ is not consulted here.
 `LR4006` (event 145) means a newer release exists and was not installed, and the message says
 which step stopped: the checksum file could not be downloaded, could not be read, or does not
 list the installer; the installer could not be downloaded; the download did not match; the
-installer could not be started. Nothing was changed in any of those cases, and the download, if
-there was one, was deleted.
+installer could not be started; the administrator prompt was declined (`detail: "declined"`).
+Nothing was changed in any of those cases, and the download, if there was one, was deleted.
 
 `LR4004` (event 143) means the feed could not be reached, which is a warning at exit 0: the
 machine may be offline, and that is not a rotation problem.

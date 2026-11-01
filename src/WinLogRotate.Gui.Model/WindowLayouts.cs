@@ -97,4 +97,5 @@ public static class UpdatesPanel
 
     public static ToolbarButton CheckNow { get; } = new("Check now", 96);
     public static ToolbarButton Update { get; } = new("Update\u2026", 96);
+    public static ToolbarButton OpenDownloadPage { get; } = new(UpdateText.OpenDownloadPage, 140);
 }
