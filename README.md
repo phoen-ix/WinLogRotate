@@ -11,6 +11,10 @@ container, because a config a GUI edits has to survive being rewritten.
 
 <img src="docs/screenshots/jobs-list.png" alt="The console's Jobs page: three jobs - an IIS site in manage mode, a disabled importer and a shop API - with their state, kind, paths and policy" width="800">
 
+**Status:** v0.21.x, pre-1.0. The installer and the scheduler are verified end to end on Windows;
+rotation is verified only against files nothing holds open. What has and has not run:
+[Status, honestly](#status-honestly).
+
 ---
 
 ## Why another one
@@ -37,8 +41,10 @@ can rotate that file*, by any means. WinLogRotate tells you that, instead of fai
 **`copytruncate` silently destroying your disk.** A writer that caches its own file offset
 doesn't seek back to zero after truncation — its next write lands at the old offset and NTFS
 zero-fills the gap. You get four gigabytes of NUL bytes plus one line of log, every rotation,
-for ever, without a single error. WinLogRotate detects it and permanently refuses
-`copytruncate` for that path.
+for ever, without a single error.
+
+WinLogRotate detects it and permanently refuses `copytruncate` for that path
+([how](docs/logrotate-compatibility.md#locked-files)).
 
 ### And the thing that actually fills Windows disks
 
@@ -98,13 +104,14 @@ newer installer is downloaded, checked against the release's `SHA256SUMS.txt`, a
 old one; it waits for any rotation in progress and keeps your configuration. Checking is manual
 unless you ask for once a day. See [updating](docs/updating.md).
 
-Figures are from v0.21.0's release assets. Until then they were v0.3.0's, because nothing
-recorded the real number; CI now writes the measured binary size to every run's summary.
+Sizes are v0.21.5's release assets; CI writes the measured binary size to every run's summary.
 
-Installing per-machine puts config in `C:\ProgramData\WinLogRotate\`, registers a scheduled
-task that runs as SYSTEM, and **locks that directory down to SYSTEM and Administrators**. That
-last part is not optional: the task runs as SYSTEM and jobs can carry hooks, so a
-world-writable config directory would let any local user run a command as SYSTEM.
+Installing per-machine:
+- puts config in `C:\ProgramData\WinLogRotate\`;
+- registers a scheduled task that runs as SYSTEM;
+- **locks that directory down to SYSTEM and Administrators**. That is not optional: the task runs
+  as SYSTEM and jobs can carry hooks, so a world-writable config directory would let any local
+  user run a command as SYSTEM.
 
 Silent install, for deploying to customer sites:
 
@@ -144,18 +151,25 @@ winlogrotate run --dry-run            # exactly what would happen. changes nothi
 winlogrotate doctor                   # paths, permissions, schedule — in one place
 ```
 
-Or open the GUI. With no jobs it says what a job is and offers to add one: pick a log file,
-say how it should be taken away from the program (let WinLogRotate check what the program
-allows, copy it out and empty it in place for a program that keeps it open, rename it, or only
-tidy up after a program that writes new files itself), choose how often, how many copies to keep
-and for how long, how they are named and compressed and where they go — and one sentence
-restates what will happen. "What would happen…" shows a saved job's moves without making them.
-**Rotate now** on the Run page rotates every enabled job whether or not it is due yet, like
-`logrotate -f`; the scheduled task only rotates what is due, and a log it sees for the first time
-is only given a clock.
-The form is a menu of sections — Files, How, When, Keep, Old copies, Before & after, If things
-go wrong — and each shows its plain choices first and every other setting under **More
-settings**, captioned in plain words with its default and where its value comes from.
+Or open the GUI, `winlogrotate-gui.exe`: Jobs, Run, History, Scheduling, Notifications and
+Settings pages over the same CLI.
+- **First start**: with no jobs it says what a job is and offers to add one.
+- **The job form** is a menu of sections — Files, How, When, Keep, Old copies, Before & after,
+  If things go wrong.
+  - Each shows its plain choices first and every other setting under **More settings**,
+    captioned in plain words with its default and where its value comes from.
+- **How the log is taken away from the program**:
+  - let WinLogRotate check what the program allows;
+  - copy it out and empty it in place, for a program that keeps it open;
+  - rename it;
+  - or only tidy up after a program that writes new files itself.
+- **The rest of the plain choices**: how often, how many copies to keep and for how long, how
+  they are named and compressed and where they go — and one sentence restates what will happen.
+- **"What would happen…"** shows a saved job's moves without making them.
+- **Rotate now** on the Run page rotates every enabled job whether or not it is due yet, like
+  `logrotate -f`.
+  - The scheduled task only rotates what is due, and a log it sees for the first time is only
+    given a clock.
 
 <img src="docs/screenshots/jobs-editor.png" alt="The job editor on its Files section: the name, the file pattern with a live match count, and the sentence restating what the job will do" width="800">
 
@@ -236,112 +250,70 @@ lockstrategy  = "copytruncate"
 postrotate = ["service:paramchange:MyAppSvc"]
 ```
 
-TOML, and specifically Tomlyn's syntax tree, for one reason: **the GUI can change one value
-without touching anything else.** Load-then-save is byte-identical; load-change-one-value-save
-differs in exactly one line. Your comments survive — including the "do NOT enable compress, the
-shipper can't read .gz" note that explains why a setting is the way it is. YAML and JSON both
-destroy comments on write.
-
-That is now a property you can check rather than a claim: the Jobs page's editor, and the `job`
-verbs beneath it, change only the keys you name, and a test opens a hand-written file — comment,
-unknown key, `allowdangerous` entry, CRLF — changes one key, and asserts exactly one line differs.
-
-A field the editor shows as **inherited** stays inherited unless you type in it. That matters more
-than it sounds: the only job object the product publishes has `[defaults]` already merged in, so an
-editor that handed every field back would sever each job from `[defaults]` the first time anybody
-pressed Save — the job keeps working and silently stops following `[defaults]` for ever.
-
-`lockstrategy = "auto"` asks the file what its writer permits and picks accordingly — rename if it
-allows `FILE_SHARE_DELETE`, copytruncate if it allows writing, a copy if it allows only reading,
-and nothing at all if it allows none of those, which is what log4net's default `ExclusiveLock`
-looks like. And `copytruncate` is watched: if the writer resumes at a cached offset and leaves NTFS
-to zero-fill the gap, that is detected from the NUL run where the truncation left the file, and the
-strategy is refused for that path from then on. See [hooks](docs/hooks.md) for the other half.
-
-`postrotate` replaces `kill -HUP`, which Windows doesn't have: `service:paramchange:NAME` sends
-`SERVICE_CONTROL_PARAMCHANGE`, `event:Global\Name` signals a named event, and `command:` runs a
-program — no shell, ever, and an ambiguous command line is refused rather than guessed at, from the
-text alone and never from what happens to be on disk. Hooks run
-once per job and only when a live log actually moves; every one has a timeout that kills the whole
-process tree; a failing `prerotate` skips the job untouched while a failing `postrotate` leaves the
-rotation standing. All of it is refused outright if the config directory isn't locked down. See
-[hooks](docs/hooks.md).
-
-The same target grammar reports failures. `[notify]` sends **one message per run, only when
-something changed**, over `smtp:`, `http:`, `pushover:` or `eventlog:` — with credentials in an
-encrypted store rather than in the config file, a wall-clock budget so alerting can never delay a
-rotation, and a breaker so one dead webhook cannot silence the rest. `winlogrotate notify test`
-proves a channel works before you need it. See [notifications](docs/notifications.md).
-
-The GUI's Notifications page shows all of that and can store a credential — over a private named
-pipe, because elevating a child process on Windows makes redirecting its standard input
-impossible, and a password has no business on a command line that `Win32_Process` exposes and 4688
-audit events record verbatim.
+- **TOML, and specifically Tomlyn's syntax tree, for one reason: the GUI can change one value
+  without touching anything else.** Load-then-save is byte-identical.
+  - Load-change-one-value-save differs in exactly one line, and a test opens a hand-written file
+    (comment, unknown key, `allowdangerous` entry, CRLF), changes one key and asserts exactly that.
+  - Your comments survive — including the "do NOT enable compress, the shipper can't read .gz"
+    note. YAML and JSON both destroy comments on write.
+- **Inherited stays inherited**: a field the editor shows as inherited stays so unless you type
+  in it, so pressing Save never cuts a job off from `[defaults]`
+  ([editing a job](docs/configuration.md#editing-a-job-without-opening-it)).
+- **`lockstrategy = "auto"`** asks the file what its writer permits and picks accordingly
+  ([locked files](docs/logrotate-compatibility.md#locked-files)):
+  - rename if it allows `FILE_SHARE_DELETE`, copytruncate if it allows writing, a copy if it
+    allows only reading;
+  - nothing at all if it allows none of those, which is what log4net's default `ExclusiveLock`
+    looks like;
+  - `copytruncate` is watched: a NUL run where the truncation left the file refuses the strategy
+    for that path from then on.
+- **Hooks** replace `kill -HUP`, which Windows doesn't have ([hooks](docs/hooks.md)):
+  - `service:paramchange:NAME` sends `SERVICE_CONTROL_PARAMCHANGE`, `event:Global\Name` signals a
+    named event, and `command:` runs a program — no shell, ever. An ambiguous command line is
+    refused rather than guessed at.
+  - Hooks run once per job and only when a live log actually moves; every one has a timeout that
+    kills the whole process tree.
+  - A failing `prerotate` skips the job untouched; a failing `postrotate` leaves the rotation
+    standing. All of it is refused outright if the config directory isn't locked down.
+- **Failure reports**: `[notify]` sends **one message per run, only when something changed**, over
+  `smtp:`, `http:`, `pushover:` or `eventlog:` ([notifications](docs/notifications.md)).
+  - Credentials sit in an encrypted store rather than in the config file.
+  - A wall-clock budget means alerting can never delay a rotation, and a breaker stops one dead
+    webhook silencing the rest.
+  - `winlogrotate notify test` proves a channel works before you need it.
+  - The GUI's Notifications page can store a credential, over a private named pipe: a password
+    has no business on a command line that `Win32_Process` exposes and 4688 audit events record.
+- **Coming from Linux?** `winlogrotate import \\srv\etc\logrotate.d\nginx` converts it, one way
+  and guessing nothing: `kill -USR1` becomes `service:paramchange:nginx`, and anything that can't
+  be translated exactly is written **as a TODO comment** into a job created disabled.
 
 > **Hooks need a per-machine install.** They run commands, and that is only safe from a directory
-> an ordinary account cannot write. A per-user install keeps its configuration in
-> `%APPDATA%\WinLogRotate\`, which its owner can necessarily write — so hooks are refused there,
-> permanently and by design. Nothing is wrong with such an install and there is nothing to repair;
-> `winlogrotate doctor` says so rather than reporting it as a fault. Everything else — rotation,
-> compression, retention, scheduling, and reporting failures by email or webhook — works exactly
-> the same either way. The one further exception is `eventlog:`, which needs a source only an
-> administrator can register.
-
-Coming from Linux? `winlogrotate import \\srv\etc\logrotate.d\nginx` converts it. One way, and
-nothing is guessed: `kill -USR1` becomes `service:paramchange:nginx`, but anything that can't be
-translated exactly is written into the output **as a TODO comment** and the job is created
-disabled.
+> an ordinary account cannot write.
+> - A per-user install keeps its configuration in `%APPDATA%\WinLogRotate\`, which its owner can
+>   necessarily write — so hooks are refused there, permanently and by design.
+> - Nothing is wrong with such an install and there is nothing to repair; `winlogrotate doctor`
+>   says so rather than reporting it as a fault.
+> - Everything else — rotation, compression, retention, scheduling, and reporting failures by
+>   email or webhook — works the same either way, except `eventlog:`, which needs a source only
+>   an administrator can register.
 
 ### Where things live, and the history
 
-Per-machine installs keep everything in `C:\ProgramData\WinLogRotate\` — `config.toml`,
-`conf.d\`, `state.json` (the rotation clocks) and `journal\`. Per-user installs use
-`%APPDATA%\WinLogRotate\`, and consequently cannot run hooks (see above). `winlogrotate doctor`
-prints them all.
+- **Per-machine** installs keep everything in `C:\ProgramData\WinLogRotate\` — `config.toml`,
+  `conf.d\`, `state.json` (the rotation clocks) and `journal\`.
+- **Per-user** installs use `%APPDATA%\WinLogRotate\`, and consequently cannot run hooks (see above).
+- `winlogrotate doctor` prints them all.
 
 The **journal** is the record of every file compressed, moved or deleted, and the rule that
-caused it. It is what the GUI's History page shows and what `winlogrotate journal` queries —
-deliberately not Task Scheduler's Last Run Result, since the registered task exits 0 when a run
-overlaps and `0x0` therefore proves nothing.
-
-It **records two lines per operation and reports one**, and both halves of that are deliberate.
-Each destructive step is journaled once as `plan` and once as `apply`, so a run killed between
-them leaves a readable record of an intention that was never carried out. A person reading it
-wants the last word instead: told "would delete" and then nothing, you cannot tell a completed
-deletion from an abandoned one.
-
-So `winlogrotate journal` reports one line per operation — the half that settled it, or the
-plan half where nothing ever did, which is exactly how a run that died mid-operation shows
-itself. Nothing is hidden by that, which is why it is the default; `--all` shows the record as
-it was written, for auditing whether the record itself is well formed.
-
-**It rotates itself**, through the same manage-mode code that tidies IIS logs. That is not a
-coincidence: the journal is a directory of dated files written by a producer that rolls them
-itself and never cleans up, which is precisely the case manage mode exists for. If manage mode
-ever regresses, it shows up in this tool's own output before it shows up in anyone's logs.
-
-```toml
-[journal]
-enabled  = true
-retain   = 30        # days
-compress = "zip"     # zip | gzip | none
-maxsize  = "50M"     # roll mid-day past this, so one busy day can't produce an unopenable file
-```
-
-`retain` is days, and only days. A day that rolled past `maxsize` into several files is still one
-day, and all of its files live and die together. The consequence worth knowing is that the
-directory has no ceiling in bytes: at worst it holds `retain` days of `maxsize` files, times
-however often a day rolls. If that matters on your disk, lower `maxsize`, or `retain`, or both.
-
-`enabled = false` writes no history at all — at the cost of making "what happened to my logs?"
-unanswerable. Today's journal is never touched while it is being written, for the same reason
-the live IIS log never is.
-
-There is deliberately no separate application log file. Diagnostics go to stdout for whoever
-ran the command and to the Windows Event Log at Warning and above (see
-[diagnostics](docs/diagnostics.md) for the event-ID table); the record of what was
-*done* is the journal. A third half-used sink would be one more thing to rotate and one more
-place to look.
+caused it: what the GUI's History page shows and what `winlogrotate journal` queries.
+- **One line per operation**: each destructive step is journaled as `plan` and as `apply`, so a
+  run killed in between stays readable; `journal` reports the half that settled it, `--all` both.
+- **It rotates itself**, through the same manage-mode code that tidies IIS logs, keeping
+  `retain` days (`[journal]`, default 30).
+- **No separate application log**: diagnostics go to stdout and to the Windows Event Log at
+  Warning and above ([diagnostics](docs/diagnostics.md)).
+- Settings, and why it is not Task Scheduler's Last Run Result:
+  [`[journal]`](docs/configuration.md#journal-the-record-of-what-was-done).
 
 See [logrotate compatibility](docs/logrotate-compatibility.md) for what matches, what
 deliberately differs, and what cannot exist on Windows.
@@ -350,151 +322,19 @@ deliberately differs, and what cannot exist on Windows.
 
 ## Status, honestly
 
-**v0.21.x.** The installer and scheduler are verified end to end on Windows. Rotation itself ran
-for the first time in 0.4.0 — before that the engine skipped every `kind = "rotate"` job silently,
-which is to say the headline feature had never executed at all. It is verified only against files
-nothing holds open. The GUI's window is drawn on every CI build now, by the docs tour that makes
-the screenshots, but nothing has been saved through it there; what it does with the CLI's
-output — following the stream, wording an exit code, reading a failure out of an envelope — lives
-in a plain library and is covered, which is the part that was silently wrong.
-
-**And the planner was wrong in five ways until 0.11.0.** No test anywhere had ever *executed* a
-rotate plan — the executor refuses to run off Windows, and every planner test stopped at the list
-of intentions, asserting that an operation of the right kind existed and never what it would do to
-a directory. Underneath that: `delaycompress` renamed the archive compression had just consumed,
-failing one operation a night for ever; two spellings of one generation ended the whole run at
-exit 4, from the exact state the crash-recovery path warns about and promises the planners cope
-with; `maxage` deleted yesterday's archive and reported the month-old one it had left behind;
-archives above the retention count were probed for at up to a thousand existence checks per log
-and then never touched; and `rotate = n` kept `n + 1` under `dateext`. A plan is now judged by the
-directory it leaves behind, and one is carried out on real files on every Windows build.
-
-**And manage mode never pruned its own archives until after 0.21.0.** A manage job's pattern names
-what the application writes — `u_ex*.log` — and what the job compressed last night is
-`u_ex*.log.zip`, which that pattern does not match. From the second night on, `rotate` and `maxage`
-counted only the files not yet compressed, so every archive the job made was kept for ever; the IIS
-example above was exactly that job, and the installer smoke only ever ran it for one night. A
-manage job now counts the archives it compressed, so **the first run after upgrading prunes the ones
-that piled up** to `rotate` and `maxage`. `winlogrotate run --dry-run` lists them first.
-
-The same audit found values that `config check` accepted and that destroyed data: `maxage = -1`
-deleted every archive, and a number where a name belongs — `compresstype = "3"` — compressed a log
-over itself and deleted it. Those are refused now, along with negative sizes; the job that holds
-one is skipped and named until it is fixed, and the rest of the machine rotates.
-
-### What has actually run on Windows
-
-Every push exercises an `installer-smoke` job on a fresh GitHub-hosted Windows Server 2025
-runner: it builds a real installer, installs it silently, and asserts the result — then
-upgrades, uninstalls, and does the per-user variant too. **A release waits for it**, which it did
-not until v0.10.1: the release workflow was independent of CI, so v0.9.0 was published from a
-commit whose `installer-smoke` had failed.
-
-```
-installed to C:\Program Files\WinLogRotate
-ACL ok: O:BAG:SYD:PAI(A;OICI;FA;;;SY)(A;OICI;FA;;;BA)(A;OICI;0x1200a9;;;BU)
-task LastTaskResult = 0x0
-  run.start  (dry run)
-  [smoke] skip C:\smoke\logs\app-2026-09-07.log  (newest file - the application is still writing it)
-  [smoke] would delete C:\smoke\logs\app-2026-08-03.log  (rotate = 2 keeps 2 archive(s); this is number 3)
-  [smoke] would compress C:\smoke\logs\app-2026-08-05.log -> C:\smoke\logs\app-2026-08-05.log.zip  (compress = zip)
-dry run: 2 job(s), 5 operation(s) planned. Nothing was changed.
-  [smoke-rotate] did rename C:\smoke\rot\svc.log -> C:\smoke\rot\svc.log.1  (due; lockstrategy = rename)
-  [smoke-rotate] did create C:\smoke\rot\svc.log  (recreating the log the writer expects to find)
-  [smoke-rotate] did run hook C:\Windows\System32\cmd.exe /c echo ran> C:\smoke\rot\hook-ran.txt  (postrotate)
-  [smoke] did compress C:\smoke\logs\app-2026-08-05.log -> C:\smoke\logs\app-2026-08-05.log.zip  (compress = zip)
-2 job(s), 7 operation(s), 58.6 KB freed, 0 failure(s).
-upgrade took 18.3s
-```
-
-Proven, on a real machine: the silent per-machine install; the configuration directory coming
-out with exactly the intended descriptor, protected and administrator-only; the Event Log source;
-PATH edited without harming what was already there; the scheduled task registered with every
-setting Task Scheduler gets wrong by default; **SYSTEM running the binary and rotating a log
-nothing else could have rotated** — a size-triggered job staged below its threshold while the
-administrator runs go past, grown past it afterwards, with the archive asserted absent before the
-task starts; an upgrade blocking on a held rotation mutex for 18.3s and resuming the
-moment it was released; a silent uninstall keeping the configuration; `/PURGEDATA` removing it;
-and a per-user install leaving HKLM, the machine PATH and the Event Log alone.
-
-That job found three bugs nothing else could have. The scheduled task **never registered at all**
-in v0.0.1 — `LogonType: ServiceAccount` is a value from the COM enumeration and does not exist in
-the XML schema, so `schtasks` rejected the file, and because the installer treats a failed
-registration as non-fatal the install reported success with nothing scheduled to run.
-`NT AUTHORITY\SYSTEM` is localised and would have failed on a German machine, so the account is
-now named by SID. And a per-user install was editing the machine PATH, because scope was taken
-from elevation rather than from the install.
-
-### What has not
-
-- **The installed product still rotates narrow configurations.** `installer-smoke` now asserts
-  the compressing job's whole output directory — which archives survive, that the live log was not
-  touched, and that the zip opens and holds the log it is named for — and gives the scheduled task
-  a size-triggered job only it can do. What it still does not exercise is `delaycompress`,
-  `maxage`, `dateext` or a multi-generation chain; those meet real files only in the Windows unit
-  suite, and a directory model everywhere else. Milestone 23's five planner defects all lived in
-  that gap.
-- **The GUI is used only from a build, by an administrator, against a local sink.** ci.yml's
-  `e2e` job drives the console end to end (`tests/WinLogRotate.Gui.Tests/E2E`): it saves, toggles
-  and removes jobs, runs Rotate now, stores a credential down the pipe, sends a test to a local
-  webhook, repairs permissions, switches the scheduled task and opens in the dark theme, and checks
-  the files each leaves. It does so on the JIT build beside the tests, not on an install, and never
-  through a UAC prompt, an OS file dialog, Explorer, a real mail server or the live update feed;
-  `tests/WinLogRotate.Gui.Tests/COVERAGE.md` lists what is left and why. Every install is silent,
-  so the installer's own wizard pages have never been drawn either.
-- **Nothing unelevated.** The runner is an administrator throughout, so the read-only banner, the
-  "needs administrator" refusals and the UAC child-process elevation are untested.
-- **No writer that genuinely misbehaves.** The NUL-fill is reproduced by a handle that caches its
-  own file offset and resumes at it — which is what log4net and most C++ `std::ofstream`
-  implementations do — but it is not log4net. No runner has IIS, SQL Server or http.sys installed,
-  so the share masks those take are read from documentation rather than observed.
-- **Nothing probed as SYSTEM against a handle held by a different account.** Every probe in CI is
-  run by, and against a handle held by, the same administrator. `ProbeIdentity` exists because a
-  verdict reached by SYSTEM says nothing about what a desktop user can do to the same file, and
-  that asymmetry has been reasoned about and never seen.
-- **The retry backoff is untested above one attempt.** `RetryPolicy` sleeps for real, deliberately,
-  because it is waiting for another process to release a handle and no test clock can hurry that
-  along. That the delay doubles and caps at five seconds is asserted as arithmetic, never as
-  elapsed time.
-- **`auto` resolving to `rename` is the one case CI cannot tell from the old bug.** Before
-  milestone 14 `auto` silently meant `rename`, so that case produces identical files either way. It
-  is separated only by the journal recording which strategy was chosen.
-- **The .NET bootstrap is skipped** (`/NORUNTIME`), so the winget detection and install path is
-  unexercised.
-- **English locale, no domain, no UNC paths, no IIS installed.**
-- **The Windows Service host is not implemented.** `host use service` says so and refuses.
-- **No notification has ever been delivered on Windows by CI.** The senders and their whole
-  decision layer are exercised on the Linux leg against local listeners and fakes, but no runner
-  has yet sent real mail, reached a real webhook or written an `eventlog:` digest.
-- **No `service:` or `event:` hook has run against a real target in CI.** A `command:` hook does
-  run as SYSTEM in the installer smoke, out of the directory the installer locked down, and the run
-  asserts that a dry run did not fire it, a rotation did, and a run that rotated nothing did not.
-  What has never happened on a runner is `service:paramchange:` reaching a real service, or
-  `event:` signalling a real waiter.
-
-### What is thoroughly tested, everywhere
-
-The platform-neutral half of the suite is where the subtle bugs live:
-
-- logrotate's scheduling rules, including that `--force` does **not** override `notifempty`,
-  `minsize` or `minage` — one test per gate
-- DST transitions, `monthly 31` in February, `weekly 7`, a clock moved backwards by a snapshot
-  restore
-- retention arithmetic, the numbered shift order, the `delaycompress` hand-off — and, since the
-  planner turned out to be wrong about all three, the **directory each plan leaves behind**: which
-  original file ends up under which name, rather than which operations were intended
-- glob matching — including a test asserting we reject `something.logfile` for `*.log` **and**
-  that Windows itself accepts it, via 8.3 short names
-- the TOML round-trip, and that generated imports parse back through our own binder
-- the gzip output, cross-checked against GNU `gzip`: `gzip -t` passes and `gunzip -N` restores
-  the original name and timestamp
-- that changing one value in a config file changes exactly one line and every comment survives —
-  the property the whole TOML decision rests on, and which nothing asserted until there was an
-  API able to change a value at all
-- notification delivery: retries, the wall-clock budget and the breaker, all driven by a fake
-  clock against fake transports, so no test sleeps and none opens a socket — plus the rule that a
-  message counts as reported only when every channel that was tried accepted it
-- that a templated webhook body cannot be broken out of by a log file called `a"b.log`
+The full account — what has run on Windows, what has not, and what is tested everywhere — is in
+[docs/status.md](docs/status.md). In short:
+- **Installer and scheduler**: verified end to end. Every push runs `installer-smoke` on a fresh
+  Windows Server 2025 runner (install, upgrade, uninstall, per-user), and a release waits for it.
+- **Rotation**: ran for the first time in 0.4.0, and is verified only against files nothing holds open.
+- **The console**: ci.yml's `e2e` job drives it end to end, on the JIT build beside the tests,
+  never on an install or through a UAC prompt.
+- **Never exercised on a runner**: unelevated use, a writer that genuinely misbehaves, real
+  notification delivery, `service:`/`event:` hooks against real targets. The Windows Service host
+  is not implemented; `host use service` says so and refuses.
+- **Fixed by audits**: five planner defects until 0.11.0; manage mode never pruned its own archives
+  until after 0.21.0, so **the first run after upgrading prunes the ones that piled up**
+  (`winlogrotate run --dry-run` lists them first).
 
 Use `--dry-run` first, and prefer a machine you don't mind breaking.
 
@@ -507,8 +347,8 @@ dotnet build WinLogRotate.slnx -c Release
 dotnet test  WinLogRotate.slnx -c Release
 ```
 
-`global.json` pins the SDK band and opts into the Microsoft.Testing.Platform runner, which
-xunit.v3 requires on .NET 10.
+`global.json` pins SDK 10.0.403 (rolling forward to newer feature bands) and opts into the
+Microsoft.Testing.Platform runner, which xunit.v3 requires on .NET 10.
 
 Everything builds on Linux, the WinForms project included, and everything but the Windows suite
 runs there — deliberately, and it's how the engine's portable half stays honest. The GUI's window,
@@ -519,9 +359,10 @@ because it cannot start without the Windows Desktop runtime) need Windows.
 
 `docs/screenshots/` is made by a test, not by hand: `tests/WinLogRotate.Gui.Tests` builds a
 fictional machine under `C:\WinLogRotate-demo`, opens the real console on it, asserts that each
-page and dialog shows what its picture is meant to, and saves it. The machine is deleted once every
-shot has passed; a failed run leaves it for inspection, and the next run wipes and rebuilds it. On
-Windows, from an elevated Git Bash:
+page and dialog shows what its picture is meant to, and saves it.
+
+The machine is deleted once every shot has passed; a failed run leaves it for inspection, and the
+next run wipes and rebuilds it. On Windows, from an elevated Git Bash:
 
 ```
 bash scripts/docs-screenshots.sh            # writes docs/screenshots/*.png

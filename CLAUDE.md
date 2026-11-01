@@ -66,7 +66,7 @@ fleet check WinLogRotate --no-ci                         # through ~/repos/.flee
 
 - Conventional Commits with a scope where it helps (`fix(engine): …`), subject saying what the
   product now does. End with the Co-Authored-By trailer.
-- Comments explain *why*, often with the incident behind them; keep that style, and keep README's
-  "Status, honestly" section true when behaviour or test coverage changes.
+- Comments explain *why*, often with the incident behind them; keep that style, and keep
+  `docs/status.md` ("Status, honestly", summarised in README) true when behaviour or test coverage changes.
 - New diagnostics get a stable `LRxxxx` code (`Contracts/DiagnosticCode.cs`); Event Log IDs live in
   `Hosting/Diagnostics/EventIds.cs` and are documented in `docs/diagnostics.md`.

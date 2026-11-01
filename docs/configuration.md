@@ -259,7 +259,10 @@ words with the key name beside it, its default shown, a label saying whether the
 here* or *inherited*, and one line saying what it does; a value the CLI would refuse is said beside
 the box before Check is pressed. A key the file carries that this build does not read gets a
 section of its own, **Other keys**, where it can be removed. A field shown as inherited stays
-inherited unless you type in it. "What would happen…" runs a dry run of the saved job, as if it
+inherited unless you type in it. That matters more than it sounds: the only job object the product
+publishes has `[defaults]` already merged in, so an editor that handed every field back would sever
+each job from `[defaults]` the first time anybody pressed Save — the job keeps working and silently
+stops following `[defaults]` for ever. "What would happen…" runs a dry run of the saved job, as if it
 were due tonight, and lists every move it would make. Check validates without writing and without
 asking for administrator rights; Save asks once.
 
@@ -288,9 +291,41 @@ notify   = false
 | `maxsize` | size | `"50M"` | Start a new file for the day, at the next run, once today's has reached this. |
 | `notify` | bool | `false` | Whether a failure to tidy the journal is reported to `[notify]`'s targets. It is always on stdout and in the Event Log either way. |
 
-The journal looks after itself through the same manage-mode code that tidies IIS logs, and today's
-file is never touched while it is being written. See the README for why it records two lines per
-operation and reports one.
+The journal is the record of every file compressed, moved or deleted, and the rule that caused it.
+It is what the GUI's History page shows and what `winlogrotate journal` queries — deliberately not
+Task Scheduler's Last Run Result, since the registered task exits 0 when a run overlaps and `0x0`
+therefore proves nothing.
+
+It **records two lines per operation and reports one**, and both halves of that are deliberate.
+Each destructive step is journaled once as `plan` and once as `apply`, so a run killed between
+them leaves a readable record of an intention that was never carried out. A person reading it
+wants the last word instead: told "would delete" and then nothing, you cannot tell a completed
+deletion from an abandoned one.
+
+So `winlogrotate journal` reports one line per operation — the half that settled it, or the
+plan half where nothing ever did, which is exactly how a run that died mid-operation shows
+itself. Nothing is hidden by that, which is why it is the default; `--all` shows the record as
+it was written, for auditing whether the record itself is well formed.
+
+**It rotates itself**, through the same manage-mode code that tidies IIS logs. That is not a
+coincidence: the journal is a directory of dated files written by a producer that rolls them
+itself and never cleans up, which is precisely the case manage mode exists for. If manage mode
+ever regresses, it shows up in this tool's own output before it shows up in anyone's logs.
+
+`maxsize` exists so that one busy day can't produce an unopenable file. `retain` is days, and only
+days. A day that rolled past `maxsize` into several files is still one day, and all of its files
+live and die together. The consequence worth knowing is that the directory has no ceiling in
+bytes: at worst it holds `retain` days of `maxsize` files, times however often a day rolls. If
+that matters on your disk, lower `maxsize`, or `retain`, or both.
+
+`enabled = false` writes no history at all — at the cost of making "what happened to my logs?"
+unanswerable. Today's journal is never touched while it is being written, for the same reason
+the live IIS log never is.
+
+There is deliberately no separate application log file. Diagnostics go to stdout for whoever
+ran the command and to the Windows Event Log at Warning and above (see
+[diagnostics](diagnostics.md) for the event-ID table); the record of what was *done* is the
+journal. A third half-used sink would be one more thing to rotate and one more place to look.
 
 ## `[host]`: when the scheduled task fires
 
