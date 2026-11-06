@@ -15,6 +15,8 @@ container, because a config a GUI edits has to survive being rewritten.
 rotation is verified only against files nothing holds open. What has and has not run:
 [Status, honestly](#status-honestly).
 
+Step by step: [operator guide](docs/admin-guide.md) · every screen: [screenshots](docs/screenshots/README.md)
+
 ---
 
 ## Why another one
@@ -99,11 +101,6 @@ server. Only the GUI needs the .NET runtime, and only in the `-min` builds.
 Inside the `-min` zip: `winlogrotate.exe` (12.8 MB, native, zero dependencies) and
 `winlogrotate-gui.exe` (1.5 MB). `SHA256SUMS.txt` covers every download.
 
-Updating later is `winlogrotate update apply`, or **Settings → Updates** in the console: the
-newer installer is downloaded, checked against the release's `SHA256SUMS.txt`, and run over the
-old one; it waits for any rotation in progress and keeps your configuration. Checking is manual
-unless you ask for once a day. See [updating](docs/updating.md).
-
 Sizes are v0.21.5's release assets; CI writes the measured binary size to every run's summary.
 
 The installer opens without an administrator prompt and preselects **anyone who uses this
@@ -117,37 +114,23 @@ Installing per-machine:
   as SYSTEM and jobs can carry hooks, so a world-writable config directory would let any local
   user run a command as SYSTEM.
 
-Silent install, for deploying to customer sites:
+Silent install, for deploying to customer sites (every switch, seeding jobs and credentials:
+[rolling out to many machines](docs/admin-guide.md#rolling-out-to-many-machines)):
 
 ```
 WinLogRotate-Setup-<version>.exe /S /AllUsers /HOST=task /CONFIG=\\srv\deploy\jobs
 ```
 
-Every switch the installer understands:
-
-| Switch | |
-| --- | --- |
-| `/S` | Silent. Every prompt takes its safe default: an upgrade waits for a running rotation, an uninstall keeps your data |
-| `/AllUsers` / `/CurrentUser` | Per-machine (`ProgramData`, SYSTEM task, locked-down directory) or per-user (your profile, no task, hooks refused) |
-| `/HOST=task` / `/HOST=none` | Register the scheduled task, or nothing. Anything else is refused before anything is installed |
-| `/CONFIG=<dir>` | Copy every `*.toml` from that directory into `conf.d` — a seeded configuration for a fleet |
-| `/NOPATH` | Leave PATH alone |
-| `/NORUNTIME` | Do not offer to install the .NET Desktop Runtime the GUI needs; the CLI works without it |
-| `/FORCEIDLE` | After two minutes of waiting for a rotation in progress, go ahead anyway. Off by default because the process being replaced may be mid-file on a multi-gigabyte log |
-| `/RESTART` | Start the console again once the files are in place, as the desktop user rather than elevated. What an in-app update passes |
-| `/D=<dir>` | Install directory (the standard NSIS switch; must be last) |
-| exit code `2` / `3` | `/HOST=` named no run model this build has / a silent all-users run without administrator rights. Nothing was installed either way; run an all-users deployment from an elevated prompt |
-| `uninstall.exe /S /PURGEDATA` | Remove the configuration, state and history too. Without it a silent uninstall keeps them — which is what an in-place upgrade depends on |
-
-The task fires at 03:00 unless `config.toml` says otherwise. For a fleet, follow the install with
-`winlogrotate host use task --at 22:30`: `/CONFIG=` seeds job files, not `config.toml`.
+Updating later is `winlogrotate update apply`, or **Settings → Updates** in the console
+([updating](docs/admin-guide.md#updating)); uninstalling keeps your configuration unless you ask
+([uninstalling](docs/admin-guide.md#uninstalling)).
 
 ---
 
 ## Use
 
 ```
-winlogrotate job add iis --paths "C:/inetpub/logs/**/*.log" --set rotate=14
+winlogrotate job add iis --kind manage --paths "C:/inetpub/logs/**/*.log" --set rotate=14
 winlogrotate scan                     # what on this machine needs help?
 winlogrotate glob "C:/logs/**/*.log"  # what would this pattern match?
 winlogrotate probe C:\logs\app.log    # can this file even be rotated?
@@ -157,32 +140,9 @@ winlogrotate doctor                   # paths, permissions, schedule — in one 
 ```
 
 Or open the GUI, `winlogrotate-gui.exe`: Jobs, Run, History, Scheduling, Notifications and
-Settings pages over the same CLI.
-- **First start**: with no jobs it says what a job is and offers to add one.
-- **The job form** is a menu of sections — Files, How, When, Keep, Old copies, Before & after,
-  If things go wrong.
-  - Each shows its plain choices first and every other setting under **More settings**,
-    captioned in plain words with its default and where its value comes from.
-- **How the log is taken away from the program**:
-  - let WinLogRotate check what the program allows;
-  - copy it out and empty it in place, for a program that keeps it open;
-  - rename it;
-  - or only tidy up after a program that writes new files itself.
-- **The rest of the plain choices**: how often, how many copies to keep and for how long, how
-  they are named and compressed and where they go — and one sentence restates what will happen.
-- **"What would happen…"** shows a saved job's moves without making them.
-- **Rotate now** on the Run page rotates every enabled job whether or not it is due yet, like
-  `logrotate -f`.
-  - The scheduled task only rotates what is due, and a log it sees for the first time is only
-    given a clock.
-
-<img src="docs/screenshots/jobs-editor.png" alt="The job editor on its Files section: the name, the file pattern with a live match count, and the sentence restating what the job will do" width="800">
-
-<img src="docs/screenshots/run-dry-run.png" alt="The Run page after a dry run: every deletion, compression and rename that Rotate now would make, and nothing changed" width="800">
-
-<img src="docs/screenshots/history-journal.png" alt="The History page: three nights of the journal, with the one compression that failed because IIS still held the file" width="800">
-
-Every page and dialog, with what each is for: [screenshots](docs/screenshots/README.md).
+Settings pages over the same CLI. A first job, a dry run, the schedule, alerts and reading the
+history, step by step: [operator guide](docs/admin-guide.md). Every page and dialog, with what each
+is for: [screenshots](docs/screenshots/README.md).
 
 `--dry-run` is the same code path as a real run, stopped one step earlier — not a separate
 description that can drift from what the executor does. `job set --dry-run` works the same way:

@@ -202,7 +202,7 @@ fi
 Creating a job from a script, and checking it before it is written:
 
 ```powershell
-$dry = winlogrotate job add iis --paths "C:/inetpub/logs/**/*.log" `
+$dry = winlogrotate job add iis --kind manage --paths "C:/inetpub/logs/**/*.log" `
                                --set rotate=14 --set compress=true --dry-run --json |
        ConvertFrom-Json
 
@@ -211,7 +211,7 @@ if ($dry.exitCode -ne 0) {
     throw "Not writing a job the loader would refuse."
 }
 
-winlogrotate job add iis --paths "C:/inetpub/logs/**/*.log" `
+winlogrotate job add iis --kind manage --paths "C:/inetpub/logs/**/*.log" `
                         --set rotate=14 --set compress=true | Out-Null
 ```
 
