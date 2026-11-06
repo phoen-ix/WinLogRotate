@@ -24,6 +24,11 @@ namespace WinLogRotate.Gui.Tests;
 /// A dialog nobody asked for is recorded and cancelled, and fails the run; so does an exception
 /// that reaches the message loop.
 /// </para>
+/// <para>
+/// Every log line carries the time since the script started, and a script that does not finish
+/// fails with the last thing it said: a window that hangs while closing is told apart from a step
+/// that never came back.
+/// </para>
 /// </remarks>
 internal sealed class ConsoleDriver
 {
@@ -32,6 +37,10 @@ internal sealed class ConsoleDriver
     private readonly List<string> _unexpected = [];
     private readonly HashSet<Form> _answered = [];
     private readonly Queue<Action<Form>> _scripts = [];
+    private readonly Stopwatch _since = Stopwatch.StartNew();
+
+    // Written on the STA thread, read by Run when the join gives up.
+    private volatile string _step = "00:00.0 starting";
 
     private ConsoleDriver(ITestOutputHelper? log) => Log = log;
 
@@ -62,7 +71,9 @@ internal sealed class ConsoleDriver
         thread.Start();
 
         var allowed = limit ?? TimeSpan.FromMinutes(3);
-        Assert.True(thread.Join(allowed), $"The console script did not finish in {allowed.TotalMinutes} minutes.");
+        Assert.True(thread.Join(allowed),
+            $"The console script did not finish in {allowed.TotalMinutes} minutes. Its last step: {driver._step}. "
+            + $"winlogrotate.exe running: {Running()}.");
         failure?.Throw();
         Assert.True(driver._unexpected.Count == 0, string.Join(Environment.NewLine + Environment.NewLine, driver._unexpected));
     }
@@ -100,6 +111,7 @@ internal sealed class ConsoleDriver
         try
         {
             script(this);
+            Say("script done");
         }
         finally
         {
@@ -125,17 +137,17 @@ internal sealed class ConsoleDriver
         {
             if (_scripts.TryDequeue(out var script))
             {
-                Log?.WriteLine($"dialog '{dialog.Text}': {string.Join(" | ", All(dialog).OfType<Label>().Select(l => l.Text))}");
+                Say($"dialog '{dialog.Text}': {string.Join(" | ", All(dialog).OfType<Label>().Select(l => l.Text))}");
                 script(dialog);
             }
             else if (_unexpected.Count < 20)
             {
                 _unexpected.Add($"Unexpected dialog '{dialog.Text}': {string.Join(" | ", All(dialog).OfType<Label>().Select(l => l.Text))}");
-                Log?.WriteLine(_unexpected[^1]);
+                Say(_unexpected[^1]);
             }
             else
             {
-                Log?.WriteLine($"dialog '{dialog.Text}' will not close; disposing it");
+                Say($"dialog '{dialog.Text}' will not close; disposing it");
                 dialog.Dispose();
             }
         }
@@ -144,7 +156,7 @@ internal sealed class ConsoleDriver
             if (!dialog.IsDisposed && dialog.DialogResult == DialogResult.None)
             {
                 dialog.DialogResult = DialogResult.Cancel;
-                Log?.WriteLine($"cancelled '{dialog.Text}'");
+                Say($"cancelled '{dialog.Text}'");
             }
         }
     }
@@ -157,6 +169,7 @@ internal sealed class ConsoleDriver
             Location = new Point(40, 40),
         };
 
+        form.Disposed += (_, _) => Say("window disposed");
         form.Show();
         Settle();
         return form;
@@ -226,7 +239,7 @@ internal sealed class ConsoleDriver
         {
             if (idle.Elapsed > TimeSpan.FromSeconds(10))
             {
-                Log?.WriteLine($"{what}: winlogrotate.exe still running ({string.Join(", ", running.Select(p => p.Id))})");
+                Say($"{what}: winlogrotate.exe still running ({string.Join(", ", running.Select(p => p.Id))})");
                 break;
             }
 
@@ -238,8 +251,19 @@ internal sealed class ConsoleDriver
             Pump();
         }
 
-        Log?.WriteLine($"{what}: ready after {clock.Elapsed.TotalSeconds:F1}s");
+        Say($"{what}: ready after {clock.Elapsed.TotalSeconds:F1}s");
     }
+
+    private void Say(string line)
+    {
+        _step = $"{_since.Elapsed:mm\\:ss\\.f} {line}";
+        Log?.WriteLine(_step);
+    }
+
+    private static string Running() =>
+        Process.GetProcessesByName("winlogrotate") is { Length: > 0 } running
+            ? string.Join(", ", running.Select(p => p.Id))
+            : "none";
 
     private static void Pump()
     {
