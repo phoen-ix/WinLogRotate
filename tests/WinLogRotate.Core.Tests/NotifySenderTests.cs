@@ -904,6 +904,7 @@ public sealed class NotifySenderTests : IDisposable
     [InlineData("pushover-without-user-key", "user_key")]
     [InlineData("email-without-host", "host")]
     [InlineData("pickup-without-directory", "pickup_directory")]
+    [InlineData("email-without-from", "from")]
     public void AProviderMissingWhatItsTransportNeedsIsDroppedBeforeAnythingIsSent(string shape, string field)
     {
         var provider = Incomplete(shape);
@@ -937,6 +938,7 @@ public sealed class NotifySenderTests : IDisposable
             Kind = NotifyProviderKind.Email,
             Delivery = SmtpDelivery.PickupDirectory,
         },
+        "email-without-from" => EmailRelay() with { From = null },
         _ => throw new ArgumentOutOfRangeException(nameof(shape)),
     };
 }

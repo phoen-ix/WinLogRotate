@@ -252,10 +252,10 @@ public sealed class NotifySmtpTests
     private static string ThumbprintOf(X509Certificate2 certificate) =>
         Convert.ToHexString(SHA256.HashData(certificate.GetRawCertData()));
 
-    private static SendResult Send(FakeSmtpRelay relay, SmtpTls tls, string? pin) =>
-        Send(relay.Port, tls, pin, Timeout);
+    private static SendResult Send(FakeSmtpRelay relay, SmtpTls tls, string? pin, SmtpAuth auth = SmtpAuth.None) =>
+        Send(relay.Port, tls, pin, Timeout, auth);
 
-    private static SendResult Send(int port, SmtpTls tls, string? pin, TimeSpan timeout)
+    private static SendResult Send(int port, SmtpTls tls, string? pin, TimeSpan timeout, SmtpAuth auth = SmtpAuth.None)
     {
         var provider = new NotifyProvider
         {
@@ -264,6 +264,7 @@ public sealed class NotifySmtpTests
             Host = "127.0.0.1",
             Port = port,
             Tls = tls,
+            Auth = auth,
             From = "winlogrotate@example.test",
             To = ["ops@example.test"],
         };
@@ -373,6 +374,40 @@ public sealed class NotifySmtpTests
         result.Ok.ShouldBeFalse();
         result.Error.ShouldNotBeNull().ShouldContain("STARTTLS");
         relay.Received.ShouldBeEmpty("nothing may go in the clear when the operator said required");
+    }
+
+    /// <summary>
+    /// <c>auth = "login"</c> under opportunistic TLS is required TLS: a stripped STARTTLS must not
+    /// earn the attacker who stripped it the password.
+    /// </summary>
+    [Fact]
+    public void LoginUnderOpportunisticTlsRefusesARelayWithoutStartTls()
+    {
+        using var relay = new FakeSmtpRelay(offersStartTls: false);
+
+        var result = Send(relay, SmtpTls.Opportunistic, pin: null, SmtpAuth.Login);
+
+        result.Ok.ShouldBeFalse();
+        result.Error.ShouldNotBeNull().ShouldContain("auth = \"login\"");
+        relay.Connections.ShouldBe(1, "only the probe; no connection that could carry the password");
+        relay.Received.ShouldBeEmpty();
+    }
+
+    /// <summary>
+    /// The headers <see cref="System.Net.Mail.SmtpClient"/> leaves out and receiving filters look for.
+    /// </summary>
+    [Fact]
+    public void AMessageCarriesAMessageIdFromTheSendersDomainAndSaysItIsAutomated()
+    {
+        using var relay = new FakeSmtpRelay(offersStartTls: false);
+
+        Send(relay, SmtpTls.Opportunistic, pin: null).Ok.ShouldBeTrue();
+
+        var raw = relay.Received.ShouldHaveSingleItem();
+        raw.ShouldMatch(@"(?m)^Message-ID: <[0-9a-f]{32}@example\.test>\r$");
+        raw.ShouldMatch(@"(?m)^Date: ");
+        raw.ShouldContain("Auto-Submitted: auto-generated\r\n");
+        raw.ShouldContain("Content-Transfer-Encoding: quoted-printable\r\n");
     }
 
     [Fact]

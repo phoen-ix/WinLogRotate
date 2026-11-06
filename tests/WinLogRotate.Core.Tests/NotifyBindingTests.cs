@@ -460,6 +460,7 @@ public sealed class NotifyTargetValidationTests : IDisposable
     private const string Relay = """
         [notify.email.relay]
         host = "smtp.example.test"
+        from = "winlogrotate@example.test"
         to = ["ops@example.test"]
         """;
 
@@ -501,6 +502,30 @@ public sealed class NotifyTargetValidationTests : IDisposable
             to = ["smtp:oncall@example.test"]
             {Relay}
             """).ShouldNotContain(d => d.Code == DiagnosticCode.NotifyMisconfigured);
+    }
+
+    /// <summary>
+    /// An email provider with no <c>from</c> is reported at load time, not guessed at send time.
+    /// </summary>
+    /// <remarks>
+    /// The sender used to fall back to <c>winlogrotate@MACHINENAME</c>: a domain nobody owns, which
+    /// relays reject and spam filters score, so the alert that went was the one least likely to arrive.
+    /// </remarks>
+    [Fact]
+    public void AnEmailProviderWithoutAFromIsReportedAtLoadTime()
+    {
+        var found = Load("""
+            schema = 1
+            [notify]
+            to = ["email.relay"]
+            [notify.email.relay]
+            host = "smtp.example.test"
+            to = ["ops@example.test"]
+            """).Where(d => d.Code == DiagnosticCode.NotifyMisconfigured).ShouldHaveSingleItem();
+
+        found.Severity.ShouldBe(Severity.Warning, "a notification problem must not stop a rotation");
+        found.Message.ShouldContain("from");
+        found.Line.ShouldBeGreaterThan(0, "it points at the provider table");
     }
 
     [Fact]

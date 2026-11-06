@@ -1,6 +1,7 @@
 using System.Diagnostics;
 using System.Net;
 using System.Net.Mail;
+using System.Net.Mime;
 using System.Security;
 using System.Security.Authentication;
 
@@ -22,6 +23,13 @@ namespace WinLogRotate.Core.Notify.Delivery;
 /// offers STARTTLS - it either insists or never looks - so <see cref="StartTlsProbe"/> asks with a
 /// plaintext EHLO before the send, and <c>EnableSsl</c> is set from the answer. That is what makes
 /// the documented downgrade happen, and what lets <c>tls = "required"</c> say what was missing.
+/// <c>auth = "login"</c> never downgrades: a relay whose STARTTLS was stripped in transit would
+/// otherwise be handed the password in the clear, so it is refused as <c>required</c> would be.
+/// </para>
+/// <para>
+/// <b>The EHLO name is the machine's.</b> <see cref="SmtpClient"/> has no setting for it and
+/// always introduces itself with this host's name, so a relay or recipient that checks the HELO
+/// name against DNS sees the Windows host name; give it a matching A and PTR record.
 /// </para>
 /// <para>
 /// <b>Pinning goes through a process-global.</b> <see cref="SmtpClient"/> exposes no per-client
@@ -47,6 +55,11 @@ public sealed class SmtpNotifySender : INotifySender
         {
             return SendResult.Failed(400,
                 "an smtp: target needs a [notify.email.*] provider naming the relay");
+        }
+
+        if (string.IsNullOrWhiteSpace(provider.From))
+        {
+            return SendResult.Failed(400, "the email provider names no from address");
         }
 
         if (provider.Delivery == SmtpDelivery.PickupDirectory)
@@ -76,12 +89,18 @@ public sealed class SmtpNotifySender : INotifySender
             return SendResult.Unreachable(answer.Error ?? "the relay could not be reached", answer.NativeError);
         }
 
+        // Not retryable and not about the message: the relay will not grow STARTTLS tonight,
+        // and every message would meet the same answer.
         if (!offered && provider.Tls == SmtpTls.Required)
         {
-            // Not retryable and not about the message: the relay will not grow STARTTLS tonight,
-            // and every message would meet the same answer.
             return SendResult.Failed(400,
                 $"{provider.Host} offers no STARTTLS, and tls = \"required\" does not send in the clear");
+        }
+
+        if (!offered && provider.Auth == SmtpAuth.Login)
+        {
+            return SendResult.Failed(400,
+                $"{provider.Host} offers no STARTTLS, and auth = \"login\" does not send a password in the clear");
         }
 
         var remaining = timeout - Stopwatch.GetElapsedTime(started);
@@ -219,14 +238,14 @@ public sealed class SmtpNotifySender : INotifySender
     private static MailMessage Compose(
         NotifyProvider provider, ResolvedChannel channel, NotifyMessage message)
     {
-        var from = provider.From ?? $"winlogrotate@{message.Run.Machine}";
         var subject = provider.SubjectPrefix is { Length: > 0 } prefix
             ? $"{prefix} {message.Subject}"
             : message.Subject;
 
+        var from = new MailAddress(provider.From!);
         var mail = new MailMessage
         {
-            From = new MailAddress(from),
+            From = from,
 
             // Header injection is impossible by construction: MailMessage refuses a control
             // character in Subject, and the body is a separate field rather than text appended
@@ -234,7 +253,12 @@ public sealed class SmtpNotifySender : INotifySender
             Subject = subject,
             Body = message.Body,
             IsBodyHtml = false,
+            BodyTransferEncoding = TransferEncoding.QuotedPrintable,
         };
+
+        // SmtpClient writes no Message-ID, and a message without one scores as spam.
+        mail.Headers.Add("Message-ID", $"<{Guid.NewGuid():N}@{from.Host}>");
+        mail.Headers.Add("Auto-Submitted", "auto-generated");
 
         // The provider's recipients, plus the one the target named: `smtp:ops@example.com` is a
         // complete instruction on its own, and a provider with a standing `to` list is the other

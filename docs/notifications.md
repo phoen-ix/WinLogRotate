@@ -72,8 +72,8 @@ An inline `smtp:` or `pushover:` target borrows from the **single enabled provid
 the relay and its `from`, or the application token. With none of that kind enabled, or with two, the
 target is dropped and `LR5001` says which, both at `winlogrotate config check` and on the night; name
 the provider in `to` instead and put the address in its own `to` list. A provider a target names but
-that its transport could not use — a webhook without `url`, a relay without `host`, a pickup
-directory left unset — is dropped the same way, with the field named, rather than attempted.
+that its transport could not use — a webhook without `url`, a relay without `host` or `from`, a
+pickup directory left unset — is dropped the same way, with the field named, rather than attempted.
 
 `command:`, `service:` and `event:` are **hooks, not notification targets**, and that is permanent.
 They run — see [hooks](hooks.md) — as a job's `prerotate` and `postrotate`, behind the
@@ -161,7 +161,8 @@ credential at all.
 | `tls` | `opportunistic` | `none`, `opportunistic`, `required` |
 | `delivery` | `network` | or `pickup` |
 | `pickup_directory` | — | required for `delivery = "pickup"` |
-| `from` / `to` | — | `to` combines with the address in an `smtp:` target |
+| `from` | — | **required**; without it the provider is dropped with `LR5001` |
+| `to` | — | combines with the address in an `smtp:` target |
 | `username` / `password` | — | `password` should be `@secret:NAME` |
 | `subject_prefix` | — | prepended, for inbox rules |
 
@@ -173,13 +174,28 @@ relay. `winlogrotate notify show` marks providers that need nothing stored.
 ### TLS
 
 `opportunistic` (the default) asks the relay first — a plaintext `EHLO` on its own connection, one
-extra round trip per send — and encrypts when STARTTLS is offered. When it is not, the message — and
-the `login` credential, if the provider has one — goes in the clear **and says so** with an `LR5001`
-naming the host, once per channel per run. A downgrade
+extra round trip per send — and encrypts when STARTTLS is offered. When it is not, the message goes
+in the clear **and says so** with an `LR5001` naming the host, once per channel per run. A downgrade
 nobody is told about is not opportunistic encryption, it is an unencrypted connection with a
 reassuring setting next to it. `tls = "required"` refuses such a relay instead and says what was
-missing (`LR5002`); `tls = "none"` never asks. Port 465 is implicit TLS, which the .NET SMTP client
+missing (`LR5002`); `tls = "none"` never asks.
+
+**With `auth = "login"`, `opportunistic` behaves as `required`.** A relay that seems to offer no
+STARTTLS may be one whose offer was stripped in transit, and the password would go to whoever
+stripped it. Such a relay is refused (`LR5002`), never downgraded; a password goes in the clear only
+under an explicit `tls = "none"`. Port 465 is implicit TLS, which the .NET SMTP client
 does not speak — use 587 or 25.
+
+### What the message carries
+
+Every message has a `Message-ID` in the `from` address's domain, a `Date`, and
+`Auto-Submitted: auto-generated` (so auto-responders and out-of-office replies leave it alone), and
+its plain-text body is quoted-printable.
+
+**The `EHLO` name cannot be set.** The .NET SMTP client always introduces itself with this
+machine's host name and offers no setting to change it. Relays and receiving filters that check it
+see the Windows host name, so give that name an A record and a matching PTR (reverse DNS), or relay
+through a server that presents its own.
 
 ### Microsoft 365 has a deadline
 
@@ -407,7 +423,7 @@ the file rather than stored (`LR9006`) is readable by that account too.
 
 | Code | Event | Means |
 |---|---:|---|
-| `LR5001` | 150 | A target is unparseable, unsupported, or its credential could not be read |
+| `LR5001` | 150 | A target is unparseable, unsupported, incomplete, or its credential could not be read |
 | `LR5002` | 151 | A channel could not be reached. Never an error |
 | `LR5003` | 152 | A channel is suppressed after repeated failures |
 | `LR5004` | 153 | Notification history was unreadable; change detection restarts |

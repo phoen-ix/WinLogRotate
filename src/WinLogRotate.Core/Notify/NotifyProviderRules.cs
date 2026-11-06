@@ -66,6 +66,10 @@ public static class NotifyProviderRules
             "uses auth = \"login\" but names no password",
             "Set password = \"@secret:NAME\", or auth = \"none\" for an IP-authorised relay."),
 
+        NotifyProviderKind.Email when string.IsNullOrWhiteSpace(provider.From) => new ProviderLack(
+            "names no from address",
+            "Set from = \"winlogrotate@your-domain\" to an address the relay accepts mail from."),
+
         _ => null,
     };
 
