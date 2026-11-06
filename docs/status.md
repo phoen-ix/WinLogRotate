@@ -30,6 +30,12 @@ example in the [README](../README.md#and-the-thing-that-actually-fills-windows-d
 manage job now counts the archives it compressed, so **the first run after upgrading prunes the ones
 that piled up** to `rotate` and `maxage`. `winlogrotate run --dry-run` lists them first.
 
+The same job kind judged every file a pattern matched as one series, whichever folder it was in.
+`C:/inetpub/logs/LogFiles/**/u_ex*.log` therefore left only the newest file of all the sites alone,
+planned every other site's live log for compression, and kept `rotate` files across all of them.
+Each folder is its own series now; a manage job whose pattern spans folders keeps more after
+upgrading, never less.
+
 The same audit found values that `config check` accepted and that destroyed data: `maxage = -1`
 deleted every archive, and a number where a name belongs — `compresstype = "3"` — compressed a log
 over itself and deleted it. Those are refused now, along with negative sizes; the job that holds

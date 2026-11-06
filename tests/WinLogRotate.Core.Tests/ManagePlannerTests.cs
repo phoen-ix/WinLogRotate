@@ -176,6 +176,36 @@ public class ManagePlannerTests
             .Operations.Count(o => o.Action == PlannedAction.Skip).ShouldBe(3);
     }
 
+    /// <summary>
+    /// A pattern across sites - W3SVC[0-9]/u_ex*.log - names one producer per directory. Judged as
+    /// one series, only the newest file of all of them was left alone and rotate counted across
+    /// every site, so each site's live log was compressed and most of its history deleted.
+    /// </summary>
+    [Fact]
+    public void EachDirectoryIsItsOwnSeries()
+    {
+        MatchedFile Site(int site, string name, int daysOld) => new()
+        {
+            Path = $@"C:\inetpub\logs\LogFiles\W3SVC{site}\{name}",
+            Length = 1_000_000,
+            LastWriteUtc = Now.AddDays(-daysOld),
+        };
+
+        var files = new[] { 1, 2 }
+            .SelectMany(site => Enumerable.Range(0, 4).Select(i => Site(site, $"u_ex2609{(7 - i):00}.log", i)))
+            .ToArray();
+
+        var plan = ManageJobPlanner.Plan(Job(rotate: 2), files, Now);
+
+        plan.Operations.Where(o => o.Action == PlannedAction.Skip).Select(o => o.Source).ShouldBe(
+            [@"C:\inetpub\logs\LogFiles\W3SVC1\u_ex260907.log", @"C:\inetpub\logs\LogFiles\W3SVC2\u_ex260907.log"],
+            ignoreOrder: true);
+        plan.Operations.Where(o => o.Action == PlannedAction.Delete).Select(o => o.Source).ShouldBe(
+            [@"C:\inetpub\logs\LogFiles\W3SVC1\u_ex260904.log", @"C:\inetpub\logs\LogFiles\W3SVC2\u_ex260904.log"],
+            ignoreOrder: true);
+        plan.MatchedFiles.ShouldBe(8);
+    }
+
     [Fact]
     public void NothingMatchedMeansNothingPlanned()
     {

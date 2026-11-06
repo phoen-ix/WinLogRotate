@@ -1,6 +1,7 @@
 using WinLogRotate.Core.Compression;
 using WinLogRotate.Core.Configuration;
 using WinLogRotate.Core.Globbing;
+using WinLogRotate.Core.Safety;
 
 namespace WinLogRotate.Core.Engine;
 
@@ -27,7 +28,28 @@ public static class ManageJobPlanner
 {
     public static JobPlan Plan(EffectiveJob job, IReadOnlyList<MatchedFile> matched, DateTimeOffset now)
     {
+        // One series per directory. A pattern such as W3SVC[0-9]/u_ex*.log names one producer per
+        // site, and judged as a single series the newest file of one site was the only one left
+        // alone: every other site's live log was planned for compression while IIS still wrote it, and
+        // rotate = 7 kept seven files across all of them, deleting the rest of each site's history.
         var operations = new List<PlannedOp>();
+
+        foreach (var directory in matched.GroupBy(f => WinPath.DirectoryName(f.Path), StringComparer.OrdinalIgnoreCase))
+        {
+            PlanDirectory(job, [.. directory], now, operations);
+        }
+
+        return new JobPlan
+        {
+            JobName = job.Name,
+            Operations = operations,
+            MatchedFiles = matched.Count,
+        };
+    }
+
+    private static void PlanDirectory(
+        EffectiveJob job, IReadOnlyList<MatchedFile> matched, DateTimeOffset now, List<PlannedOp> operations)
+    {
         var ordered = FileSeries.Order(matched, job.DateExt ? job.DateFormat : null);
 
         // The newest N are the producer's business, not ours. Compressing the file IIS is
@@ -117,12 +139,5 @@ public static class ManageJobPlanner
                 });
             }
         }
-
-        return new JobPlan
-        {
-            JobName = job.Name,
-            Operations = operations,
-            MatchedFiles = matched.Count,
-        };
     }
 }

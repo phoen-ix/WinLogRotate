@@ -24,6 +24,7 @@ schema = 1
 [job]
 name  = "iis"
 paths = ["C:/inetpub/logs/LogFiles/**/u_ex*.log"]
+kind  = "manage"
 ```
 
 Everything else comes from the built-in defaults below. Forward slashes are accepted
@@ -32,7 +33,7 @@ everywhere and are usually easier to read in TOML than escaped backslashes.
 You do not have to write that file yourself:
 
 ```
-winlogrotate job add iis --paths "C:/inetpub/logs/LogFiles/**/u_ex*.log"
+winlogrotate job add iis --kind manage --paths "C:/inetpub/logs/LogFiles/**/u_ex*.log"
 ```
 
 writes exactly it, in `conf.d`, owned by Administrators. Add `--set KEY=VALUE` for any key on
@@ -47,7 +48,7 @@ write and what a run would make of it without writing anything.
 |---|---|---|---|
 | `name` | string | *required* | Identifies the job in the journal, in diagnostics and in notifications. Must be unique across all files. |
 | `paths` | list of strings | *required* | Glob patterns. `*` and `?` match within one segment, `**` matches across segments, `[abc]` matches a character set. Any of them may appear in a directory position, not only in the filename — `C:/inetpub/logs/LogFiles/W3SVC[0-9]/*.log` matches every numbered IIS site and nothing else. |
-| `kind` | `"rotate"` \| `"manage"` | `"rotate"` | `rotate` moves the live log aside itself. `manage` leaves rotation to the application and only compresses and retains what it left behind — including what it compressed itself: a pattern of `u_ex*.log` also finds `u_ex*.log.zip` and `.gz`, and `rotate` and `maxage` count them. |
+| `kind` | `"rotate"` \| `"manage"` | `"rotate"` | `rotate` moves the live log aside itself. `manage` leaves rotation to the application and only compresses and retains what it left behind — including what it compressed itself: a pattern of `u_ex*.log` also finds `u_ex*.log.zip` and `.gz`, and `rotate` and `maxage` count them. Each directory a pattern reaches is its own series, so `C:/inetpub/logs/LogFiles/**/u_ex*.log` keeps every site's newest file and `rotate` archives per site. |
 | `enabled` | bool | `true` | A disabled job is not considered at all. |
 | `allowdangerous` | list of strings | *(empty)* | Directories this job may work in despite the guard refusing them. See **Dangerous paths** below. |
 
@@ -137,7 +138,7 @@ on every second rotation of a period; that combination is refused at config time
 | `notify` | bool | `true` | Whether this job's failures are reported. See [notifications](notifications.md). |
 | `notifempty` | bool | `true` | Do not rotate an empty log. |
 | `lockstrategy` | `"rename"` \| `"copytruncate"` \| `"copy"` \| `"auto"` | `"rename"` | How to get the live log out of the way when another process holds it open. `auto` probes the file and takes the best available. |
-| `livefiles` | int | `1` | On a `manage` job, how many newest files to leave alone because the application is still writing them. |
+| `livefiles` | int | `1` | On a `manage` job, how many newest files in each directory to leave alone because the application is still writing them. |
 | `retrycount` | int | `5` | Attempts for an operation blocked by a sharing violation. |
 | `retryinterval` | ms | `100` | Starting delay between those attempts; it doubles. |
 
@@ -223,7 +224,7 @@ table rather than from what you typed — so `rotate=30` is written as a number 
 `dateformat=20240101` as a string, which is what the reader expects in each case.
 
 ```
-winlogrotate job add iis --paths "C:/inetpub/logs/**/*.log" --set rotate=14
+winlogrotate job add iis --kind manage --paths "C:/inetpub/logs/**/*.log" --set rotate=14
 winlogrotate job set iis --set compress=true --unset maxage
 winlogrotate job show iis
 winlogrotate job disable iis          # reversible; 'job remove' is not
