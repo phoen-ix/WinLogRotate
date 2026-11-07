@@ -42,6 +42,9 @@ fleet check WinLogRotate --no-ci                         # through ~/repos/.flee
 - Version comes only from CI (`-p:Version`); `Directory.Build.props` keeps `0.0.0-dev`.
 - Warnings are errors, doc comments are compiled (`CS1572`/`CS1571` stay on), and
   `dotnet format` runs in CI on Windows (fleet allows it to fail on Linux).
+- `Directory.Build.Common.props` (language, nullable, warnings as errors, `latest-recommended`
+  analyzers) is canonical here; displayRotate and pawse carry `fleet-copy` copies. Change it here,
+  then port it and bump their marker sha (`fleet copies` flags the drift).
 - The CLI is NativeAOT with zero dependencies: no reflection JSON (source-generated contexts only),
   nothing that trims badly. The `aot` job enforces size and dependency gates.
 - The GUI never reimplements the CLI: every action shells out (`Gui/Cli/CliRunner`). Logic goes in
