@@ -8,6 +8,9 @@ makensis /WX /V2 /DVERSION=<v> /DFULL_ONLY winlogrotate.nsi      # WinLogRotate-
 makensis /WX /V2 /DVERSION=<v> /DMINIMAL_ONLY winlogrotate.nsi   # WinLogRotate-Setup-<v>-min.exe
 ```
 
+`./build.sh <version>` (Git Bash) or `build.bat <version>` publishes the exes the way ci.yml's
+release job does and then runs all three.
+
 Each carries `winlogrotate.exe` (the NativeAOT CLI) and `winlogrotate-gui.exe` (the console).
 The standard installer and `-full` ship the self-contained console. `-min` ships the
 framework-dependent one, and only `-min` offers to fetch the .NET 10 Desktop Runtime. CI stages
