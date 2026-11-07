@@ -466,7 +466,7 @@ public static class LogrotateImporter
 
     private static string SuggestName(LogrotateStanza stanza, int index)
     {
-        var first = stanza.Patterns.FirstOrDefault();
+        var first = stanza.Patterns.Count == 0 ? null : stanza.Patterns[0];
         if (first is null)
         {
             return $"imported-{index + 1}";

@@ -215,7 +215,7 @@ public sealed class CliRunner(string executablePath)
             ran = true;
 
             var tail = EventTail.FollowAsync(
-                eventFile, onLine, () => process.HasExited, cancellationToken);
+                eventFile, onLine, () => process.HasExited, cancellationToken: cancellationToken);
 
             var started = onStarted is null
                 ? Task.CompletedTask

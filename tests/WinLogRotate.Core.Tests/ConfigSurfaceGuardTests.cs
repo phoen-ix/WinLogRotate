@@ -154,8 +154,10 @@ public sealed class ConfigSurfaceGuardTests
         // SystemException is the base of both failures - the orphaned SID's IdentityNotMapped and
         // the lookup's own - so one throw stands for both; the Windows-only subclass cannot be
         // named on this leg.
+#pragma warning disable CA2201 // the real lookup (SecurityIdentifier.Translate) throws exactly this
         ConfigSurfaceGuard.NameOf(Administrators, () => throw new SystemException("The trust relationship failed."))
             .ShouldBe(Administrators);
+#pragma warning restore CA2201
 
         ConfigSurfaceGuard.NameOf(Administrators, () => "BUILTIN\\Administrators")
             .ShouldBe($"BUILTIN\\Administrators ({Administrators})");

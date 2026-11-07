@@ -38,8 +38,8 @@ public static class EventTail
         string path,
         Action<string>? onLine,
         Func<bool> hasExited,
-        CancellationToken cancellationToken = default,
-        TimeSpan? pollInterval = null)
+        TimeSpan? pollInterval = null,
+        CancellationToken cancellationToken = default)
     {
         if (onLine is null)
         {

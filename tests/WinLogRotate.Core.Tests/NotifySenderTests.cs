@@ -420,7 +420,7 @@ public sealed class NotifySenderTests : IDisposable
 
         try
         {
-            SmtpCertificatePin.Current = (_, _, _, _) => true;
+            SmtpCertificatePin.Current = (_, _, _, _) => false;
             var sentinel = SmtpCertificatePin.Current;
 
             var provider = new NotifyProvider

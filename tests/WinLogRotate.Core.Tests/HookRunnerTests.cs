@@ -16,10 +16,12 @@ namespace WinLogRotate.Core.Tests;
 /// cannot - whether <see cref="RotationRunner"/> actually calls any of it - and needs Windows to
 /// resolve a path, so these two are read together.
 /// </remarks>
-public sealed class HookRunnerTests
+public sealed class HookRunnerTests : IDisposable
 {
     private readonly FakeTimeProvider _clock = new(new DateTimeOffset(2026, 9, 10, 3, 0, 0, TimeSpan.Zero));
     private readonly RecordingJournal _journal = new();
+
+    public void Dispose() => _journal.Dispose();
 
     private const string Reload = @"command:C:\tools\reload.exe --now";
 

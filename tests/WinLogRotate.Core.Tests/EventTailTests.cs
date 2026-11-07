@@ -191,8 +191,8 @@ public sealed class EventTailTests : IDisposable
         var exited = false;
 
         var following = EventTail.FollowAsync(
-            Path_, seen.Add, () => exited, TestContext.Current.CancellationToken,
-            TimeSpan.FromMilliseconds(5));
+            Path_, seen.Add, () => exited, TimeSpan.FromMilliseconds(5),
+            TestContext.Current.CancellationToken);
 
         Append(Event(@"C:\logs\app.log.4") + "\n");
         await Task.Delay(60, TestContext.Current.CancellationToken);
