@@ -75,7 +75,7 @@ public sealed class JournalVerbTests : IDisposable
 
         return File.ReadAllLines(file)
             .Where(l => l.Length > 0)
-            .Select(l => JsonDocument.Parse(l).RootElement)
+            .Select(l => JsonElement.Parse(l))
             .Last(e => e.TryGetProperty("schema", out _));
     }
 

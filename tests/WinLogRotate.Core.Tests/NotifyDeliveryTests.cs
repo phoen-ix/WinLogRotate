@@ -674,7 +674,7 @@ public sealed class NotifyDeliveryTests : IDisposable
         var sent = discord.Messages.ShouldHaveSingleItem();
         var payload = NotifyBody.Render(template, "application/json", sent.Plan, sent.Subject, sent.Body, Run());
 
-        var content = System.Text.Json.JsonDocument.Parse(payload).RootElement.GetProperty("content").GetString()!;
+        var content = System.Text.Json.JsonElement.Parse(payload).GetProperty("content").GetString()!;
         content.Length.ShouldBeLessThanOrEqualTo(limit);
 
         // Fitted, not cut: the footer that says where the rest is survives.

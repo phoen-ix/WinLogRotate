@@ -31,7 +31,7 @@ on:
         options: [patch, minor, major, none]
 
   # The cadence runner-canary's comment has claimed since it was written, with no schedule to
-  # deliver it. Building an unchanged tree weekly is also the only thing that catches a new 10.0.x
+  # deliver it. Building an unchanged tree weekly is also the only thing that catches a new 11.0.x
   # SDK or a migrated runner image on its own, rather than on whoever pushes next.
   schedule:
     - cron: '17 6 * * 1'
@@ -69,11 +69,11 @@ jobs:
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
 
-      - uses: actions/setup-dotnet@a98b56852c35b8e3190ac28c8c2271da59106c68 # v6.0.0
+      - uses: actions/setup-dotnet@0f4a354dd5547a28c70b7853dbd95d5b67886e73 # v6.1.0
         with:
           # The SDK comes from global.json, the one place it is stated. Its rollForward
-          # latestFeature makes setup-dotnet install the newest 10.0 SDK, so the weekly run
-          # still meets a new 10.0.x on its own; the version there is the floor.
+          # latestFeature makes setup-dotnet install the newest 11.0 SDK, so the weekly run
+          # still meets a new 11.0.x on its own; the version there is the floor.
           global-json-file: global.json
 
       - name: Restore
@@ -83,7 +83,7 @@ jobs:
         run: dotnet build WinLogRotate.slnx -c Release --no-restore
 
       # global.json opts the repo into the Microsoft.Testing.Platform runner. Without that
-      # block the .NET 10 SDK refuses to run xunit.v3 projects at all.
+      # block the .NET 11 SDK refuses to run xunit.v3 projects at all.
       - name: Test
         run: dotnet test WinLogRotate.slnx -c Release --no-build
 
@@ -109,7 +109,7 @@ jobs:
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
 
-      - uses: actions/setup-dotnet@a98b56852c35b8e3190ac28c8c2271da59106c68 # v6.0.0
+      - uses: actions/setup-dotnet@0f4a354dd5547a28c70b7853dbd95d5b67886e73 # v6.1.0
         with:
           global-json-file: global.json
 
@@ -138,7 +138,7 @@ jobs:
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
 
-      - uses: actions/setup-dotnet@a98b56852c35b8e3190ac28c8c2271da59106c68 # v6.0.0
+      - uses: actions/setup-dotnet@0f4a354dd5547a28c70b7853dbd95d5b67886e73 # v6.1.0
         with:
           global-json-file: global.json
 
@@ -168,7 +168,7 @@ jobs:
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
 
-      - uses: actions/setup-dotnet@a98b56852c35b8e3190ac28c8c2271da59106c68 # v6.0.0
+      - uses: actions/setup-dotnet@0f4a354dd5547a28c70b7853dbd95d5b67886e73 # v6.1.0
         with:
           global-json-file: global.json
 
@@ -327,7 +327,7 @@ jobs:
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
 
-      - uses: actions/setup-dotnet@a98b56852c35b8e3190ac28c8c2271da59106c68 # v6.0.0
+      - uses: actions/setup-dotnet@0f4a354dd5547a28c70b7853dbd95d5b67886e73 # v6.1.0
         with:
           global-json-file: global.json
 
@@ -1504,7 +1504,7 @@ jobs:
     if: github.event_name == 'schedule'
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
-      - uses: actions/setup-dotnet@a98b56852c35b8e3190ac28c8c2271da59106c68 # v6.0.0
+      - uses: actions/setup-dotnet@0f4a354dd5547a28c70b7853dbd95d5b67886e73 # v6.1.0
         with:
           global-json-file: global.json
       - run: dotnet build WinLogRotate.slnx -c Release
@@ -1613,7 +1613,7 @@ jobs:
         with:
           fetch-depth: 0
 
-      - uses: actions/setup-dotnet@a98b56852c35b8e3190ac28c8c2271da59106c68 # v6.0.0
+      - uses: actions/setup-dotnet@0f4a354dd5547a28c70b7853dbd95d5b67886e73 # v6.1.0
         with:
           global-json-file: global.json
 
@@ -1730,7 +1730,7 @@ jobs:
             | Installer | Download | Needs anything installed? |
             | --- | --- | --- |
             | **`WinLogRotate-Setup-${{ needs.version.outputs.new_version }}-full.exe`** | large | **No** - everything is inside. |
-            | **`WinLogRotate-Setup-${{ needs.version.outputs.new_version }}-min.exe`** | small | Only for the GUI: the [.NET 10 Desktop Runtime](https://dotnet.microsoft.com/download/dotnet/10.0), fetched for you if missing. |
+            | **`WinLogRotate-Setup-${{ needs.version.outputs.new_version }}-min.exe`** | small | Only for the GUI: the [.NET 11 Desktop Runtime](https://dotnet.microsoft.com/download/dotnet/11.0), fetched for you if missing. |
             | **`WinLogRotate-Setup-${{ needs.version.outputs.new_version }}.exe`** | large | Asks which of the two to install. |
 
             | Portable | Download | Needs anything installed? |

@@ -9,7 +9,7 @@
     <ImplicitUsings>enable</ImplicitUsings>
 
     <!-- A warning here means the code isn't doing what it reads like it does. NuGet advisories
-         stay warnings: net10.0 audits the whole transitive closure, CI's audit step fails on
+         stay warnings: net11.0 audits the whole transitive closure, CI's audit step fails on
          them explicitly, and a new advisory should not turn an unchanged build red. -->
     <TreatWarningsAsErrors>true</TreatWarningsAsErrors>
     <WarningsNotAsErrors>NU1901;NU1902;NU1903;NU1904;$(WarningsNotAsErrors)</WarningsNotAsErrors>

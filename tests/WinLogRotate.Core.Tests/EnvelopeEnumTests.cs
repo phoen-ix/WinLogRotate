@@ -28,9 +28,8 @@ namespace WinLogRotate.Core.Tests;
 public sealed class EnvelopeEnumTests
 {
     private static JsonElement Serialize<T>(CliEnvelope<T> envelope) =>
-        JsonDocument.Parse(
-            JsonSerializer.Serialize(envelope, typeof(CliEnvelope<T>), Cli.CliJsonContext.Default))
-            .RootElement;
+        JsonElement.Parse(
+            JsonSerializer.Serialize(envelope, typeof(CliEnvelope<T>), Cli.CliJsonContext.Default));
 
     private static CliEnvelope<T> Envelope<T>(T result) => new()
     {
@@ -127,8 +126,7 @@ public sealed class EnvelopeEnumTests
             });
             store.Save(TimeProvider.System);
 
-            var written = JsonDocument.Parse(File.ReadAllText(path))
-                .RootElement.GetProperty("paths").EnumerateObject().First().Value;
+            var written = JsonElement.Parse(File.ReadAllText(path)).GetProperty("paths").EnumerateObject().First().Value;
 
             written.GetProperty("probe").GetString().ShouldBe("CopyTruncate");
             written.GetProperty("probedAs").GetString().ShouldBe("Elevated");

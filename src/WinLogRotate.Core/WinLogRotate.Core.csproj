@@ -1,7 +1,7 @@
 <Project Sdk="Microsoft.NET.Sdk">
 
   <PropertyGroup>
-    <TargetFramework>net10.0</TargetFramework>
+    <TargetFramework>net11.0</TargetFramework>
     <RootNamespace>WinLogRotate.Core</RootNamespace>
 
     <!-- The engine is consumed by the NativeAOT CLI, so it must stay AOT-clean.
@@ -18,7 +18,7 @@
          exists in this project - only the generated stubs. -->
     <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
 
-    <!-- Plain net10.0, NOT net10.0-windows: this keeps the project restorable and
+    <!-- Plain net11.0, NOT net11.0-windows: this keeps the project restorable and
          type-checkable on a Linux CI runner, so ~70% of the test suite runs there.
          The Windows-only surface is declared per-assembly in AssemblyInfo.cs instead,
          which satisfies CA1416 without pinning the TFM to Windows. -->

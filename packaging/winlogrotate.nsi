@@ -51,7 +51,7 @@ Unicode true
 !define REG_HOST_KIND     "HostKind"
 !define REG_BUILD_VARIANT "BuildVariant"
 
-!define DOTNET_URL "https://dotnet.microsoft.com/download/dotnet/10.0"
+!define DOTNET_URL "https://dotnet.microsoft.com/download/dotnet/11.0"
 
 !ifdef FULL_ONLY
   !define SINGLE_BUILD
@@ -444,7 +444,7 @@ Function ElevateForAllUsers
   MessageBox MB_OK|MB_ICONINFORMATION|MB_TOPMOST|MB_SETFOREGROUND "Administrator rights weren't granted, so WinLogRotate will be installed for you only. Hooks and the Event Log are not available in a per-user install." /SD IDOK
 FunctionEnd
 
-; Is a .NET 10 Desktop Runtime present?
+; Is a .NET 11 Desktop Runtime present?
 ;
 ; Asks the host where it lives rather than assuming a path - and reads the 32-BIT view, which
 ; is where .NET records it. That is not a workaround for WOW64; it is the documented contract.
@@ -473,13 +473,13 @@ Function DotnetPresent
     StrCpy $0 "$PROGRAMFILES64\dotnet"
   ${EndIf}
 
-  FindFirst $1 $2 "$0\shared\Microsoft.WindowsDesktop.App\10.*"
+  FindFirst $1 $2 "$0\shared\Microsoft.WindowsDesktop.App\11.*"
   FindClose $1
   ${If} $2 != ""
     StrCpy $3 "1"
   ${EndIf}
 
-  DetailPrint "Desktop Runtime 10 under $0: $2"
+  DetailPrint "Desktop Runtime 11 under $0: $2"
 
   ; Restore every register and leave the answer on the stack. $3 used to be written without
   ; ever being pushed, which silently corrupted whatever the caller was holding in it.
@@ -512,7 +512,7 @@ Function EnsureDotnet
 
   ; /SD IDYES so a scripted deployment provisions the runtime unattended rather than stalling.
   MessageBox MB_YESNO|MB_ICONQUESTION \
-    "The graphical console needs the .NET 10 Desktop Runtime, which is not installed.$\n$\n\
+    "The graphical console needs the .NET 11 Desktop Runtime, which is not installed.$\n$\n\
 Download and install it now?$\n$\n\
 (The command-line engine does not need it, and will work either way.)" \
     /SD IDYES IDNO manual
@@ -547,8 +547,8 @@ Download and install it now?$\n$\n\
   ${EndIf}
   DetailPrint "winget: $1"
 
-  DetailPrint "Installing the .NET 10 Desktop Runtime..."
-  nsExec::ExecToLog '"$1" install --id Microsoft.DotNet.DesktopRuntime.10 -e --silent \
+  DetailPrint "Installing the .NET 11 Desktop Runtime..."
+  nsExec::ExecToLog '"$1" install --id Microsoft.DotNet.DesktopRuntime.11 -e --silent \
 --accept-package-agreements --accept-source-agreements'
   Pop $0
 
@@ -559,7 +559,7 @@ Download and install it now?$\n$\n\
   Call DotnetPresent
   Pop $0
   ${If} $0 == "1"
-    DetailPrint "The .NET 10 Desktop Runtime is now installed."
+    DetailPrint "The .NET 11 Desktop Runtime is now installed."
     Goto done
   ${EndIf}
   DetailPrint "winget ran but the Desktop Runtime is still not present."
@@ -567,7 +567,7 @@ Download and install it now?$\n$\n\
   manual:
     ; /SD IDNO: an unattended run must never block, and must never open a browser.
     MessageBox MB_YESNO|MB_ICONINFORMATION \
-      "The .NET 10 Desktop Runtime could not be installed automatically.$\n$\n\
+      "The .NET 11 Desktop Runtime could not be installed automatically.$\n$\n\
 Open the download page? The command-line engine works without it." \
       /SD IDNO IDNO done
     ExecShell "open" "${DOTNET_URL}"

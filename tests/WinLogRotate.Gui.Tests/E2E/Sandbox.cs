@@ -149,7 +149,7 @@ internal sealed class Sandbox : IDisposable
 internal sealed record CliRun(int ExitCode, string StdOut, string StdErr)
 {
     /// <summary>The <c>--json</c> envelope.</summary>
-    public JsonElement Envelope => JsonDocument.Parse(StdOut).RootElement;
+    public JsonElement Envelope => JsonElement.Parse(StdOut);
 
     public JsonElement Result => Envelope.GetProperty("result");
 

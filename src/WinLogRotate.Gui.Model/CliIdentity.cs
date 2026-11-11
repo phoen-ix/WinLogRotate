@@ -225,6 +225,6 @@ public sealed record CliIdentity
     /// </remarks>
     private static JsonElement? Envelope(string output) =>
         EnvelopeReader.Last(output) is { } line
-            ? JsonDocument.Parse(line).RootElement.Clone()
+            ? JsonElement.Parse(line)
             : null;
 }

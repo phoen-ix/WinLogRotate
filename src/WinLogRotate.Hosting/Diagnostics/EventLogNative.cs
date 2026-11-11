@@ -9,7 +9,7 @@ namespace WinLogRotate.Hosting.Diagnostics;
 /// <remarks>
 /// <para>
 /// Hand-declared rather than reached through <c>System.Diagnostics.EventLog</c>, which is not
-/// part of the shared framework for a plain <c>net10.0</c> target and would mean a package
+/// part of the shared framework for a plain <c>net11.0</c> target and would mean a package
 /// reference plus its reflection surface, for three functions.
 /// </para>
 /// <para>

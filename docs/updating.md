@@ -135,3 +135,9 @@ machine may be offline, and that is not a rotation problem.
 
 A portable copy is refused with `LR1005`: unzip the newest release over it yourself, or run the
 installer once to have updates handled from then on.
+
+A `-min` install updating from v0.22.2 or earlier: the console now needs the .NET 11 Desktop
+Runtime instead of .NET 10. An update started from the prompt or the console passes
+`/NORUNTIME`, so the engine updates and keeps rotating, but the console will not open until the
+runtime is there. Install it (`winget install Microsoft.DotNet.DesktopRuntime.11`), or run the
+new installer by hand, which offers to fetch it.

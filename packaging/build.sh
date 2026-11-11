@@ -1,7 +1,7 @@
 #!/usr/bin/env sh
 # Build all three WinLogRotate installers. Run from this folder.
 # Usage:  ./build.sh <version>    e.g.  ./build.sh 0.1.0
-# Needs the .NET 10 SDK and makensis. Windows only (Git Bash): the CLI is NativeAOT, which
+# Needs the .NET 11 SDK and makensis. Windows only (Git Bash): the CLI is NativeAOT, which
 # cannot cross-compile. The same steps as ci.yml's release job, which is what actually ships.
 set -e
 [ -n "$1" ] || { echo "Usage: ./build.sh <version>  (e.g. ./build.sh 0.1.0)"; exit 1; }
@@ -15,7 +15,7 @@ dotnet publish "$cli" -c Release -r win-x64 -p:PublishAot=true -p:TrimmerSingleW
 dotnet publish "$gui" -c Release -r win-x64 --self-contained true \
   -p:PublishSingleFile=true -p:IncludeNativeLibrariesForSelfExtract=true \
   -p:EnableCompressionInSingleFile=true -p:DebugType=none -p:Version="$1" -o ../publish-gui-full
-# Minimal: framework-dependent console, needs the .NET 10 Desktop Runtime.
+# Minimal: framework-dependent console, needs the .NET 11 Desktop Runtime.
 dotnet publish "$gui" -c Release -r win-x64 --self-contained false \
   -p:PublishSingleFile=true -p:DebugType=none -p:Version="$1" -o ../publish-gui-min
 

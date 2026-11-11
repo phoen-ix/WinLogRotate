@@ -96,7 +96,7 @@ public sealed class EnvelopeShapeTests
 
     private static void ShouldMatchSnapshot(string json, string name)
     {
-        var actual = Shape(JsonDocument.Parse(json).RootElement);
+        var actual = Shape(JsonElement.Parse(json));
 
         var file = Path.Combine(
             RepoRoot.Find().FullName, "tests", "WinLogRotate.Core.Tests", "envelope", $"{name}.txt");

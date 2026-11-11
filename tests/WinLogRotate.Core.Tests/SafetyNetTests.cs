@@ -110,7 +110,7 @@ public sealed class SafetyNetTests : IDisposable
 
     private static JsonElement Envelope(string[] lines) =>
         lines.Where(l => l.Length > 0)
-            .Select(l => JsonDocument.Parse(l).RootElement)
+            .Select(l => JsonElement.Parse(l))
             .Last(e => e.TryGetProperty("schema", out _));
 
     /// <summary>
@@ -201,7 +201,7 @@ public sealed class SafetyNetTests : IDisposable
         var (_, lines) = Crash();
 
         lines.Where(l => l.Length > 0)
-            .Count(l => JsonDocument.Parse(l).RootElement.TryGetProperty("schema", out _))
+            .Count(l => JsonElement.Parse(l).TryGetProperty("schema", out _))
             .ShouldBe(1);
     }
 
@@ -233,7 +233,7 @@ public sealed class SafetyNetTests : IDisposable
 
         written.ToString()
             .Split('\n', StringSplitOptions.RemoveEmptyEntries)
-            .Count(l => JsonDocument.Parse(l).RootElement.TryGetProperty("schema", out _))
+            .Count(l => JsonElement.Parse(l).TryGetProperty("schema", out _))
             .ShouldBe(1, "the first answer stands; a second would overwrite it in the reader");
 
         // And the process exits with the code the envelope carries. It used to return the second
@@ -301,7 +301,7 @@ public sealed class SafetyNetTests : IDisposable
         var (_, lines) = Crash();
 
         var operations = lines.Where(l => l.Length > 0)
-            .Select(l => JsonDocument.Parse(l).RootElement)
+            .Select(l => JsonElement.Parse(l))
             .Where(e => e.TryGetProperty("operation", out _))
             .Select(e => e.GetProperty("operation").GetString())
             .ToList();
@@ -346,7 +346,7 @@ public sealed class SafetyNetTests : IDisposable
 
         exit.ShouldBe(ExitCode.InternalError);
 
-        var envelope = JsonDocument.Parse(captured.ToString().Trim()).RootElement;
+        var envelope = JsonElement.Parse(captured.ToString().Trim());
         envelope.GetProperty("verb").GetString().ShouldBe("doctor");
         envelope.GetProperty("exitCode").GetInt32().ShouldBe(ExitCode.InternalError);
     }

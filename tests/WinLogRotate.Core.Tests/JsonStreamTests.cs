@@ -128,7 +128,7 @@ public sealed class JsonStreamTests : IDisposable
         lines.ShouldNotBeEmpty("the file the GUI tails must not be empty");
 
         var envelope = lines
-            .Select(l => JsonDocument.Parse(l).RootElement)
+            .Select(l => JsonElement.Parse(l))
             .LastOrDefault(e => e.TryGetProperty("schema", out _));
 
         envelope.ValueKind.ShouldBe(JsonValueKind.Object, "the envelope must reach the file");
@@ -172,7 +172,7 @@ public sealed class JsonStreamTests : IDisposable
 
         var operations = lines
             .Where(l => l.Length > 0)
-            .Select(l => JsonDocument.Parse(l).RootElement)
+            .Select(l => JsonElement.Parse(l))
             .Where(e => e.TryGetProperty("operation", out _))
             .Select(e => e.GetProperty("operation").GetString())
             .ToList();
@@ -214,7 +214,7 @@ public sealed class JsonStreamTests : IDisposable
         // which the pane reports through its status label instead of its log.
         foreach (var (line, _) in lines.Where(l => l.Text is null))
         {
-            JsonDocument.Parse(line).RootElement.TryGetProperty("schema", out _)
+            JsonElement.Parse(line).TryGetProperty("schema", out _)
                 .ShouldBeTrue($"an event failed to render: {line}");
         }
     }
@@ -266,6 +266,6 @@ public sealed class JsonStreamTests : IDisposable
 
         var text = captured.ToString();
         text.ShouldNotBeEmpty();
-        JsonDocument.Parse(text.Trim()).RootElement.GetProperty("verb").GetString().ShouldBe("doctor");
+        JsonElement.Parse(text.Trim()).GetProperty("verb").GetString().ShouldBe("doctor");
     }
 }

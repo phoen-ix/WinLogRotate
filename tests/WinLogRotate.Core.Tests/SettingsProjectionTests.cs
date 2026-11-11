@@ -126,7 +126,7 @@ public sealed class SettingsProjectionTests
 
             DoctorCommand.Run(ctx, dir.FullName).ShouldBe(ExitCode.Ok);
 
-            var payload = JsonDocument.Parse(writer.ToString()).RootElement.GetProperty("result");
+            var payload = JsonElement.Parse(writer.ToString()).GetProperty("result");
 
             // The same four reads SettingsPage.LoadAsync makes, spelled the same way.
             var hooksAllowed = payload.GetProperty("hooksAllowed").GetBoolean();

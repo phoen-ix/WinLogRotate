@@ -27,7 +27,7 @@ every step below has a command-line form, and Server Core needs nothing else.
 1. Download an installer from the
    [latest release](../../../releases/latest); which one: the
    [Install table in the README](../README.md#install). `-full` needs nothing else; `-min` needs the
-   .NET 10 Desktop Runtime for the console only, and offers to fetch it.
+   .NET 11 Desktop Runtime for the console only, and offers to fetch it.
 2. Run it. It opens without an administrator prompt.
 3. On the scope page keep **Anyone who uses this computer (recommended - runs as SYSTEM, hooks
    available)**. Windows asks for administrator rights when you click **Next**, and the installer

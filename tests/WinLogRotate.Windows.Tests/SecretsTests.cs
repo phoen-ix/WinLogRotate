@@ -13,7 +13,7 @@ namespace WinLogRotate.Windows.Tests;
 /// <remarks>
 /// Everything about the store's format, versioning and failure handling is covered on the Linux
 /// leg behind IByteProtector. What is left here is exactly the part where reality can disagree
-/// with the design - which is the only reason this project targets net10.0-windows.
+/// with the design - which is the only reason this project targets net11.0-windows.
 /// </remarks>
 [Collection("windows-secrets")]
 public sealed class SecretsTests : IDisposable

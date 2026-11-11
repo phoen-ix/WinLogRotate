@@ -255,7 +255,7 @@ public sealed class JournalHistoryTests : IDisposable
     {
         var raw = Envelope("--all");
 
-        JsonDocument.Parse(raw).RootElement
+        JsonElement.Parse(raw)
             .GetProperty("result").GetProperty("entries").GetArrayLength()
             .ShouldBe(4, "the fixture must hand over the record as written");
 

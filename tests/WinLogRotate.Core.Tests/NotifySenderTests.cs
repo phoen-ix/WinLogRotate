@@ -207,8 +207,7 @@ public sealed class NotifySenderTests : IDisposable
         var body = NotifyBody.Render(
             null, "application/json", Message(NotifyStateDocument.RunScope, "x"), "s", "b", Run());
 
-        System.Text.Json.JsonDocument.Parse(body)
-            .RootElement.GetProperty("job").GetString().ShouldBe("configuration");
+        System.Text.Json.JsonElement.Parse(body).GetProperty("job").GetString().ShouldBe("configuration");
     }
 
     /// <summary>
@@ -226,15 +225,13 @@ public sealed class NotifySenderTests : IDisposable
         var flat = NotifyBody.Render(
             null, "application/json", Message("iis", "x"), "s", "b", Run(), redact: ["TESTBOX"]);
 
-        System.Text.Json.JsonDocument.Parse(flat)
-            .RootElement.GetProperty("machine").GetString().ShouldBe("***");
+        System.Text.Json.JsonElement.Parse(flat).GetProperty("machine").GetString().ShouldBe("***");
 
         var templated = NotifyBody.Render(
             """{"host": "{machine}", "job": "{job}"}""", "application/json",
             Message("iis", "x"), "s", "b", Run(), redact: ["iis"]);
 
-        System.Text.Json.JsonDocument.Parse(templated)
-            .RootElement.GetProperty("job").GetString().ShouldBe("***");
+        System.Text.Json.JsonElement.Parse(templated).GetProperty("job").GetString().ShouldBe("***");
     }
 
     [Fact]

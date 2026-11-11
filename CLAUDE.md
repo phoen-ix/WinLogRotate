@@ -1,7 +1,7 @@
 # WinLogRotate
 
 Log rotation for Windows: a NativeAOT CLI (`winlogrotate.exe`), a WinForms console
-(`winlogrotate-gui.exe`) that shells out to it, a scheduled task, and an NSIS installer. .NET 10,
+(`winlogrotate-gui.exe`) that shells out to it, a scheduled task, and an NSIS installer. .NET 11,
 SDK pinned in `global.json`. README is the product overview; `docs/admin-guide.md` is the
 operator's task path (installing to uninstalling) and links into the rest of `docs/`, the reference.
 

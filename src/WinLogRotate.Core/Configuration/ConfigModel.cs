@@ -272,9 +272,12 @@ public sealed record HostSettings
     public static bool TryParseTime(string text, out TimeSpan time)
     {
         time = default;
+        var trimmed = text.Trim();
 
-        if (TimeOnly.TryParseExact(
-                text.Trim(), ["HH:mm", "H:mm"], CultureInfo.InvariantCulture, DateTimeStyles.None,
+        // .NET 11 reads "24:00" as the end of the day (midnight). The Scheduling page cannot
+        // show that spelling, so it stays refused; no valid HH:mm or H:mm starts with "24".
+        if (!trimmed.StartsWith("24", StringComparison.Ordinal) && TimeOnly.TryParseExact(
+                trimmed, ["HH:mm", "H:mm"], CultureInfo.InvariantCulture, DateTimeStyles.None,
                 out var parsed))
         {
             time = parsed.ToTimeSpan();

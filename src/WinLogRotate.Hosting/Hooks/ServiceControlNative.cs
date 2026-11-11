@@ -20,7 +20,7 @@ internal struct ServiceStatus
 /// </summary>
 /// <remarks>
 /// Hand-declared for the same reason <c>EventLogNative</c> is: <c>System.ServiceProcess</c> is not
-/// in the shared framework for a plain <c>net10.0</c> target, and this needs one control code.
+/// in the shared framework for a plain <c>net11.0</c> target, and this needs one control code.
 /// </remarks>
 [SupportedOSPlatform("windows")]
 internal static partial class ServiceControlNative

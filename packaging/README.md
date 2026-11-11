@@ -13,7 +13,7 @@ release job does and then runs all three.
 
 Each carries `winlogrotate.exe` (the NativeAOT CLI) and `winlogrotate-gui.exe` (the console).
 The standard installer and `-full` ship the self-contained console. `-min` ships the
-framework-dependent one, and only `-min` offers to fetch the .NET 10 Desktop Runtime. CI stages
+framework-dependent one, and only `-min` offers to fetch the .NET 11 Desktop Runtime. CI stages
 the console exe that matches each variant before running makensis (`ci.yml`, release job).
 `installer-smoke` installs, upgrades and uninstalls for real on Windows.
 

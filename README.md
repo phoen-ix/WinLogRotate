@@ -6,7 +6,7 @@ Log rotation for Windows — a CLI, a GUI and a scheduler, imitating Linux `logr
 Same directive names, so `delaycompress` still means what the man page says. Different
 container, because a config a GUI edits has to survive being rewritten.
 
-> **Not related to LogRotateWin.** This is a new MIT-licensed project on .NET 10. The 2013
+> **Not related to LogRotateWin.** This is a new MIT-licensed project on .NET 11. The 2013
 > SourceForge *LogRotateWin* and its forks are GPLv3 and unmaintained.
 
 <img src="docs/screenshots/jobs-list.png" alt="The console's Jobs page: three jobs - an IIS site in manage mode, a disabled importer and a shop API - with their state, kind, paths and policy" width="800">
@@ -89,7 +89,7 @@ server. Only the GUI needs the .NET runtime, and only in the `-min` builds.
 
 | Installer | Size | Needs anything installed? |
 | --- | ---: | --- |
-| [`WinLogRotate-Setup-<version>-min.exe`](../../releases/latest) | 4.4 MB | Only for the GUI — the [.NET 10 Desktop Runtime](https://dotnet.microsoft.com/download/dotnet/10.0), fetched for you if missing |
+| [`WinLogRotate-Setup-<version>-min.exe`](../../releases/latest) | 4.4 MB | Only for the GUI — the [.NET 11 Desktop Runtime](https://dotnet.microsoft.com/download/dotnet/11.0), fetched for you if missing |
 | [`WinLogRotate-Setup-<version>-full.exe`](../../releases/latest) | 45.0 MB | **No** — everything is inside |
 | [`WinLogRotate-Setup-<version>.exe`](../../releases/latest) | 45.0 MB | **No** — the same as `-full` |
 
@@ -305,15 +305,15 @@ Use `--dry-run` first, and prefer a machine you don't mind breaking.
 
 ## Build from source
 
-Needs the [.NET 10 SDK](https://dotnet.microsoft.com/download/dotnet/10.0).
+Needs the [.NET 11 SDK](https://dotnet.microsoft.com/download/dotnet/11.0).
 
 ```
 dotnet build WinLogRotate.slnx -c Release
 dotnet test  WinLogRotate.slnx -c Release
 ```
 
-`global.json` pins SDK 10.0.403 (rolling forward to newer feature bands) and opts into the
-Microsoft.Testing.Platform runner, which xunit.v3 requires on .NET 10.
+`global.json` pins SDK 11.0.100 (rolling forward to newer feature bands) and opts into the
+Microsoft.Testing.Platform runner, which xunit.v3 requires on .NET 10 and later.
 
 Everything builds on Linux, the WinForms project included, and everything but the Windows suite
 runs there — deliberately, and it's how the engine's portable half stays honest. The GUI's window,
