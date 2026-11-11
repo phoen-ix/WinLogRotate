@@ -125,7 +125,8 @@ from elevation rather than from the install.
   milestone 14 `auto` silently meant `rename`, so that case produces identical files either way. It
   is separated only by the journal recording which strategy was chosen.
 - **The .NET bootstrap is skipped** (`/NORUNTIME`), so the winget detection and install path is
-  unexercised.
+  unexercised, and so is the `-min` installer's refusal (exit 4) when the runtime is missing: the
+  runner always has it. The updater's own check is covered on the Linux leg with a fake probe.
 - **English locale, no domain, no UNC paths, no IIS installed.**
 - **The Windows Service host is not implemented.** `host use service` says so and refuses.
 - **No notification has ever been delivered on Windows by CI.** The senders and their whole

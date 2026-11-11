@@ -92,8 +92,8 @@ public sealed record LaunchResult(bool Started, bool Declined, string? Problem)
 /// </para>
 /// <para>
 /// Every step that can decline does so before the one after it costs anything: policy, then
-/// whether this copy has an installer to re-run, then the sums file, and only then forty
-/// megabytes. The download is hashed as it streams, never re-read from disk, and a digest that
+/// whether this copy has an installer to re-run, then whether a <c>-min</c> console would have
+/// the Desktop Runtime it needs, then the sums file, and only then forty megabytes. The download is hashed as it streams, never re-read from disk, and a digest that
 /// does not match the release's is deleted before anything else is said about it.
 /// </para>
 /// <para>
@@ -108,6 +108,7 @@ public sealed class UpdateEngine(
     IInstallerLauncher launcher,
     Func<bool> disabledByPolicy,
     Func<bool> elevated,
+    Func<bool> desktopRuntimeInstalled,
     string tempRoot)
 {
     /// <summary>Downloads go to <c>%TEMP%\{prefix}{12 hex}\</c>. The uninstaller sweeps them too.</summary>
@@ -162,6 +163,17 @@ public sealed class UpdateEngine(
             // installer to re-run, and replacing a running executable by hand is not something
             // to attempt on somebody's behalf.
             return new UpdateApply(ApplyOutcome.Portable, "This is a portable copy, which has no installer to re-run.");
+        }
+
+        // The -min installer is run with /NORUNTIME, so it never fetches the runtime itself:
+        // without it the engine would update and keep rotating, but the console would not open.
+        // Say so here, with the way out, before anything is downloaded.
+        if (record.BuildVariant == "min" && !desktopRuntimeInstalled())
+        {
+            return Failed(
+                $"The -min build's console needs the .NET {DesktopRuntime.Major} Desktop Runtime (x64), and it isn't installed on this PC, so nothing was downloaded.",
+                $"Install it (winget install {DesktopRuntime.WingetId}, or from {DesktopRuntime.DownloadPage}), then update again; "
+                + "or run the new -min installer by hand, which offers to fetch it.");
         }
 
         // The sums first, and the sums before anything is fetched that costs bandwidth. A

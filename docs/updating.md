@@ -127,7 +127,8 @@ is not consulted here.
 `LR4006` (event 145) means a newer release exists and was not installed, and the message says
 which step stopped: the checksum file could not be downloaded, could not be read, or does not
 list the installer; the installer could not be downloaded; the download did not match; the
-installer could not be started; the administrator prompt was declined (`detail: "declined"`).
+installer could not be started; the administrator prompt was declined (`detail: "declined"`);
+a `-min` install lacks the .NET Desktop Runtime its console needs.
 Nothing was changed in any of those cases, and the download, if there was one, was deleted.
 
 `LR4004` (event 143) means the feed could not be reached, which is a warning at exit 0: the
@@ -136,8 +137,20 @@ machine may be offline, and that is not a rotation problem.
 A portable copy is refused with `LR1005`: unzip the newest release over it yourself, or run the
 installer once to have updates handled from then on.
 
-A `-min` install updating from v0.22.2 or earlier: the console now needs the .NET 11 Desktop
-Runtime instead of .NET 10. An update started from the prompt or the console passes
-`/NORUNTIME`, so the engine updates and keeps rotating, but the console will not open until the
-runtime is there. Install it (`winget install Microsoft.DotNet.DesktopRuntime.11`), or run the
-new installer by hand, which offers to fetch it.
+## A `-min` install and the .NET Desktop Runtime
+
+The `-min` build's console needs the .NET 11 Desktop Runtime (x64); the command-line engine
+needs nothing. An update passes `/NORUNTIME`, so it never fetches the runtime itself, and a
+missing runtime is refused instead of leaving a console that cannot open:
+
+- `update apply` (and **Update…** in the console) checks first. Without the runtime it stops with
+  `LR4006` before anything is downloaded, and the remedy names the way out:
+  `winget install Microsoft.DotNet.DesktopRuntime.11`, or the
+  [download page](https://dotnet.microsoft.com/download/dotnet/11.0).
+- The `-min` installer refuses the same silent `/NORUNTIME` run with exit code 4, before it
+  changes anything. That covers updates started by v0.23.0 or earlier, which do not check - such
+  as a v0.22.2 copy, which ran on .NET 10: the old version keeps working, and the console just
+  does not come back.
+
+Install the runtime, then update again, or run the new installer by hand, which offers to fetch
+it.

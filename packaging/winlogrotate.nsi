@@ -15,6 +15,7 @@
 ; Uninstall:  /S  /PURGEDATA  /FORCEIDLE
 ; Exit codes: 2 = /HOST= names no run model this build has (nothing installed)
 ;             3 = silent all-users run without administrator rights (nothing installed)
+;             4 = silent /NORUNTIME -min install with the .NET Desktop Runtime missing (nothing installed)
 ; packaging/README.md explains the design; ci.yml's installer-smoke job runs it on Windows.
 
 Unicode true
@@ -987,6 +988,27 @@ resident, and a run missed while the machine was off is caught up afterwards." /
     SetErrorLevel 3
     Quit
   ${EndIf}
+
+!ifdef MINIMAL_ONLY
+  ; Refuse a silent /NORUNTIME install that would land a console whose runtime isn't here,
+  ; before a rotation is waited for, the console is closed or a byte is written - the copy
+  ; already installed keeps working. An in-app update runs exactly that (InstallerArguments), and
+  ; an update from a release on the previous .NET major would otherwise leave a console that
+  ; cannot open. (The standard installer defaults to the full build under /S, so it never needs
+  ; this.) Same shape as displayRotate's guard.
+  ${If} ${Silent}
+    ClearErrors
+    ${GetOptions} $R0 "/NORUNTIME" $R1
+    ${IfNot} ${Errors}
+      Call DotnetPresent
+      Pop $R1
+      ${If} $R1 != "1"
+        SetErrorLevel 4
+        Quit
+      ${EndIf}
+    ${EndIf}
+  ${EndIf}
+!endif
 
   ; /FORCEIDLE, read once for WaitForIdle.
   StrCpy $ForceIdle "0"

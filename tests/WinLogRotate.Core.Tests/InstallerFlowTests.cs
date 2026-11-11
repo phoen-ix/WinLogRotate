@@ -77,4 +77,25 @@ public class InstallerFlowTests
     {
         Nsi().ShouldContain($"\"$TEMP\\{UpdateEngine.DownloadDirectoryPrefix}*\"");
     }
+
+    /// <summary>
+    /// The -min installer refuses the silent /NORUNTIME run an in-app update makes while the
+    /// Desktop Runtime is missing: in .onInit, before anything is touched, with its own exit
+    /// code. And it asks for the same runtime the updater checks for.
+    /// </summary>
+    [Fact]
+    public void ASilentMinUpdateWithoutTheRuntimeChangesNothing()
+    {
+        var nsi = Nsi();
+        var init = nsi[nsi.IndexOf("\nFunction .onInit", StringComparison.Ordinal)..];
+        init = init[..init.IndexOf("\nFunctionEnd", StringComparison.Ordinal)];
+
+        var guard = init[init.IndexOf("\n!ifdef MINIMAL_ONLY", StringComparison.Ordinal)..];
+        guard = guard[..guard.IndexOf("\n!endif", StringComparison.Ordinal)];
+        guard.ShouldMatch(@"(?s)\$\{If\} \$\{Silent\}.*\$\{GetOptions\}\s+\$R0\s+""/NORUNTIME"".*Call DotnetPresent.*SetErrorLevel 4\s+Quit");
+        nsi.ShouldContain($"Microsoft.WindowsDesktop.App\\{DesktopRuntime.Major}.*");
+        nsi.ShouldContain($"--id {DesktopRuntime.WingetId} ");
+        nsi.ShouldContain($"\"{DesktopRuntime.DownloadPage}\"");
+        InstallerArguments.For(InstallScope.PerUser, "none", restartGui: false).ShouldContain("/NORUNTIME");
+    }
 }

@@ -252,7 +252,7 @@ Every installer switch:
 | `/FORCEIDLE` | After two minutes of waiting for a rotation in progress, go ahead anyway. Off by default because the process being replaced may be mid-file on a multi-gigabyte log |
 | `/RESTART` | With `/S`, start the console again once the files are in place, as the desktop user rather than elevated. What an in-app update passes |
 | `/D=<dir>` | Install directory (the standard NSIS switch; must be last) |
-| exit code `2` / `3` | `/HOST=` named no run model this build has / a silent all-users run without administrator rights. Nothing was installed either way |
+| exit code `2` / `3` / `4` | `/HOST=` named no run model this build has / a silent all-users run without administrator rights / a silent `/NORUNTIME` run of `-min` with the .NET Desktop Runtime missing. Nothing was installed in any of them |
 
 Scripts that drive the CLI read `--json`: one envelope, a stable `LRxxxx` code on every finding, and
 five exit codes ([automation](automation.md)).

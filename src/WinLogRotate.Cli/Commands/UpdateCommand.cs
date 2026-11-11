@@ -33,6 +33,7 @@ internal static class UpdateCommand
         new ShellLauncher(),
         IsDisabledByPolicy,
         Privilege.IsElevated,
+        DesktopRuntime.IsInstalled,
         Path.GetTempPath());
 
     /// <summary>This executable's own install, found by the folder it runs from.</summary>

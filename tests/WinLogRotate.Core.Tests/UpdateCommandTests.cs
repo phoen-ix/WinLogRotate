@@ -159,11 +159,12 @@ public sealed class UpdateCommandTests : IDisposable
         bool elevated = true,
         bool restartGui = true,
         string current = Current,
-        bool policy = false)
+        bool policy = false,
+        bool runtime = true)
     {
         var sink = new Sink();
         var ctx = new CommandContext(sink, CommandTree.Build().Parse(["update", "apply"]));
-        var engine = new UpdateEngine(releases, launcher ?? new Launcher(), () => policy, () => elevated, _temp);
+        var engine = new UpdateEngine(releases, launcher ?? new Launcher(), () => policy, () => elevated, () => runtime, _temp);
 
         var exit = UpdateCommand
             .ApplyAsync(ctx, restartGui, engine, () => record, current)
@@ -176,7 +177,7 @@ public sealed class UpdateCommandTests : IDisposable
     {
         var sink = new Sink();
         var ctx = new CommandContext(sink, CommandTree.Build().Parse(["update", "check"]));
-        var engine = new UpdateEngine(releases, new Launcher(), () => false, () => false, _temp);
+        var engine = new UpdateEngine(releases, new Launcher(), () => false, () => false, () => true, _temp);
 
         (await UpdateCommand.CheckAsync(ctx, engine, () => record, current)).ShouldBe(ExitCode.Ok);
 
@@ -488,6 +489,26 @@ public sealed class UpdateCommandTests : IDisposable
         sink.Events.Last().Result.ShouldBe(OpResult.Failed);
         launcher.Installer.ShouldBeNull();
         Directory.Exists(Path.GetDirectoryName(releases.DownloadedTo!)).ShouldBeFalse();
+    }
+
+    /// <summary>A -min install without the Desktop Runtime its console needs: LR4006 with the
+    /// way out, before anything is downloaded.</summary>
+    [Fact]
+    public void AMinInstallWithoutTheDesktopRuntimeIsRefusedWithTheDownloadPage()
+    {
+        var releases = Complete("min");
+        var launcher = new Launcher();
+
+        var (sink, exit) = Apply(releases, PerMachine(variant: "min"), launcher, runtime: false);
+
+        exit.ShouldBe(ExitCode.Errors);
+        var refusal = sink.Diagnostics.ShouldHaveSingleItem();
+        refusal.Code.ShouldBe(DiagnosticCode.UpdateNotInstalled);
+        refusal.Message.ShouldContain($".NET {Environment.Version.Major} Desktop Runtime");
+        refusal.Remedy.ShouldNotBeNull().ShouldContain($"https://dotnet.microsoft.com/download/dotnet/{Environment.Version.Major}.0");
+        refusal.Remedy.ShouldContain($"winget install Microsoft.DotNet.DesktopRuntime.{Environment.Version.Major}");
+        releases.DownloadedTo.ShouldBeNull();
+        launcher.Installer.ShouldBeNull();
     }
 
     [Fact]

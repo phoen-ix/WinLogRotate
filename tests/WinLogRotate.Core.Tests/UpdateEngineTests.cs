@@ -31,6 +31,7 @@ public sealed class UpdateEngineTests : IDisposable
     private readonly FakeLauncher _launcher = new();
     private bool _policy;
     private bool _elevated;
+    private bool _runtime = true;
 
     public UpdateEngineTests()
     {
@@ -45,7 +46,7 @@ public sealed class UpdateEngineTests : IDisposable
 
     private static CancellationToken Ct => TestContext.Current.CancellationToken;
 
-    private UpdateEngine Engine() => new(_releases, _launcher, () => _policy, () => _elevated, _temp);
+    private UpdateEngine Engine() => new(_releases, _launcher, () => _policy, () => _elevated, () => _runtime, _temp);
 
     private static string Hex(byte[] data) => Convert.ToHexStringLower(SHA256.HashData(data));
 
@@ -118,6 +119,62 @@ public sealed class UpdateEngineTests : IDisposable
         result.Outcome.ShouldBe(ApplyOutcome.Portable);
         _launcher.Launches.ShouldBeEmpty();
         _releases.Requests.ShouldBe(0);
+    }
+
+    /// <summary>
+    /// The -min installer runs with /NORUNTIME, so a missing Desktop Runtime would leave a console
+    /// that cannot open: refused before the sums are fetched, with the way to install it.
+    /// </summary>
+    [Fact]
+    public async Task AMinInstallWithoutTheDesktopRuntimeIsRefusedBeforeAnythingIsFetched()
+    {
+        _runtime = false;
+
+        var result = await Engine().ApplyAsync(Latest, PerMachine, restartGui: true, cancellationToken: Ct);
+
+        result.Outcome.ShouldBe(ApplyOutcome.Failed);
+        result.Message.ShouldContain($".NET {Environment.Version.Major} Desktop Runtime");
+        result.Remedy.ShouldNotBeNull().ShouldContain(DesktopRuntime.DownloadPage);
+        result.Remedy.ShouldContain(DesktopRuntime.WingetId);
+        _releases.Requests.ShouldBe(0);
+        _launcher.Launches.ShouldBeEmpty();
+    }
+
+    /// <summary>The full build carries its runtime, so the question is not asked.</summary>
+    [Fact]
+    public async Task AFullInstallDoesNotNeedTheDesktopRuntime()
+    {
+        _runtime = false;
+
+        var result = await Engine().ApplyAsync(Latest, PerUser, restartGui: true, cancellationToken: Ct);
+
+        result.Outcome.ShouldBe(ApplyOutcome.Installing);
+    }
+
+    [Theory]
+    [InlineData("11.0.0", 11, true)]
+    [InlineData("11.0.3", 11, true)]
+    [InlineData("10.0.14", 11, false)]
+    [InlineData("12.0.0", 11, false)]
+    [InlineData("110.0.0", 11, false)]
+    [InlineData("1.0.0", 11, false)]
+    public void TheDesktopRuntimeIsFoundOnlyForItsOwnMajor(string installed, int major, bool found)
+    {
+        Directory.CreateDirectory(Path.Combine(_temp, "dotnet", "shared", "Microsoft.WindowsDesktop.App", installed));
+        Directory.CreateDirectory(Path.Combine(_temp, "dotnet", "shared", "Microsoft.NETCore.App", $"{major}.0.0"));
+
+        DesktopRuntime.HasMajor(Path.Combine(_temp, "dotnet"), major).ShouldBe(found);
+    }
+
+    [Fact]
+    public void NoDotnetFolderMeansNoDesktopRuntime() =>
+        DesktopRuntime.HasMajor(Path.Combine(_temp, "nowhere"), 11).ShouldBeFalse();
+
+    [Fact]
+    public void TheDesktopRuntimeAskedForIsTheOneThisBuildRunsOn()
+    {
+        DesktopRuntime.Major.ShouldBe(Environment.Version.Major);
+        DesktopRuntime.WingetId.ShouldBe($"Microsoft.DotNet.DesktopRuntime.{Environment.Version.Major}");
     }
 
     [Fact]
